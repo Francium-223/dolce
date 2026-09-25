@@ -41,6 +41,8 @@ export function estimateUnit(bin: Binary): RasterUnit | null {
 /** 一条谱线：中心 y、上下沿、左右端。 */
 export interface StaffLineRun {
   y: number;
+  /** 横带里墨量够峰值八成的那几行（上下沿）；`groupStaves` 拿它纠正被符杠拉偏的线，见 `findStaffLines`。 */
+  peak?: [number, number];
   y0: number;
   y1: number;
   left: number;
@@ -69,11 +71,13 @@ export function findStaffLines(bin: Binary): StaffLineRun[] {
   const maxThick = Math.max(6, h * 0.01);
   const maxGap = w * 0.05;
   const bands: [number, number][] = [];
+  const rowInk = new Uint32Array(h);
   let start = -1;
   for (let y = 0; y < h; y++) {
     let n = 0;
     const row = y * w;
     for (let x = 0; x < w; x++) n += data[row + x];
+    rowInk[y] = n;
     if (n > th) {
       if (start < 0) start = y;
     } else if (start >= 0) {
@@ -84,8 +88,20 @@ export function findStaffLines(bin: Binary): StaffLineRun[] {
   if (start >= 0) bands.push([start, h - 1]);
 
   const out: StaffLineRun[] = [];
-  for (const [y0, y1] of bands) {
-    if (y1 - y0 + 1 > maxThick) continue;
+  for (const [b0, b1] of bands) {
+    // **另记横带里墨量够峰值八成的那几行**（`peak`）：一行连桁的粗符杠紧贴着谱线时
+    // （我一生要赞美你第二行，C4/A3 和弦的八分一路连到底），符杠那几行也过了 0.3 页宽，
+    // 与谱线连成 10px 的一条带，中心被拉偏 3.5px；五条线不再等距，分组往下错一条，
+    // 第一线下的通长加线顶了进来，整行谱低一格。取八成：第一行的符杠更密，那几行墨量有谱线的七成。
+    // 只给 `groupStaves` 纠偏用：一律拿它当中心、或按它收上下沿都试过，普通谱线的中心也挪零点几个像素，
+    // 音高吸附与去谱线后的歌词条跟着变（收上下沿时中文歌词 45 → 35%）。
+    let peak = b0;
+    for (let y = b0; y <= b1; y++) if (rowInk[y] > rowInk[peak]) peak = y;
+    let p0 = peak, p1 = peak;
+    while (p0 > b0 && rowInk[p0 - 1] >= rowInk[peak] * 0.8) p0--;
+    while (p1 < b1 && rowInk[p1 + 1] >= rowInk[peak] * 0.8) p1++;
+    if (b1 - b0 + 1 > maxThick) continue;
+    const y0 = b0, y1 = b1;
     // 逐列有没有墨
     const ink = new Uint8Array(w);
     for (let x = 0; x < w; x++) {
@@ -121,7 +137,7 @@ export function findStaffLines(bin: Binary): StaffLineRun[] {
         gap = 0;
       } else if (++gap > maxGap) break; // 断得太开：右边那截多半是另一件东西
     }
-    out.push({ y: (y0 + y1) / 2, y0, y1, left, right });
+    out.push({ y: (y0 + y1) / 2, peak: [p0, p1], y0, y1, left, right });
   }
   return out;
 }
@@ -171,6 +187,13 @@ export function traceLeft(bin: Binary, left: number, y0: number, y1: number): nu
 /** 同一行谱五条线的左缘允许差多少（线距的倍数）。 */
 const LEFT_SPREAD = 3;
 
+/** 五条线的平均线距与四个间距里最大的相对偏差。 */
+function spacing(five: StaffLineRun[]): { avg: number; dev: number } {
+  const ds = [1, 2, 3, 4].map((k) => five[k].y - five[k - 1].y);
+  const avg = ds.reduce((a, b) => a + b, 0) / 4;
+  return { avg, dev: avg > 0 ? Math.max(...ds.map((d) => Math.abs(d - avg))) / avg : Infinity };
+}
+
 /** 一行谱：五条线加它们定出来的线距。 */
 export interface StaffGroup {
   lines: StaffLineRun[];
@@ -191,9 +214,15 @@ export function groupStaves(lines: StaffLineRun[]): StaffGroup[] {
   const out: StaffGroup[] = [];
   for (let i = 0; i + 4 < sorted.length; ) {
     const five = sorted.slice(i, i + 5);
-    const ds = [1, 2, 3, 4].map((k) => five[k].y - five[k - 1].y);
-    const avg = ds.reduce((a, b) => a + b, 0) / 4;
-    const even = avg > 0 && ds.every((d) => Math.abs(d - avg) <= avg * 0.2);
+    // 按峰值那几行**明显更等距**（最大偏差少五个百分点以上）就用它：粗符杠贴着谱线把横带中心拉偏
+    // （见 `findStaffLines`）。偏得少的那种（我一生要赞美你第一行，间距 12/15/14/17）照两成的闸
+    // 也算等距，只在不等距时才重试的话它漏过去，那一行音高全低。普通谱线两个中心差不到半像素，不换。
+    const sRaw = spacing(five);
+    const sPk = spacing(five.map((l) => ({ ...l, y: l.peak ? (l.peak[0] + l.peak[1]) / 2 : l.y })));
+    // 原组偏得太厉害（>0.3）的不换：那是一整条线被压住（宁静 p5 第五线盖在三层十六分符杠下），
+    // 这里凑不成组，留给 `completeStaffLines` 按四条等距外推，换了反而小节自检掉 1.2 点。
+    const usePeak = sRaw.dev <= 0.3 && sPk.dev < sRaw.dev - 0.05;
+    const { avg, dev } = usePeak ? sPk : sRaw;
     const left = Math.max(...five.map((l) => l.left));
     const right = Math.min(...five.map((l) => l.right));
     const shortest = Math.min(...five.map((l) => l.right - l.left));
@@ -203,7 +232,12 @@ export function groupStaves(lines: StaffLineRun[]): StaffGroup[] {
     //（GT `C5 C6 C5 C6…` 被读成 `A4 A5 A4 A5…`）。
     // 真谱线从系统线起画，一个系统里五条的左缘几乎相同；加线从音符处才起。
     const spread = Math.max(...five.map((l) => l.left)) - Math.min(...five.map((l) => l.left));
-    if (even && right - left >= shortest * 0.8 && spread <= avg * LEFT_SPREAD) {
+    if (dev <= 0.2 && right - left >= shortest * 0.8 && spread <= avg * LEFT_SPREAD) {
+      // 中心写回**原对象**：`completeStaffLines` 按对象认「已分组」，换成副本的话原来那几条
+      // 被当成散线，又外推出一行错一条线的重复谱行
+      if (usePeak)
+        for (const l of five)
+          if (l.peak) (l.y = (l.peak[0] + l.peak[1]) / 2), (l.y0 = l.peak[0]), (l.y1 = l.peak[1]);
       out.push({ lines: five, space: avg });
       i += 5;
     } else i++;

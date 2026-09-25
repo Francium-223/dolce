@@ -604,6 +604,23 @@ export function findLegers(nt: Sym, stf: Staff, lines: Seg[]): boolean {
 // ── findStems / findTails ───────────────────────────────────────────────────
 
 /**
+ * **小节线后紧跟着的第一个音**：头的左缘贴着竖线、落在它下端，竖线两端又正好压在谱表的第五线与第一线上
+ * （各 ±0.25 格）——那是小节线，不是这个头的干（朝上的干挂在右缘）。
+ * 我一生要赞美你第三行 E4 二分音符、第四行 F4，头左缘贴着小节线，那几条被抢成了符干。
+ * 三个条件缺一不可：放宽成「朝下的干挂左缘、朝上的挂右缘」试过，闭合谱里朝下挂右缘、
+ * 左缘挂着短干的真符干大把（万古磐石歌 15 根，满拍 27.3 → 24.2%）；不看两端则会拦掉
+ * 头落在第一线下、干从左缘伸到第五线的真符干（我一生要赞美你第一行的连桁八分）。
+ */
+export function isLeadNoteBarline(l: Seg, nt: Sym, stf: Staff): boolean {
+  const sp = stf.stepDistance() * 2;
+  if (!sp) return false;
+  const cy = (nt.box.top + nt.box.bottom) / 2;
+  if (Math.abs(cy - l.bottom) > sp || Math.abs(cy - l.top) <= sp) return false;
+  if (Math.abs(nt.box.left - l.cx) >= Math.abs(nt.box.right - l.cx)) return false;
+  return Math.abs(l.top - stf.box.top) <= sp * 0.25 && Math.abs(l.bottom - stf.box.bottom) <= sp * 0.25;
+}
+
+/**
  * `Page::findStems`：符头左右两侧、纵向相交的竖线就是符干。
  *
  * 两种画法都要认，而且**都要落成 `Seg`**：
@@ -626,15 +643,29 @@ export function findStems(pg: SPage): void {
     // 试过一条「两端正好压在第五线与第一线上的竖线是小节线、不是符干」的判据，
     // **实测更差**（全书小节自检 80.1% → 75.9%）：符头落在第一线、符干朝上伸到第五线
     // 的情形太常见，那条会把大批真符干判掉。留着这行注释，别再试第二遍。
+    // **每一侧只挂离缘最近的那几根**（差不过半个窗口）：窗口是谱线粗的两倍，粗线的低分辨率图上有十来个像素，
+    // 头自己的干贴着缘、紧跟着的小节线也还在窗口里，两根都挂上就把小节线抢成了符干
+    // （我一生要赞美你第一行，C4 头右缘离干 2px、离小节线 11px、窗口 12px，四条小节线全丢）。
+    // 差不多远的都挂：同一根干被符杠切成同 x 的两截，或矢量路一根干拆成错开一点的两段
+    // （只挂最近一根时坚固保障时值 −1.5、矢量路时值 −0.01）。
+    const cand: { l: Seg; side: number; d: number }[] = [];
     for (const l of vlines) {
-      if (Math.abs(nt.box.left - l.cx) >= lw && Math.abs(nt.box.right - l.cx) >= lw) continue;
+      const dl = Math.abs(nt.box.left - l.cx), dr = Math.abs(nt.box.right - l.cx);
+      if (dl >= lw && dr >= lw) continue;
       if (!overlapY(l.box, nt.box)) continue;
       // **符头要在符干的某一端**，不能在中间：小节线也常常擦着符头过，
       // 那时符头落在它跨度的中段。不加这条，真小节线会被当成符干抢走
       // （实测 p227 每行只剩三个小节，音符全挤在一起）。
       const cy = (nt.box.top + nt.box.bottom) / 2;
+      const side = dl <= dr ? 0 : 1;
       if (Math.abs(cy - l.top) > space && Math.abs(cy - l.bottom) > space) continue;
-      l.addTag("Stem");
+      if (side === 0 && isLeadNoteBarline(l, nt, stf)) continue;
+      cand.push({ l, side, d: Math.min(dl, dr) });
+    }
+    for (const side of [0, 1]) {
+      const cs = cand.filter((c) => c.side === side);
+      const dMin = Math.min(...cs.map((c) => c.d));
+      for (const c of cs) if (c.d <= dMin + lw * 0.5) c.l.addTag("Stem");
     }
   }
 }
@@ -729,6 +760,12 @@ export function findBarlines(pg: SPage): boolean {
   // 那条在大谱表上不成立：钢琴/SATB 的小节线**贯穿两行谱**，对上面那行来说下端远在 −4 之外
   // ——实测 Opus 那 68 页（都是大谱表）因此一条小节线都没认出来，整页只切出一个小节。
   // 改判「盖满」：上端不低于第五线、下端不高于第一线，容差半格。
+  /** 竖段有一端伸出这行谱 0.3 格以上、又没落在任何一行谱的外线上。 */
+  const overshoots = (l: Seg, st: Staff): boolean => {
+    const out = (s2: Staff) => (s2.stepDistance() || 1) * 0.6;
+    const lands = (y: number) => pg.staves.some((s2) => Math.abs(y - s2.box.top) <= out(s2) || Math.abs(y - s2.box.bottom) <= out(s2));
+    return (l.top < st.box.top - out(st) && !lands(l.top)) || (l.bottom > st.box.bottom + out(st) && !lands(l.bottom));
+  };
   const topStaff = new Map<Seg, Staff>();
   const covers = new Set<Seg>();
   const heads = pg.symbols.filter((s) => s.hasTag("Note") && !isRest(s.code));
@@ -737,13 +774,36 @@ export function findBarlines(pg: SPage): boolean {
     // **贴着某个符头左右缘的竖线是符干，不是小节线**。`findStems` 已经标过一遍，
     // 但它按「符头 → 找符干」走，符头没归到谱行上时那根符干就漏标了；
     // 这里按「竖线 → 找符头」再挡一道（实测 p100 的 x=409 就是这么混进来的）。
-    if (heads.some((h) => overlapY(l.box, h.box) && (Math.abs(h.box.left - l.cx) < l.lw * 2 || Math.abs(h.box.right - l.cx) < l.lw * 2))) continue;
+    // 唯一放行的一种：头只是**左缘贴着、落在下端**（小节线后紧跟着的第一个音，符干朝上、头在第一线附近），
+    // 那不是它的干。别的配法照旧挡：放宽成「缘与端配得上才算干」试过，多声部闭合谱里头挂在另一侧、
+    // 或落在干中段的真符干被收成小节线（晨曦破晓、有一位神、万口欢唱、齐来谢主歌各多切一两刀）。
+    const sp = pg.normalStaffSpace || pg.space;
+    const stemOf = (h: Sym) => {
+      if (!overlapY(l.box, h.box)) return false;
+      const atL = Math.abs(h.box.left - l.cx) < l.lw * 2, atR = Math.abs(h.box.right - l.cx) < l.lw * 2;
+      if (!atL && !atR) return false;
+      const cy = (h.box.top + h.box.bottom) / 2;
+      const leadNote = atL && !atR && Math.abs(cy - l.bottom) <= sp && Math.abs(cy - l.top) > sp;
+      return !leadNote;
+    };
+    if (heads.some(stemOf)) continue;
     for (const st of pg.staves) {
       // 容差取**四分之一格**：小节线的两端正落在第一线与第五线上。
       // 放宽到半格的话，从低音伸到符杠的长符干也会「盖满」谱行，被当成小节线
       // （实测 p100 因此在 x=409 处凭空多出一条）。
       const tol = (st.stepDistance() || 1) * 0.5;
-      if (l.top <= st.box.top + tol && l.bottom >= st.box.bottom - tol) {
+      // **整条平移了的**也算：扫描件轻微倾斜，谱线却按水平直线建模，行右端的小节线整体偏上
+      // （数算主恩第四行往右斜 4.5px，x=1218 那条上端 −0.10、下端差 0.31 格够不着第一线）。
+      // 两端离第五线、第一线都不过 0.4 格，长度仍要够一个谱表高（差不到四分之一格）；
+      // 符干的下端在头中心，头只落在线上或间里（0 或 0.5 格），碰不上这个口子。
+      // 上端不卡的话，从谱表上方一格多伸下来的长符干也进来（齐来谢主歌、父恩广大各多切一刀）。
+      const shifted =
+        l.len >= boxH(st.box) - tol && Math.abs(l.top - st.box.top) <= tol * 1.6 && Math.abs(l.bottom - st.box.bottom) <= tol * 1.6;
+      if ((l.top <= st.box.top + tol && l.bottom >= st.box.bottom - tol) || shifted) {
+        // **伸出谱表的那一端要落在某行谱的外线上**：真小节线两端压在第五线、第一线上，
+        // 伸出去也只伸到大谱表另一行的外线。和弦的符干上端高出一格、或两头各伸出 0.3~0.4 格，
+        // 头是认不出的「8」字形空心三度，贴头那道闸拦不住（我灵镇静多切四刀）。
+        if (overshoots(l, st)) break;
         topStaff.set(l, st);
         covers.add(l);
         break;

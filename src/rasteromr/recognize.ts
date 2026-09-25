@@ -11,7 +11,7 @@
 import type { Binary } from "../omr/types";
 import type { Box } from "../staffomr/model";
 import type { Component, Rect } from "../omr/types";
-import { findBarlines, findNoteheads, findStaves, findStems, findTails, makeBars, makeSystems, unknownObjs } from "../staffomr/page";
+import { findBarlines, findNoteheads, findStaves, findStems, findTails, isLeadNoteBarline, makeBars, makeSystems, unknownObjs } from "../staffomr/page";
 import { accidentalAlter, isAccidental, isClef, timeSigDigit, type SmuflName } from "../staffomr/glyphs";
 import { buildNotes, calcAlters, checkBars, findClefKeyTime, keyFifths, lastTimeSignature, type BeamShape, type StaffContext, type StaffNote, type StemInfo, type BarCheck } from "../staffomr/notedata";
 import { attachDynamicTexts, attachNotations, attachWedges, findNotations, findTuplets } from "../staffomr/notations";
@@ -2429,6 +2429,8 @@ function tagLooseStems(pg: SPage): void {
       on.some((n) => Math.abs(n.box.left - l.cx) < sp * 0.2) &&
       top - l.top >= sp * 1.5 &&
       l.bottom - bottom >= sp * 1.5;
+    // 小节线后紧跟着的第一个音贴着小节线的左缘（同 `findStems`，见 `isLeadNoteBarline`）
+    if (!twoSides && on.every((n) => n.ownerStaff && isLeadNoteBarline(l, n, n.ownerStaff))) continue;
     if (upEnd || downEnd || twoSides) l.addTag("Stem");
   }
 }

@@ -310,6 +310,36 @@ function extendIntoInk(bin: Binary, seg: LineSeg, cap: number): void {
 }
 
 /**
+ * **竖笔块太宽，但里头有一条盖满谱表的**：取出那几列当小节线。
+ *
+ * 小节线后第一个音是空心头、圈贴着线画时（我一生要赞美你第五、六行：全音符连到下一小节的二分音符），
+ * 圈的左右两道竖边也在细竖笔的掩模里，与小节线连成一块，块宽超过两个「细」，整块被扔掉，
+ * 那一刀就没了、两小节并成一个。线本身在掩模里是完整的，只是连着别的东西。
+ *
+ * 块须纵向盖住某个谱表带（两端各容半格），带内**整列都有墨**（≥95%）的列连成一段、
+ * 宽不过两个「细」，才取。
+ */
+function barlineCore(mask: Uint8Array, w: number, c: Component, bands: [number, number][], maxW: number, unit: RasterUnit): LineSeg | null {
+  const b = c.bbox;
+  const tol = unit.space * 0.5;
+  const band = bands.find(([t, bt]) => b.y <= t + tol && b.y + b.h - 1 >= bt - tol);
+  if (!band) return null;
+  const top = Math.round(band[0]), bot = Math.round(band[1]);
+  const need = (bot - top + 1) * 0.95;
+  const cols: number[] = [];
+  for (let x = b.x; x < b.x + b.w; x++) {
+    let n = 0;
+    for (let y = top; y <= bot; y++) if (mask[y * w + x]) n++;
+    if (n >= need) cols.push(x);
+  }
+  if (!cols.length) return null;
+  const x0 = cols[0], x1 = cols[cols.length - 1];
+  if (x1 - x0 + 1 !== cols.length || cols.length > maxW) return null;
+  const x = (x0 + x1) / 2;
+  return { x0: x, y0: top, x1: x, y1: bot, lw: cols.length, maxLw: cols.length };
+}
+
+/**
  * 抽出全部几何原语。
  *
  * 三道门槛都按线距 `space` 写（与矢量路同口径，不写绝对像素）：
@@ -396,7 +426,11 @@ export function findPrimitives(
   const vSegs: LineSeg[] = [];
   for (const c of comps(vMask, w, h, Math.max(3, unit.lineThick * 2))) {
     if (c.bbox.h < unit.space * VSEG_MIN_H) continue;
-    if (c.bbox.w > thinV * 2) continue;
+    if (c.bbox.w > thinV * 2) {
+      const core = barlineCore(vMask, w, c, staffBands, thinV * 2, unit);
+      if (core && !atStaffLeft(core.x0) && !staffLefts.some((l) => core.x0 >= l - unit.space && core.x0 <= l + unit.space * 4)) vSegs.push(core);
+      continue;
+    }
     const seg = centerLine(vMask, w, c, false);
     // 谱行左缘那条（系统线）免检，其余要判孤立性——谱号的中央竖笔、升号的竖笔不是原语
     if (!atStaffLeft((seg.x0 + seg.x1) / 2) && !spansStaff(seg) && !isolated(bin, seg, true)) continue;

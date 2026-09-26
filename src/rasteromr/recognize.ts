@@ -2376,6 +2376,7 @@ export async function recognizeRasterPage(
     }
     lyricLines.push(...buildLyricLines(pg, objs));
     foldBilingualLyrics(pg, lyricLines);
+    numberVersesByScript(pg, lyricLines);
     attachLyrics(notes, lyricLines);
   }
 
@@ -2490,35 +2491,70 @@ export async function recognizeRasterPage(
 }
 
 /**
- * **中英对照的闭合谱：下一行谱底下的拉丁歌词并到上一行谱，段号接着排。**
+ * **中英对照的闭合谱：下一行谱底下的拉丁歌词并到上一行谱**（段号由 `numberVersesByScript` 接着排）。
  *
  * 齐来称颂伟大之神那种排法：中文四段印在女声谱表下（两谱表之间），英文四段印在男声谱表下。
  * `buildLyricLines` 按「上方最近的谱行」收，两边各编 1~4 段，中文第 1 段与英文第 1 段
  * 就成了同一段，混成一串。照独唱谱的约定（坚固保障：中文 1~4、英文 5~8，都挂在旋律上）
- * 把英文挂回上一行谱、段号续在中文后面。
+ * 把英文挂回上一行谱。
  *
  * 只在同一系统里**上一行谱全是汉字段、下一行谱全是拉丁段**时并——合唱谱四个声部
  * 各印各的中文词，那是各声部自己的第 1 段，不能动。
  */
 function foldBilingualLyrics(pg: SPage, lines: LyricLine[]): void {
-  const latin = (l: LyricLine) => {
-    const t = l.syllables.map((s) => s.text).join("");
-    const cjk = [...t].filter((c) => /[\u3400-\u9fff]/.test(c)).length;
-    const lat = [...t].filter((c) => /[A-Za-z]/.test(c)).length;
-    return lat > cjk * 3;
-  };
+  const latin = isLatinLine;
   for (const sys of pg.systems) {
     for (let i = 0; i + 1 < sys.staves.length; i++) {
       const up = lines.filter((l) => l.staff === sys.staves[i]);
       const lo = lines.filter((l) => l.staff === sys.staves[i + 1]);
       if (!up.length || !lo.length || up.some(latin) || !lo.every(latin)) continue;
-      const base = Math.max(...up.map((l) => l.verse));
-      for (const l of lo) {
-        l.staff = sys.staves[i];
-        l.verse += base;
-      }
+      // 段号由 `numberVersesByScript` 按文种重编，这里只管挪谱行
+      for (const l of lo) l.staff = sys.staves[i];
     }
   }
+}
+
+/** 拉丁段在页内先编成 `LATIN_VERSE + k`，整首的中文段数定了再挪到中文段后面（`settleLyricVerses`）。 */
+const LATIN_VERSE = 100;
+
+const isLatinLine = (l: LyricLine) => {
+  const t = l.syllables.map((s) => s.text).join("");
+  const cjk = [...t].filter((c) => /[\u3400-\u9fff]/.test(c)).length;
+  const lat = [...t].filter((c) => /[A-Za-z]/.test(c)).length;
+  return lat > cjk * 3;
+};
+
+/**
+ * **段号按文种分开编**：每行谱下的歌词行按上下次序，汉字行编 1、2、3…，拉丁行编 `LATIN_VERSE + 1`…。
+ *
+ * 副歌只印一次的中英对照谱（倚靠主永远膀臂、大地风光、当我们回到天家、更亲近恩主、数算主恩、信心使我得胜），
+ * 副歌那几行谱下只有一行中文一行英文。原来按上下次序连着编，英文副歌成了第 2 段，
+ * 落进中文第 2 段（GT 记在英文第 1 段，中文第 2 段整段归零）。
+ * 英文从第几段起要看**整首**的中文段数（倚靠主第二页只有副歌），这里先占位，见 `settleLyricVerses`。
+ */
+function numberVersesByScript(pg: SPage, lines: LyricLine[]): void {
+  for (const st of pg.staves) {
+    const ls = lines.filter((l) => l.staff === st).sort((a, b) => a.top - b.top);
+    let zh = 0;
+    let la = 0;
+    for (const l of ls) l.verse = isLatinLine(l) ? LATIN_VERSE + ++la : ++zh;
+  }
+}
+
+/**
+ * 整首的音符（各页 `recognizeRasterPage` 的 `notes` 连起来）：拉丁段挪到中文段后面
+ *（中文三段就从第 4 段起），段号与独唱谱的约定一致（坚固保障：中文 1~4、英文 5~8）。
+ * 全曲没有中文段的，英文从第 1 段起。
+ * **零星几个字的段不算数**（字数不到最多那段的两成）：我灵镇静第三系统一条只认出「夏：」的假行
+ * 成了中文第 4 段，英文整体后移一段，拉丁 81.6% → 19.4%。
+ */
+export function settleLyricVerses(notes: { lyrics?: { verse: number }[] }[]): void {
+  const count = new Map<number, number>();
+  for (const n of notes) for (const l of n.lyrics ?? []) if (l.verse < LATIN_VERSE) count.set(l.verse, (count.get(l.verse) ?? 0) + 1);
+  const most = Math.max(0, ...count.values());
+  let zh = 0;
+  for (const [v, c] of count) if (c >= most * 0.2) zh = Math.max(zh, v);
+  for (const n of notes) for (const l of n.lyrics ?? []) if (l.verse > LATIN_VERSE) l.verse = zh + l.verse - LATIN_VERSE;
 }
 
 /**

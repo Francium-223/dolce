@@ -24,6 +24,13 @@ const BAR_REACH = 6;
 const BAR_DX = 0.6;
 /** 至少对上几条谱表小节线才算有简谱行。 */
 const MIN_MATCH = 2;
+/**
+ * 对上的还要占谱表竖线的这么多成。谱表「小节线」按纵贯五线收，和弦的长符干也在里头；
+ * 大谱表之间的歌词字竖笔（约 2 格长）偶然与两根符干同 x，就够了 `MIN_MATCH`
+ *（你的信实广大第 4 系统第 2 段、末系统整行歌词被当简谱行抹掉：对上 2/13、2/14）。
+ * 真的混排谱几乎每条小节线上方都有简谱小节线：是谁、敬拜万世之王、颂赞与尊贵各行 0.6~1。
+ */
+const MIN_MATCH_FRAC = 0.4;
 /** 同一高度的其余短竖线，长度至少是对上那几条最短者的几成才算小节线。 */
 const BAR_SIBLING = 0.75;
 /**
@@ -80,7 +87,7 @@ export function findJianpuBands(
     const deg = matched0.map((v) => matched0.filter((o) => same(v, o)).length);
     const hub = matched0[deg.indexOf(Math.max(...deg))];
     const matched = hub ? matched0.filter((v) => same(v, hub)) : [];
-    if (matched.length < MIN_MATCH) return;
+    if (matched.length < MIN_MATCH || matched.length < staffBars.length * MIN_MATCH_FRAC) return;
     // 带的纵向范围按对上的那几条定（行首那条可能是简谱行自己的起头线，不一定有谱表小节线对着）
     const ys = matched.map(span);
     const top = Math.min(...ys.map((s) => s[0]));

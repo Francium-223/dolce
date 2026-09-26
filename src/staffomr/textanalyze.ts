@@ -440,8 +440,16 @@ export function splitSyllables(o: PObj, dict?: TextGlyphLookup): Syllable[] {
  */
 export function buildLyricLines(pg: SPage, lyrics: PObj[], dict?: TextGlyphLookup): LyricLine[] {
   const rows: { top: number; bottom: number; objs: PObj[] }[] = [];
+  // **位图路合成的对象（`#` 打头的字体）要纵向重叠过半才并**：那边一条歌词条就是一行，
+  // 行距窄的中文段上下两条的盒互相压着十来个像素（标点、偏旁出头），擦边就并，
+  // 三段词并成一段、按 x 交错（《倚靠主永远膀臂》第二行谱「遠膀臂；何我每日满等有…」）。
+  const synth = (o: PObj) => !!o.run?.font.startsWith("#");
   for (const o of lyrics.slice().sort((a, b) => a.box.top - b.box.top)) {
-    const row = rows.find((r) => o.box.top < r.bottom && r.top < o.box.bottom);
+    const row = rows.find((r) => {
+      const ov = Math.min(r.bottom, o.box.bottom) - Math.max(r.top, o.box.top);
+      if (!synth(o) || !r.objs.every(synth)) return ov > 0;
+      return ov > Math.min(r.bottom - r.top, o.box.bottom - o.box.top) * 0.5;
+    });
     if (row) {
       row.objs.push(o);
       row.top = Math.min(row.top, o.box.top);

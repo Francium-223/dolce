@@ -652,6 +652,15 @@ const PITCH_SCORE = 0.3;
  *  93.23 / 93.23 / 93.23 / **93.41** / 92.76%。低了圣哉三一歌伴奏的斜缝内腔只收半边、
  *  挡住模板再搜那一路（它两个都认得出）；高了齐来称颂 C4 那种骑加线的头佐证不够（0.54）。 */
 const CAVITY_MIN = 0.5;
+/** **成对放宽**：圈粗、内腔是斜缝的三度空心叠头（「8」字），两个头的模板分常卡在门槛下一点
+ *  （我灵镇静 0.29 / 0.28、大地风光 0.39 / 0.29）。区里恰好两个位置、隔着至少两级，
+ *  各自模板分过 `PAIR_SCORE`、内腔佐证过 `PAIR_CAVITY`、头盒墨占比过 `PAIR_INK`，就一起收。
+ *  墨占比那一条挡的是八分符尾斜笔 + 符干 + 谱线围出的空框（向主唱新歌：内腔佐证 1.0、模板 0.31 / 0.28，
+ *  墨只有 0.27~0.28；真叠头 0.35~0.43）。独唱谱上模板分扫过 0.20 / 0.22 / **0.25**，内腔 0.6 / **0.7**，
+ *  墨 0.30 / **0.32** / 0.34：都在 ±0.01 以内；0.22 在合唱谱扫描档多收三对 0.24 上下的，扫描歌词 −0.17。 */
+const PAIR_SCORE = 0.25;
+const PAIR_CAVITY = 0.7;
+const PAIR_INK = 0.32;
 
 /** 一个音高位置：中心 y，以及它是不是线位（含加线位）。 */
 export interface PitchStep {
@@ -720,7 +729,22 @@ function pitchScorer(bin: Binary, nl: Binary, rawHoles: Rect[], allMasks: HeadMa
     if (!stem && box.w / sp < W_WHOLE) return null;
     return { code: stem ? "noteheadHalf" : "noteheadWhole", ink };
   };
-  return { cavity, best, clash, codeOf };
+  /** 以 (cx, cy) 为中心、宽 w、高 0.9 格的头盒里的墨占比，**跳过整行是墨的行**（谱线、加线）。 */
+  const inkIn = (cx: number, cy: number, w: number): number => {
+    const x0 = Math.max(0, Math.round(cx - w / 2));
+    const x1 = Math.min(bin.w - 1, Math.round(cx + w / 2));
+    let n = 0;
+    let k = 0;
+    for (let y = Math.max(0, Math.round(cy - sp * 0.45)); y <= Math.min(bin.h - 1, Math.round(cy + sp * 0.45)); y++) {
+      let row = 0;
+      for (let x = x0; x <= x1; x++) row += bin.data[y * bin.w + x];
+      if (row >= (x1 - x0 + 1) * 0.9) continue;
+      n += x1 - x0 + 1;
+      k += row;
+    }
+    return n ? k / n : 0;
+  };
+  return { cavity, best, clash, codeOf, inkIn };
 }
 
 export function hollowHeadsByPitch(
@@ -737,7 +761,7 @@ export function hollowHeadsByPitch(
 ): { box: Rect; code: SmuflName; weak?: boolean }[] {
   const sp = unit.space;
   if (!allMasks.length) return [];
-  const { cavity, best, clash, codeOf } = pitchScorer(bin, nl, rawHoles, allMasks, unit, stems);
+  const { cavity, best, clash, codeOf, inkIn } = pitchScorer(bin, nl, rawHoles, allMasks, unit, stems);
   const ring = Math.max(2, Math.round(sp * RING));
   const out: { box: Rect; code: SmuflName; weak?: boolean }[] = [];
   const headH = Math.round(sp * 1.1);
@@ -749,12 +773,17 @@ export function hollowHeadsByPitch(
     if (!inStaffBand(hole.y + hole.h / 2)) continue;
     const bw = hole.w + ring * 2;
     const cands: { x: number; y: number; s: number }[] = [];
+    const loose: { x: number; y: number; s: number }[] = [];
     for (const st of stepsIn(hole.y - sp * 0.3, hole.y + hole.h + sp * 0.3)) {
       const b = best(st, cx0 - sp * 0.2, cx0 + sp * 0.2);
-      if (!b || b.s < PITCH_SCORE) continue;
-      if (cavity(b.x, st.y) < CAVITY_MIN) continue;
+      if (!b) continue;
+      const cav = cavity(b.x, st.y);
+      if (b.s >= PAIR_SCORE && cav >= PAIR_CAVITY && inkIn(b.x, st.y, hole.w + ring * 2) >= PAIR_INK) loose.push({ x: b.x, y: st.y, s: b.s });
+      if (b.s < PITCH_SCORE || cav < CAVITY_MIN) continue;
       cands.push({ x: b.x, y: st.y, s: b.s });
     }
+    const relaxed = cands.length < 2 && loose.length === 2 && Math.abs(loose[0].y - loose[1].y) > sp * 0.75;
+    if (relaxed) cands.splice(0, cands.length, ...loose);
     cands.sort((a, b) => b.s - a.s);
     const picked: Rect[] = [];
     for (const c of cands) {
@@ -766,6 +795,9 @@ export function hollowHeadsByPitch(
     // 或斜缝内腔上面那个头佐证不够（圣哉三一歌伴奏）——收了半边反倒挡住「空心头按模板再搜」
     // 那一路（它两个都认得出），整区交回去。
     if (picked.length < 2) continue;
+    // 放宽收来的一对**要找得到干**：找不到干的会记成全音符，而那种叠头后面「空心头按模板再搜」
+    // 那一路认得对（大地风光 m8 的 B3/D4 二分，抢过来就成了全音符）。
+    if (relaxed && picked.some((b) => codeOf(b, picked)?.code !== "noteheadHalf")) continue;
     for (const box of picked) {
       const c = codeOf(box, picked);
       if (!c) continue;

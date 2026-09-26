@@ -662,10 +662,22 @@ export function findStems(pg: SPage): void {
       if (side === 0 && isLeadNoteBarline(l, nt, stf)) continue;
       cand.push({ l, side, d: Math.min(dl, dr) });
     }
+    // **并排重叠的两根里，两端正好压在第五线与第一线上的那根不挂**：同一侧并排两根不可能都是这个头的干
+    // （符杠切开的两截纵向是错开的），挂两端离谱表外线远的那根，像小节线的留给小节线——
+    // 坚固保障第三行，头盒右缘把旁边的小节线也框进来，干离缘 3.0、小节线 3.5，按远近分不开。
+    // 不卡「像小节线」、并排重叠的一律只挂一根，合唱谱扫描件音符 −0.12（粗干断成并排两截）。
+    const edge = (l: Seg) => Math.abs(l.top - stf.box.top) + Math.abs(l.bottom - stf.box.bottom);
     for (const side of [0, 1]) {
       const cs = cand.filter((c) => c.side === side);
       const dMin = Math.min(...cs.map((c) => c.d));
-      for (const c of cs) if (c.d <= dMin + lw * 0.5) c.l.addTag("Stem");
+      const near = cs.filter((c) => c.d <= dMin + lw * 0.5).sort((p, q) => edge(q.l) - edge(p.l));
+      const kept: Seg[] = [];
+      for (const c of near) {
+        const barShaped = Math.abs(c.l.top - stf.box.top) <= space * 0.25 && Math.abs(c.l.bottom - stf.box.bottom) <= space * 0.25;
+        if (barShaped && kept.some((k) => Math.min(k.bottom, c.l.bottom) - Math.max(k.top, c.l.top) > Math.min(k.len, c.l.len) * 0.5)) continue;
+        kept.push(c.l);
+        c.l.addTag("Stem");
+      }
     }
   }
 }
@@ -769,6 +781,7 @@ export function findBarlines(pg: SPage): boolean {
   const topStaff = new Map<Seg, Staff>();
   const covers = new Set<Seg>();
   const heads = pg.symbols.filter((s) => s.hasTag("Note") && !isRest(s.code));
+  const stems = pg.segsWithTag("Stem");
   for (const l of vlines) {
     if (l.hasAnyTag()) continue;
     // **贴着某个符头左右缘的竖线是符干，不是小节线**。`findStems` 已经标过一遍，
@@ -784,7 +797,11 @@ export function findBarlines(pg: SPage): boolean {
       if (!atL && !atR) return false;
       const cy = (h.box.top + h.box.bottom) / 2;
       const leadNote = atL && !atR && Math.abs(cy - l.bottom) <= sp && Math.abs(cy - l.top) > sp;
-      return !leadNote;
+      if (leadNote) return false;
+      // 头**已经挂了干**（`findStems` 挂的），这根就不是它的干：并排两根只挂一根（坚固保障第三行，
+      // 干与紧挨着的小节线都贴右缘），或干在另一侧、小节线擦着左缘（有一位神第一行 x=446，头落在谱表中段）
+      const edgeOf = (s: Seg) => Math.min(Math.abs(h.box.left - s.cx), Math.abs(h.box.right - s.cx));
+      return !stems.some((s) => s !== l && edgeOf(s) < l.lw * 2 && overlapY(s.box, h.box));
     };
     if (heads.some(stemOf)) continue;
     for (const st of pg.staves) {
@@ -812,38 +829,37 @@ export function findBarlines(pg: SPage): boolean {
   }
 
   let found = false;
-  const barX = new Set<number>();
+  const barX: { x: number; st: Staff }[] = [];
   for (const it of covers) {
     const ts = topStaff.get(it)!;
     // 与谱表左端重合的是系统线，不算小节线
     if (Math.abs(ts.box.left - it.cx) >= Math.max(it.lw, 1)) {
       it.addTag("BarLine");
-      barX.add(it.cx);
+      barX.push({ x: it.cx, st: ts });
     }
     found = true;
   }
 
-  // 短小节线（只跨一部分谱表的，如钢琴谱中间那截）：与已认小节线同 x 的收进来。
-  // **长度要够**（至少半个谱表高）：`barX` 是整页共用的，别的谱行上的小节线 x
-  // 会把这一行上一两 pt 长的碎段也收成小节线，`classifyBarlines` 随后就在那儿切一刀
-  // （实测 p351 因此一行切出 14 个小节）。
+  // 短小节线（只跨一部分谱表的，如钢琴谱中间那截）：与**同一系统**里已认小节线同 x 的收进来。
+  // 只在多行谱的系统里补：单行谱的小节线必须自己盖满谱表，别的系统同 x 有小节线只是版式巧合，
+  // 按整页收会把上端高出半格的符干也收成小节线（《父恩广大》第一行 x=938 多切一刀）。
+  // **长度要够**（至少半个谱表高）：同 x 会把一两 pt 长的碎段也收成小节线，`classifyBarlines`
+  // 随后就在那儿切一刀（实测 p351 因此一行切出 14 个小节）。
+  const sysOf = new Map<Staff, Staff[]>();
+  for (const g of systemGroups(pg)) if (g.length >= 2) for (const st of g) sysOf.set(st, g);
   const minLen = Math.min(...pg.staves.map((s) => boxH(s.box))) * 0.5;
+  const gapTol = (pg.normalStaffSpace || pg.space) * 0.5;
   for (const l of vlines) {
     if (l.hasAnyTag()) continue;
     if (l.len < minLen) continue;
     // **位置也要对**：要么压在某行谱上（重叠够半个谱表高），要么夹在两行谱之间、两端贴着上下两行
     // （钢琴谱中间那截）。位图上别的竖笔（升号的竖笔连着符干）落在谱表下方歌词带里、
     // 与别处小节线同 x，也够长，就被收成小节线（《来敬拜荣耀王》第 9 小节高音谱表因此多切一刀，后面整行错一个小节）。
-    const onStaff = pg.staves.some((st) => Math.min(l.bottom, st.box.bottom) - Math.max(l.top, st.box.top) >= minLen);
-    const gapTol = (pg.normalStaffSpace || pg.space) * 0.5;
-    const between = pg.staves.some((a) => Math.abs(l.top - a.box.bottom) <= gapTol && pg.staves.some((b) => b !== a && Math.abs(l.bottom - b.box.top) <= gapTol));
-    if (!onStaff && !between) continue;
-    for (const x of barX) {
-      if (Math.abs(l.cx - x) < Math.max(l.lw, 1)) {
-        l.addTag("BarLine");
-        break;
-      }
-    }
+    const onStaff = pg.staves.filter((st) => Math.min(l.bottom, st.box.bottom) - Math.max(l.top, st.box.top) >= minLen);
+    const between = pg.staves.filter((a) => Math.abs(l.top - a.box.bottom) <= gapTol && pg.staves.some((b) => b !== a && Math.abs(l.bottom - b.box.top) <= gapTol));
+    const sys = [...onStaff, ...between].map((st) => sysOf.get(st)).find((g) => g);
+    if (!sys) continue;
+    if (barX.some((b) => sys.includes(b.st) && Math.abs(l.cx - b.x) < Math.max(l.lw, 1))) l.addTag("BarLine");
   }
 
   // Anastasia：小节线是字形
@@ -864,6 +880,18 @@ export function findBarlines(pg: SPage): boolean {
  * 只认路径会把 SATB 的四行谱各算一个系统。没有任何左端标记的（独唱谱）各自成系统。
  */
 export function makeSystems(pg: SPage): void {
+  for (const arr of systemGroups(pg)) {
+    const sys = new SSystem();
+    sys.staves = arr;
+    sys.init();
+    pg.systems.push(sys);
+  }
+  pg.systems.sort((a, b) => a.box.top - b.box.top);
+  pg.systems.forEach((s, i) => (s.index = i));
+}
+
+/** 谱行按系统分组（各组内自上而下）。`makeSystems` 与 `findBarlines` 的短小节线补收共用。 */
+function systemGroups(pg: SPage): Staff[][] {
   const marks: Box[] = [
     ...pg.segsWithTag("SysLine").map((s) => s.box),
     ...pg.symbols.filter((s) => s.code === "bracket" || s.code === "brace").map((s) => s.box),
@@ -872,6 +900,7 @@ export function makeSystems(pg: SPage): void {
     ...pg.objs.filter((o) => o.hasTag("SysBracket")).map((o) => o.box),
   ];
   const done = new Set<Staff>();
+  const out: Staff[][] = [];
   // **罩得多的先分**：同一个系统上既有罩全系统的方括号、也有罩钢琴两行的花括号，
   // 先来后到会让花括号先把那两行占走，剩下的行各自成系统（实测望十架 p3
   // 四行的系统因此裂成「2 + 1 + 1」）。
@@ -880,21 +909,11 @@ export function makeSystems(pg: SPage): void {
     const arr = pg.staves.filter((st) => overlapY(st.box, b));
     if (arr.length < 2) continue; // 只盖住一行的左端线不构成「系统」，留给下面各自成系统
     if (arr.some((st) => done.has(st))) continue;
-    const sys = new SSystem();
-    sys.staves = arr.slice().sort((a, b2) => a.box.top - b2.box.top);
-    sys.init();
-    pg.systems.push(sys);
+    out.push(arr.slice().sort((a, b2) => a.box.top - b2.box.top));
     for (const st of arr) done.add(st);
   }
-  for (const st of pg.staves) {
-    if (done.has(st)) continue;
-    const sys = new SSystem();
-    sys.staves = [st];
-    sys.init();
-    pg.systems.push(sys);
-  }
-  pg.systems.sort((a, b) => a.box.top - b.box.top);
-  pg.systems.forEach((s, i) => (s.index = i));
+  for (const st of pg.staves) if (!done.has(st)) out.push([st]);
+  return out;
 }
 
 // ── 收尾 ────────────────────────────────────────────────────────────────────

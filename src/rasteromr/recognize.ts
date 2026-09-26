@@ -425,6 +425,8 @@ const NUM_DIGITS = [2, 3, 4, 5, 6, 7, 8, 9] as const;
 const DEN_DIGITS = [2, 4, 8] as const;
 const TIME_NUM_DIST = 230;
 const TIME_DEN_DIST = 300;
+/** 头盒落在符尾盒里的比例过这个数就不算头（见建音符前那一段）。 */
+const FLAG_HEAD_OVERLAP = 0.5;
 /** 实心头中心椭圆里白占这么多以上、又没有杠和尾的，时值按空心头算（见 `hollowish`）。 */
 const HOLLOW_FILL = 0.3;
 /** 被符头隔断的竖段接回一根（`joinVSegs`）：中心差（px）、断口上限（格）。 */
@@ -665,6 +667,9 @@ export async function recognizeRasterPage(
   }
 
   const nl = removeStaffLines(raster.bin, lines.map((l) => l.y), unit);
+  /** 分好组的谱线（五条一组）。`lines` 里还混着没成组的横线，按「五条一组」取第几线的判据（`nearRestLine`、`restKind`）
+   *  用它会错位（《所信有根基》简谱行里的减时线过了休止的位置闸，读成二分休止）。 */
+  const staffLines = groups.flatMap((g) => g.lines);
   const staffLefts = groups.map((g) => Math.max(...g.lines.map((l) => l.left)));
   // **加线网格只认分好组的线**。`ledgerGrid` 按「五条一组」取锚点，
   // 混进没成组的线（通长的加线、噪声横线）锚点就全错位，
@@ -863,10 +868,10 @@ export async function recognizeRasterPage(
     if (w < REST_W[0] || w > REST_W[1] || hRest < 0.3 || hRest > REST_H) continue;
     if (w < hRest * REST_RATIO) continue;
     if (c.area / Math.max(1, b.w * b.h) < REST_FILL) continue;
-    if (!nearRestLine(b, lines, unit)) continue;
+    if (!nearRestLine(b, staffLines, unit)) continue;
     if (besideStem(b)) continue;
     restIds.add(c.id);
-    restSyms.push({ box: b, code: restKind(b, lines, unit) });
+    restSyms.push({ box: b, code: restKind(b, staffLines, unit) });
   }
   // **斜笔被抽成竖段的八分休止**：斜笔陡，原语那一步当竖段提走，块图里只剩上头的球
   //（《向主唱新歌》高音谱表下声部一排八分休止，球被歌词行收走）。拿球在去线图上把整个连通域
@@ -1030,7 +1035,7 @@ export async function recognizeRasterPage(
     // 位图上这种碎块一大把（符杠断头、粗横笔的一截），实测宁静一首认出 43 个
     // 全部被采纳，而谱面上根本没那么多。它有一条硬位置：
     // 半休止**坐在中线上**、全休止**吊在上面一线下**——不贴着这两条线的不是它。
-    if (isBarRest(code) && (!nearRestLine(c.bbox, lines, unit) || besideStem(c.bbox))) continue;
+    if (isBarRest(code) && (!nearRestLine(c.bbox, staffLines, unit) || besideStem(c.bbox))) continue;
     syms.push({ box: c.bbox, code });
     ledger.claim(c.bbox, `dict:${code}`);
   }
@@ -1140,7 +1145,8 @@ export async function recognizeRasterPage(
     // 两截都不成符头、字典里也没有二分符头的类（见 `judgeHeadBox`）。
     const code = look.lookup(binSig(nl, box), box.w / unit.space, box.h / unit.space) ?? judgeHeadBox(nl, box, unit, prims.vSegs, inBand);
     if (!code) continue;
-    if (isBarRest(code) && besideStem(box)) continue;
+    // 位置闸与字典那一路一样：并出来的扁块也要贴着第二、三线
+    if (isBarRest(code) && (!nearRestLine(box, staffLines, unit) || besideStem(box))) continue;
     for (const id of group) merged.add(id);
     syms.push({ box, code });
     ledger.claim(box, `merge:${code}`);
@@ -2021,7 +2027,7 @@ export async function recognizeRasterPage(
     ledger.claim(b, "bar:thick");
   }
 
-  // **谱号左边没有音符**、谱号右边紧挨着的「符头」可能是调号：花括号、方括号的弯钩落在谱表上下，圆滚滚的像个全音符
+  // **谱号左边（和正下方）没有音符**、谱号右边紧挨着的「符头」可能是调号：花括号、方括号的弯钩落在谱表上下，圆滚滚的像个全音符
   // （《赞美一神》第二行低音谱表顶上那一个，出了个 G3 全音符）。
   for (const g of groups) {
     const top = g.lines[0].y - unit.space * 2;
@@ -2041,7 +2047,9 @@ export async function recognizeRasterPage(
     }
     for (let i = syms.length - 1; i >= 0; i--) {
       const b = syms[i].box;
-      if (/notehead/i.test(syms[i].code) && b.x + b.w / 2 < clef.box.x && b.y + b.h / 2 >= top && b.y + b.h / 2 <= bottom) syms.splice(i, 1);
+      // 中心在谱号**右缘**以左的都不要：谱号正下方也没有音符，高音谱号下端的弯钩被切出来就是个「头」
+      //（《所信有根基》每行开头多一个 C4）
+      if (/notehead/i.test(syms[i].code) && b.x + b.w / 2 < clef.box.x + clef.box.w && b.y + b.h / 2 >= top && b.y + b.h / 2 <= bottom) syms.splice(i, 1);
     }
   }
 
@@ -2170,6 +2178,22 @@ export async function recognizeRasterPage(
     }
     return tot > 0 && wht / tot >= HOLLOW_FILL;
   };
+  // **大半落在符尾盒里的头不要**：同一块墨先被收成头、后又被符尾自举认成符尾（《所信有根基》八分的尾读成一个 A4 二分）
+  {
+    const flags = pg.symbols.filter((s0) => s0.hasTag("Tail"));
+    const inFlag = (h: Sym) => flags.some((f) => {
+      const w = Math.min(h.box.right, f.box.right) - Math.max(h.box.left, f.box.left);
+      const hh = Math.min(h.box.bottom, f.box.bottom) - Math.max(h.box.top, f.box.top);
+      return w > 0 && hh > 0 && w * hh >= (h.box.right - h.box.left) * (h.box.bottom - h.box.top) * FLAG_HEAD_OVERLAP;
+    });
+    // 只剔**空心**的、且左边紧挨着另有一个头（这根朝上的干的头，右缘贴着干）：真的空心头也会被误认出符尾
+    //（《救主降生》干两端都是空心头，符尾自举只看实心头，把上端当成自由端），它左边没有别的头
+    const sp0 = unit.space;
+    const heads = pg.symbols.filter((s0) => s0.hasTag("Note") && /^notehead/.test(s0.code));
+    const besideHead = (h: Sym) =>
+      heads.some((o) => o !== h && Math.abs(o.box.right - h.box.left) <= sp0 * 0.6 && Math.abs(o.py - h.py) <= sp0 * 2.5 && o.box.left < h.box.left);
+    pg.symbols = pg.symbols.filter((s0) => !(s0.hasTag("Note") && s0.code === "noteheadHalf" && inFlag(s0) && besideHead(s0)));
+  }
   const notes = buildNotes(pg, ctx, beams, stems, hollowish);
   attachAccidentalsByPitch(pg, ctx, notes);
   splitUnisons(notes, stems);

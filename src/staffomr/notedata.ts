@@ -989,6 +989,17 @@ function initChords(notes: StaffNote[], stems: StemInfo[], sp: number): StaffCho
       }
     }
     if (!best) continue;
+    // **时值随挂干的那个头**：落单的头没有干，`buildNotes` 按缺省给了四分（空心给二分），
+    // 可它和挂干的头是同一枚和弦。它又常是最低音、成了和弦的主音（`guessDur` 取 `notes[0]`），
+    // 整枚和弦于是按四分走——《耶和华是我的牧者》三度叠着的八分和弦一百多处都这么读成了四分。
+    // 只照抄同一种符头的（实心随实心、空心随空心）；附点各头自己认，取多的那个。
+    const ref = best.notes.find((m) => m.sym.code === n.sym.code && m.stemUp !== null);
+    if (ref && n.stemUp === null && n.beams === 0) {
+      n.base = ref.base;
+      n.beams = ref.beams;
+      n.dots = Math.max(n.dots, ref.dots);
+      n.duration = n.base * (2 - 1 / 2 ** n.dots);
+    }
     best.notes.push(n);
     best.notes.sort((a, b) => a.diatonic - b.diatonic);
     best.notes.forEach((m, i) => (m.chordExtra = i > 0 || undefined));
@@ -1046,8 +1057,10 @@ function checkFull(chords: StaffChord[], expect: number, sp: number, ignoreSmall
   let chs = chords;
   const small: StaffChord[] = [];
   if (ignoreSmall) {
-    const sizes = chords.flatMap((c) => c.notes.map(headSize));
-    const mid = Math.max(...sizes);
+    // 与**中位数**比，不与最大值比：个别头盒偏高（粘了别的笔画）就把门槛抬上去，
+    // 正常大小的单音整批被当成倚音剔掉（《向主唱新歌》第一小节四个音连同歌词没了）
+    const sizes = chords.flatMap((c) => c.notes.map(headSize)).sort((a, b) => a - b);
+    const mid = sizes[sizes.length >> 1];
     chs = [];
     for (const c of chords) {
       if (c.notes.length === 1 && headSize(c.notes[0]) < mid * 0.7) {

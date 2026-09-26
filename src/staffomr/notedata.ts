@@ -701,7 +701,7 @@ export function buildNotes(
     let step = "";
     let octave = 0;
     if (!rest) {
-      diatonic = mid + stf.middleStep(s.py);
+      diatonic = mid + stf.middleStep(s.py, (s.box.left + s.box.right) / 2);
       const p = stepToPitch(diatonic);
       step = p.step;
       octave = p.octave;

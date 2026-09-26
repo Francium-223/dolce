@@ -26,7 +26,7 @@ import { completeStaffBars, cutJianpuStrip, eraseInBand, findJianpuBands, jianpu
 import { fuseJianpu, type FuseStats, type JianpuRow } from "./jianpufuse";
 import { findLyricRows, foldLyricChars, isLatinRow, LATIN_MIN_CHAINED, latinCells, mapCharsToCells, splitMixedChars, stripKey, stripOf, stripWithout, type LyricRow, type LyricStrip, type OcrChar } from "./lyric";
 import { findHoles, traceContours, type ContourMap } from "./contour";
-import { buildHeadMasks, buildHollowMasks, headFromStemBlock, splitHeadCluster } from "./headmask";
+import { buildHeadMasks, buildHollowMasks, headFromStemBlock, scoreAt, splitHeadCluster } from "./headmask";
 import { headProb, trainHeadClassifier } from "./headclass";
 import { findStaffLabels, labelKey, normalizeLabel, type LabelStrip } from "./stafflabel";
 import { findHarmonyStrips, harmonyKey, harmonyLine, readHarmonyStrip, type HarmonyStrip, type HarmonyToken } from "./harmony";
@@ -36,7 +36,7 @@ import { findRasterSlurs } from "./slur";
 import { ContourLedger } from "./ledger";
 import { attachHarmonies, attachLyrics, buildLyricLines, type LyricLine } from "../staffomr/textanalyze";
 import { attachSlurs, markSlurNotes, reconnectSlurs, type SlurArc } from "../staffomr/slur";
-import { estimateUnit, findStaffLines, groupStaves, traceLeft, type RasterUnit, type StaffLineRun } from "./staffline";
+import { estimateUnit, findStaffLines, groupStaves, localLineModel, pitchPos, pitchY, traceLeft, type RasterUnit, type StaffLineRun } from "./staffline";
 import { completeStaffLines } from "./dewarp";
 import { rasterizePage, type RasterPage } from "./rasterpage";
 
@@ -308,6 +308,13 @@ function ledgerCandidates(bin: Binary, groups: { lines: StaffLineRun[]; space: n
     }
   }
   return out;
+}
+
+/** 一行谱的几何与**随 x 变化的五线**（`staffline.ts::localLineModel`）。 */
+interface LineFrame {
+  top: number;
+  bottom: number;
+  at: (x: number) => number[];
 }
 
 /** 区间 [y0, y1] 里的全部音高位置（与 `makePitchGrid` 同一张表：每行谱顶线上下各五条加线的线位与间位）。 */
@@ -595,6 +602,8 @@ const FLAG_REACH = 1.6;
 const FLAG_HEAD_BAND = 2.5;
 /** 符尾与干那端实心头的最小距离（格）。 */
 const FLAG_GAP = 2.8;
+/** 头盒中心离整音级这么多（级）以上算悬着，交模板定夺。 */
+const SNAP_AMBIG = 0.25;
 
 /** 认一页。顺序照 `staffomr/index.ts::recognizeStaffPage`，**别调**。 */
 export async function recognizeRasterPage(
@@ -698,6 +707,15 @@ export async function recognizeRasterPage(
   // 抹之前把条切下来，留给离线认简谱。定位判据是「短竖线与谱表小节线同 x」，
   // 独唱谱、合唱谱对不上，这一段对它们空转。
   const staffGeoms = groups.map((g) => ({ left: Math.max(...g.lines.map((l) => l.left)), right: Math.min(...g.lines.map((l) => l.right)), top: g.lines[0].y, bottom: g.lines[4].y }));
+  // **随 x 变化的五线**：页面轻微倾斜、线距不匀时，局部实测的线与整行的 y 差出 3~6 像素（44 首独唱谱 p99）。
+  // 读音高、悬着的空心头定夺按该处的五线、相邻两线间的相对位置来（`staffline.ts::localLineModel`）。
+  // **按音高位置配模板、吸附网格不用它**：接上之后独唱谱音符 −0.13~−0.28（拆块、摘头的候选位置一挪，
+  // 和弦成员、时值跟着连锁变，主我敬拜你 +4.9、向主唱新歌 −8.8），仍是整行的等距网格。
+  const frames: LineFrame[] = groups.map((g, i) => ({
+    top: staffGeoms[i].top,
+    bottom: staffGeoms[i].bottom,
+    at: localLineModel(raster.bin, g.lines.map((l) => l.y), staffGeoms[i].left, staffGeoms[i].right, unit),
+  }));
   const jianpuBands = findJianpuBands(prims.vSegs, staffGeoms, unit);
   // 简谱小节线同 x 的谱表竖段补成整条小节线（细线扫描件被阈值切断的，见 `completeStaffBars`）
   completeStaffBars(prims.vSegs, staffGeoms, jianpuBands, unit);
@@ -2153,6 +2171,34 @@ export async function recognizeRasterPage(
       if ((syms[i].code === "noteheadHalf" || syms[i].code === "noteheadWhole") && isFlag(syms[i].box)) syms.splice(i, 1);
   }
 
+  // ── 悬在两级之间的**空心头**：按相邻线的相对位置取上下两个候选，模板定夺 ─────
+  //
+  // 头盒中心按该处实测的五线换成音级位置，离整数 `SNAP_AMBIG` 级以上的（头盒带进了圈的缺口、干根、加线），
+  // 在上下两个候选位置各拿本页自举的空心模板打分（骑线/在间分开），取高的，头盒挪过去。
+  // **只对空心头**：实心头也做，独唱谱音符 −0.19（悬着的实心头多是被符杠、干根拉偏的，模板窗口里压着同样的东西）；
+  // 空心头 +0.12。
+  if (hollowMasks.length) {
+    const sp = unit.space;
+    for (const s0 of syms) {
+      if (s0.code !== "noteheadHalf" && s0.code !== "noteheadWhole") continue;
+      const cx = s0.box.x + s0.box.w / 2;
+      const cy = s0.box.y + s0.box.h / 2;
+      const f = frames.find((q) => cy > q.top - sp * 3 && cy < q.bottom + sp * 3);
+      if (!f) continue;
+      const ys = f.at(cx);
+      const pos = pitchPos(ys, cy);
+      if (!isFinite(pos) || Math.abs(pos - Math.round(pos)) < SNAP_AMBIG) continue;
+      let best: { y: number; s: number } | null = null;
+      for (const p of [Math.floor(pos), Math.ceil(pos)]) {
+        const y = pitchY(ys, p);
+        const m = hollowMasks.find((k) => k.onLine === (p % 2 === 0)) ?? hollowMasks[0];
+        const sc = scoreAt(raster.bin, m, cx, y);
+        if (!best || sc > best.s) best = { y, s: sc };
+      }
+      if (best) s0.box = { ...s0.box, y: Math.round(s0.box.y + best.y - cy) };
+    }
+  }
+
   // **切加线要用最终认出来的全部符头**：除了 `findRasterHeads`，还有按内腔找的、
   // 拆块拆出来的、字典查出来的、碎块并回再判出来的——少算哪一路，那一路的符头
   // 就只能蹭邻居的加线，`findLegers` 判否、整批挂不上谱行。
@@ -2208,6 +2254,12 @@ export async function recognizeRasterPage(
     sysBrackets: groupByLeftInk(raster.bin, groups.map((g) => ({ top: g.lines[0].y, bottom: g.lines[4].y, left: Math.max(...g.lines.map((l) => l.left)) })), unit),
   });
   if (!findStaves(pg)) return empty(pg, raster, unit, opts.carryTime);
+  // 读音高按该处实测的五线、相邻两线间的相对位置（`Staff.middleStep`）
+  for (const stf of pg.staves) {
+    if (stf.lineYs.length !== 5) continue;
+    const f = frames.find((q) => Math.abs(q.top - stf.lineYs[0]) < unit.space);
+    if (f) stf.lineYsAt = f.at;
+  }
 
   findNoteheads(pg);
   findStems(pg);

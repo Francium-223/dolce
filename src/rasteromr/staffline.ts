@@ -244,3 +244,92 @@ export function groupStaves(lines: StaffLineRun[]): StaffGroup[] {
   }
   return out;
 }
+
+/**
+ * **随 x 变化的五线位置**：整行谱一个 y 只是投影峰，页面轻微倾斜、弯曲、线距不匀时，
+ * 局部实测的线与它差出 3~6 像素（44 首独唱谱 p99；线距 15~20 像素时，半格只有 7~10 像素，
+ * 读音高四舍五入的分界离中心 3.5~5 像素）。
+ *
+ * 按一格宽的桶逐列量：每条线在名义 y 上下 0.35 格里找墨的竖游程，厚度不超过 2.5 个线宽
+ *（压着符头、符干的列厚得多，不算），取桶内中位；五条线的偏移再取中位当这一桶的整体平移。
+ * 量不到的桶从两侧插值、一侧都没有就取最近的。返回 `x → 五条线的 y`（桶中心之间线性插值）。
+ */
+export function localLineModel(bin: Binary, lineYs: number[], left: number, right: number, unit: RasterUnit): (x: number) => number[] {
+  const sp = unit.space;
+  const bw = Math.max(4, Math.round(sp));
+  const x0 = Math.max(0, Math.round(left));
+  const x1 = Math.min(bin.w - 1, Math.round(right));
+  const nb = Math.max(1, Math.ceil((x1 - x0 + 1) / bw));
+  const maxRun = unit.lineThick * 2.5;
+  const reach = sp * 0.35;
+  /** 每条线、每个桶的实测中心（量不到为 NaN）。 */
+  const meas = lineYs.map((ly) => {
+    const out = new Float64Array(nb).fill(NaN);
+    for (let b = 0; b < nb; b++) {
+      const cs: number[] = [];
+      for (let x = x0 + b * bw; x < Math.min(x1 + 1, x0 + (b + 1) * bw); x++) {
+        let best = NaN;
+        for (let y = Math.max(0, Math.round(ly - reach)); y <= Math.min(bin.h - 2, Math.round(ly + reach)); y++) {
+          if (!bin.data[y * bin.w + x]) continue;
+          let e = y;
+          while (e + 1 < bin.h && bin.data[(e + 1) * bin.w + x]) e++;
+          // 游程从窗口上沿之外连进来的，起点往上补齐再量厚度
+          let s = y;
+          while (s > 0 && bin.data[(s - 1) * bin.w + x]) s--;
+          if (e - s + 1 <= maxRun) {
+            const c = (s + e) / 2;
+            if (isNaN(best) || Math.abs(c - ly) < Math.abs(best - ly)) best = c;
+          }
+          y = e;
+        }
+        if (!isNaN(best)) cs.push(best);
+      }
+      if (cs.length >= Math.max(2, bw / 4)) {
+        cs.sort((a, b2) => a - b2);
+        out[b] = cs[cs.length >> 1];
+      }
+    }
+    return out;
+  });
+  // 每桶取**五条线偏移的中位数**当整体平移：骑线的空心头、贴线的符杠只带偏其中一条（奇异恩典中线被头的细圈带偏 2.6 像素）
+  const shift = new Float64Array(nb).fill(NaN);
+  for (let b = 0; b < nb; b++) {
+    const ds = meas.map((m, k) => m[b] - lineYs[k]).filter((d) => !isNaN(d)).sort((a, c) => a - c);
+    if (ds.length >= 3) shift[b] = ds[ds.length >> 1];
+  }
+  const idx = [...shift.keys()].filter((i) => !isNaN(shift[i]));
+  if (!idx.length) return () => lineYs;
+  for (let i = 0; i < nb; i++) {
+    if (!isNaN(shift[i])) continue;
+    const lo = idx.filter((j) => j < i).pop();
+    const hi = idx.find((j) => j > i);
+    shift[i] = lo === undefined ? shift[hi!] : hi === undefined ? shift[lo] : shift[lo] + ((shift[hi] - shift[lo]) * (i - lo)) / (hi - lo);
+  }
+  // 相邻三桶取中位，压掉单桶的跳变
+  const sm = shift.map((_, i) => [shift[Math.max(0, i - 1)], shift[i], shift[Math.min(nb - 1, i + 1)]].sort((a, c) => a - c)[1]);
+  return (x: number) => {
+    const t = (x - x0) / bw - 0.5;
+    const i = Math.max(0, Math.min(nb - 1, Math.floor(t)));
+    const j = Math.min(nb - 1, i + 1);
+    const f = Math.max(0, Math.min(1, t - i));
+    const d = sm[i] + (sm[j] - sm[i]) * f;
+    return lineYs.map((y) => y + d);
+  };
+}
+
+/** 按**相邻两条线的相对位置**把 y 换成音级位置：第一线为 0、往下每半格 +1；线外按最近的线距外推。 */
+export function pitchPos(ys: number[], y: number): number {
+  if (y <= ys[0]) return ((y - ys[0]) / (ys[1] - ys[0])) * 2;
+  if (y >= ys[4]) return 8 + ((y - ys[4]) / (ys[4] - ys[3])) * 2;
+  let k = 0;
+  while (k < 3 && y > ys[k + 1]) k++;
+  return k * 2 + ((y - ys[k]) / (ys[k + 1] - ys[k])) * 2;
+}
+
+/** `pitchPos` 的反函数：音级位置 → y。 */
+export function pitchY(ys: number[], p: number): number {
+  if (p <= 0) return ys[0] + (p / 2) * (ys[1] - ys[0]);
+  if (p >= 8) return ys[4] + ((p - 8) / 2) * (ys[4] - ys[3]);
+  const k = Math.min(3, Math.floor(p / 2));
+  return ys[k] + (p / 2 - k) * (ys[k + 1] - ys[k]);
+}

@@ -305,6 +305,11 @@ export class Staff {
   index = -1;
   page: SPage | null = null;
   bars: Bar[] = [];
+  /**
+   * **随 x 变化的五线位置**（位图路给，见 `rasteromr/staffline.ts::localLineModel`）。
+   * 有它时 `middleStep(y, x)` 按该处实测的五线、相邻两线间的相对位置算，没有（矢量路）就用整行的 `lineYs`。
+   */
+  lineYsAt?: (x: number) => number[];
 
   /** `Staff::init`：包围盒纵向取首尾两条线，横向取所有线的并集。 */
   init(left?: number, right?: number): void {
@@ -336,7 +341,21 @@ export class Staff {
   /** `Staff::middleStep`：某个 y 相对中线（第三线）的音级数。
    *  **y 向下**，所以往上（y 小）是正数——与 musicpp 的符号相反那一半在这里已经调好：
    *  中线上方 +、下方 −，与「音越高数越大」一致。 */
-  middleStep(y: number): number {
+  middleStep(y: number, x?: number): number {
+    if (x !== undefined && this.lineYsAt && this.lineYs.length === 5) {
+      // 按**相邻两条线之间的相对位置**读（同 `rasteromr/staffline.ts::pitchPos`；staffomr 不引 rasteromr，抄一份）：
+      // 整行统一线距从中线数，线距不匀、页面倾斜时会偏
+      const ys = this.lineYsAt(x);
+      let pos: number; // 以第一线为 0、往下每条线 +2 的音级位置
+      if (y <= ys[0]) pos = ((y - ys[0]) / (ys[1] - ys[0])) * 2;
+      else if (y >= ys[4]) pos = 8 + ((y - ys[4]) / (ys[4] - ys[3])) * 2;
+      else {
+        let k = 0;
+        while (k < 3 && y > ys[k + 1]) k++;
+        pos = k * 2 + ((y - ys[k]) / (ys[k + 1] - ys[k])) * 2;
+      }
+      if (isFinite(pos)) return Math.round(4 - pos);
+    }
     const d = this.stepDistance();
     if (!d) return 0;
     return Math.round((this.cy - y) / d);

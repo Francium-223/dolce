@@ -14,8 +14,8 @@ import type { Binary, Rect } from "../omr/types";
 import type { LineSeg } from "./prims";
 import type { RasterUnit } from "./staffline";
 
-/** 简谱小节线的长度（线距的倍数）：《是谁》2.34 格；比谱表小节线（4 格）短得多。 */
-const BAR_LEN = [1.2, 3.5] as const;
+/** 简谱小节线的长度（线距的倍数）：《是谁》2.34 格、敬拜万世之王 3.7 格（数字大、上下有高低音点）。 */
+const BAR_LEN = [1.2, 4] as const;
 /** 简谱小节线的下端离谱表顶线至少多远（线距）：再近就是符干、符杠那一带。 */
 const BAR_CLEAR = 0.5;
 /** 往上最多找多远（线距）。 */
@@ -24,6 +24,8 @@ const BAR_REACH = 6;
 const BAR_DX = 0.6;
 /** 至少对上几条谱表小节线才算有简谱行。 */
 const MIN_MATCH = 2;
+/** 同一高度的其余短竖线，长度至少是对上那几条最短者的几成才算小节线。 */
+const BAR_SIBLING = 0.75;
 /**
  * 带在小节线上下各放多少（线距）：上面要罩住高音点和圆滑线的弧顶
  * （《是谁》弧顶比小节线顶高 0.7 格），下面要罩住减时线与低音点（低 0.25 格）。
@@ -63,19 +65,33 @@ export function findJianpuBands(
     const cands = vSegs.filter((v) => {
       const [a, b] = span(v);
       const len = (b - a) / sp;
-      return len >= BAR_LEN[0] && len <= BAR_LEN[1] && b <= st.top - sp * BAR_CLEAR && b >= st.top - sp * BAR_REACH && cx(v) >= st.left - sp && cx(v) <= st.right + sp;
+      return len >= BAR_LEN[0] && len <= BAR_LEN[1] && b <= st.top - sp * BAR_CLEAR && b >= st.top - sp * BAR_REACH && cx(v) >= st.left - sp && cx(v) <= st.right + sp &&
+        // 压着别的谱行的是那一行自己的小节线（你的信实广大谱行只隔 5 格，上一行的小节线落进窗口）
+        !staves.some((o) => o !== st && a < o.bottom && b > o.top);
     });
-    const matched = cands.filter((v) => staffBars.some((x) => Math.abs(cx(v) - x) <= sp * BAR_DX));
+    const matched0 = cands.filter((v) => staffBars.some((x) => Math.abs(cx(v) - x) <= sp * BAR_DX));
+    // **对上的要在同一高度**：取与别人纵向重叠（过短者一半）最多的那一簇。
+    // 行首谱表左端上方和弦字母的竖笔也对得上（敬拜万世之王末行 y 比简谱小节线高两格），混进来带顶就罩住和弦
+    const same = (p: LineSeg, q: LineSeg) => {
+      const [a, b] = span(p);
+      const [c, d] = span(q);
+      return Math.min(b, d) - Math.max(a, c) > Math.min(b - a, d - c) * 0.5;
+    };
+    const deg = matched0.map((v) => matched0.filter((o) => same(v, o)).length);
+    const hub = matched0[deg.indexOf(Math.max(...deg))];
+    const matched = hub ? matched0.filter((v) => same(v, hub)) : [];
     if (matched.length < MIN_MATCH) return;
     // 带的纵向范围按对上的那几条定（行首那条可能是简谱行自己的起头线，不一定有谱表小节线对着）
     const ys = matched.map(span);
     const top = Math.min(...ys.map((s) => s[0]));
     const bot = Math.max(...ys.map((s) => s[1]));
-    // 同一高度的其余短竖线（行首线）一并算作简谱行的小节线
+    // 同一高度的其余短竖线（行首线）一并算作简谱行的小节线。**长度要与对上的相当**：
+    // 数字「1」「7」的竖笔也在这一高度（敬拜万世之王末行混进十条，补小节线会把旁边的符干当小节线）
+    const minLen = Math.min(...ys.map((s) => s[1] - s[0])) * BAR_SIBLING;
     const bars = cands
       .filter((v) => {
         const [a, b] = span(v);
-        return a <= bot && b >= top;
+        return a <= bot && b >= top && b - a >= minLen;
       })
       .map(cx)
       .sort((a, b) => a - b);
@@ -84,6 +100,65 @@ export function findJianpuBands(
     out.push({ staff: k, box: { x: Math.round(st.left - sp), y: y0, w: Math.round(st.right - st.left + sp * 2), h: y1 - y0 }, bars });
   });
   return out;
+}
+
+/** 谱表上补齐小节线：竖段至少盖住谱表高的几成（其余几成是阈值切掉的淡墨）。 */
+const BAR_COVER = 0.6;
+/** 补齐时竖段两端探出谱表不过多少（线距）：再多是符干。 */
+const BAR_OVERSHOOT = 0.3;
+
+/**
+ * **拿简谱行的小节线补齐谱表上断开、短一截的小节线**，原地改 `vSegs`，返回补了几条。
+ *
+ * 细线扫描件（敬拜万世之王）的谱表小节线灰度 150~200，按阈值切成一截一截：
+ * 第五线到第四线那段整格没了，或下端差第一线 0.4 格——`findBarlines` 要两端贴着外线（四分之一格），
+ * 收不下，整行漏切两个小节。混排谱的简谱小节线与谱表小节线同 x，是现成的旁证：
+ * 简谱小节线正下方、谱表范围内的竖段（可以是几截）合起来盖住谱表高六成以上，
+ * 两端不探出谱表，就并成一条纵贯五线的竖段。已经盖满的不动；找不到竖段的不凭空补。
+ */
+export function completeStaffBars(
+  vSegs: LineSeg[],
+  staves: { top: number; bottom: number }[],
+  bands: JianpuBand[],
+  unit: RasterUnit,
+): number {
+  const sp = unit.space;
+  let n = 0;
+  for (const b of bands) {
+    const st = staves[b.staff];
+    const h = st.bottom - st.top;
+    for (const x of b.bars) {
+      const near = vSegs.filter((v) => {
+        const a = Math.min(v.y0, v.y1);
+        const e = Math.max(v.y0, v.y1);
+        return Math.abs((v.x0 + v.x1) / 2 - x) <= sp * BAR_DX && a >= st.top - sp * BAR_OVERSHOOT && e <= st.bottom + sp * BAR_OVERSHOOT;
+      });
+      if (!near.length) continue;
+      // 竖段中心离简谱小节线最近的那一列（半个线宽内的算同一根）
+      const cx = (v: LineSeg) => (v.x0 + v.x1) / 2;
+      const best = Math.min(...near.map((v) => Math.abs(cx(v) - x)));
+      const col = near.filter((v) => Math.abs(cx(v) - x) <= best + Math.max(2, v.lw));
+      const top = Math.min(...col.map((v) => Math.min(v.y0, v.y1)));
+      const bot = Math.max(...col.map((v) => Math.max(v.y0, v.y1)));
+      if (top <= st.top + sp * 0.25 && bot >= st.bottom - sp * 0.25) continue;
+      // 按合起来的覆盖量算（几截之间的断口不算）
+      const ys = col.map((v) => [Math.max(st.top, Math.min(v.y0, v.y1)), Math.min(st.bottom, Math.max(v.y0, v.y1))]).sort((p, q) => p[0] - q[0]);
+      let cover = 0;
+      let reach = -Infinity;
+      for (const [a, e] of ys) {
+        if (e <= reach) continue;
+        cover += e - Math.max(a, reach);
+        reach = e;
+      }
+      if (cover < h * BAR_COVER) continue;
+      const lw = col.reduce((s, v) => s + v.lw, 0) / col.length;
+      const mx = col.reduce((s, v) => s + cx(v), 0) / col.length;
+      for (const v of col) vSegs.splice(vSegs.indexOf(v), 1);
+      vSegs.push({ x0: mx, y0: st.top, x1: mx, y1: st.bottom, lw, maxLw: Math.max(...col.map((v) => v.maxLw)) });
+      n++;
+    }
+  }
+  return n;
 }
 
 /**

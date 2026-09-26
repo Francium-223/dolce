@@ -66,9 +66,10 @@ interface Track {
  * 这一版按**行谱分带**：每条轨迹（= 一行谱）自己一条偏移曲线，
  * 像素落在两行谱之间就按 y 在两条曲线之间线性插值，页面上下两头沿用最近那条。
  */
-export function applyTrackWarp(bin: Binary, tracks: TrackCurve[]): void {
+export function applyTrackWarp(bin: Binary, tracks: TrackCurve[], also: Uint8Array[] = []): void {
   const { w, h, data } = bin;
   const out = new Uint8Array(w * h);
+  const outs = also.map(() => new Uint8Array(w * h));
   const sorted = [...tracks].sort((a, b) => a.mid - b.mid);
   const cols = sorted[0].off.length;
   for (let y = 0; y < h; y++) {
@@ -84,9 +85,11 @@ export function applyTrackWarp(bin: Binary, tracks: TrackCurve[]): void {
       const sy = y + Math.round(off);
       if (sy < 0 || sy >= h) continue;
       out[y * w + x] = data[sy * w + x];
+      for (let j = 0; j < also.length; j++) outs[j][y * w + x] = also[j][sy * w + x];
     }
   }
   data.set(out);
+  also.forEach((a, j) => a.set(outs[j]));
 }
 
 /** 一行谱的偏移曲线：中位高度 + 逐取样列的偏移量。 */

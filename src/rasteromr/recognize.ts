@@ -22,7 +22,7 @@ import { binSig, blobImage, extendVSegs, findBlobs, findBraces, findPrimitives, 
 import { findRasterHeads, hollowHeadsByPitch, hollowHeadsFromHoles, hollowHeadsOnLedgers, judgeHeadBox, mergeHoles, type PitchStep } from "./notehead";
 import { bootstrapClefs, matchTemplate, RasterGlyphLookup, type BootStaff } from "./rasterglyphs";
 import { sigDistance } from "../omr/glyphdict";
-import { cutJianpuStrip, eraseInBand, findJianpuBands, jianpuKey, type JianpuStrip } from "./jianpuband";
+import { completeStaffBars, cutJianpuStrip, eraseInBand, findJianpuBands, jianpuKey, type JianpuStrip } from "./jianpuband";
 import { fuseJianpu, type FuseStats, type JianpuRow } from "./jianpufuse";
 import { findLyricRows, foldLyricChars, isLatinRow, latinCells, mapCharsToCells, stripKey, stripOf, type LyricRow, type LyricStrip, type OcrChar } from "./lyric";
 import { findHoles, traceContours, type ContourMap } from "./contour";
@@ -662,11 +662,11 @@ export async function recognizeRasterPage(
   //（见 `jianpuband.ts`）。整块落在带里的墨从两张图上抹掉，带里的原语一并摘掉；
   // 抹之前把条切下来，留给离线认简谱。定位判据是「短竖线与谱表小节线同 x」，
   // 独唱谱、合唱谱对不上，这一段对它们空转。
-  const jianpuBands = findJianpuBands(
-    prims.vSegs,
-    groups.map((g) => ({ left: Math.max(...g.lines.map((l) => l.left)), right: Math.min(...g.lines.map((l) => l.right)), top: g.lines[0].y, bottom: g.lines[4].y })),
-    unit,
-  );
+  const staffGeoms = groups.map((g) => ({ left: Math.max(...g.lines.map((l) => l.left)), right: Math.min(...g.lines.map((l) => l.right)), top: g.lines[0].y, bottom: g.lines[4].y }));
+  const jianpuBands = findJianpuBands(prims.vSegs, staffGeoms, unit);
+  // 简谱小节线同 x 的谱表竖段补成整条小节线（细线扫描件被阈值切断的，见 `completeStaffBars`）
+  completeStaffBars(prims.vSegs, staffGeoms, jianpuBands, unit);
+  if (raster.gray) bridgeFaintBars(prims.vSegs, raster.gray, raster.bin.w, groups.map((g) => g.lines.map((l) => l.y)), unit);
   const jianpuStrips = jianpuBands.map((b) => cutJianpuStrip(raster.bin, b));
   if (jianpuBands.length) {
     for (const b of jianpuBands) eraseInBand([raster.bin, nl], b.box);
@@ -3052,4 +3052,54 @@ function isStackedPair(box: Rect, area: number, unit: { space: number }): boolea
   const w = box.w / unit.space;
   const h = box.h / unit.space;
   return w >= 0.9 && w <= 1.7 && h >= 1.7 && h <= 2.4 && area / Math.max(1, box.w * box.h) >= 0.7;
+}
+
+/** 断开的小节线：竖段至少盖住谱表高的几成、缺口处有几成是「比左右暗」的淡墨才补。 */
+const FAINT_BAR_COVER = 0.6;
+const FAINT_BAR_FILL = 0.8;
+/** 淡墨要比左右 `FAINT_SIDE` 像素外暗过多少灰度。实测断口 170~206、页白 245 上下。 */
+const FAINT_DELTA = 25;
+const FAINT_SIDE = 4;
+
+/**
+ * **细线扫描件回灰度核断开的小节线**（只有 `RasterPage.gray` 的页才走）。
+ *
+ * 敬拜万世之王的小节线灰度 150~206，松阈值那一档也切不全：第五线到第四线整格没了、
+ * 或下端差第一线 0.4 格，`findBarlines` 要两端贴外线（四分之一格）收不下。原图其实是连着的。
+ * 整页换二值化试过三种（脊线图并入、只收长游程、只补断口），字的竖笔、弧线端跟着变，
+ * 歌词、弧线各掉一两点——所以**先按几何找出疑似断开的那一根，再只看那一列的灰度**：
+ * 竖段两端都在谱表内（不探出 0.3 格）、盖住谱表高六成以上，缺口里八成的行比左右暗过 25
+ * （或正压在谱线上），就补成纵贯五线的一条。符干碰不上：头那一端缺口是符头的墨，
+ * 左右也暗；另一端缺口是白的。
+ */
+function bridgeFaintBars(vSegs: LineSeg[], gray: Uint8Array, w: number, staves: number[][], unit: RasterUnit): void {
+  const sp = unit.space;
+  const lt = Math.max(1, unit.lineThick);
+  for (const ys of staves) {
+    const top = ys[0];
+    const bot = ys[4];
+    const onLine = (y: number) => ys.some((ly) => Math.abs(y - ly) <= lt);
+    for (let i = 0; i < vSegs.length; i++) {
+      const v = vSegs[i];
+      const a = Math.min(v.y0, v.y1);
+      const b = Math.max(v.y0, v.y1);
+      if (a < top - sp * 0.3 || b > bot + sp * 0.3) continue;
+      if (b - a < (bot - top) * FAINT_BAR_COVER) continue;
+      if (a <= top + sp * 0.25 && b >= bot - sp * 0.25) continue;
+      const x = Math.round((v.x0 + v.x1) / 2);
+      if (x - FAINT_SIDE - 1 < 0 || x + FAINT_SIDE + 1 >= w) continue;
+      const dark = (y: number) => {
+        const r = Math.round(y) * w;
+        const c = Math.min(gray[r + x - 1], gray[r + x], gray[r + x + 1]);
+        const side = Math.min(gray[r + x - FAINT_SIDE - 1], gray[r + x + FAINT_SIDE + 1]);
+        return side - c >= FAINT_DELTA;
+      };
+      let gap = 0;
+      let hit = 0;
+      for (let y = Math.round(top); y < a; y++) (gap++, (hit += +(onLine(y) || dark(y))));
+      for (let y = Math.round(b) + 1; y <= bot; y++) (gap++, (hit += +(onLine(y) || dark(y))));
+      if (!gap || hit < gap * FAINT_BAR_FILL) continue;
+      vSegs[i] = { ...v, x0: x, x1: x, y0: Math.min(a, top), y1: Math.max(b, bot) };
+    }
+  }
 }

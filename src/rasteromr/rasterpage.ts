@@ -41,6 +41,11 @@ export interface RasterPage {
   halftone: number;
   /** 细线扫描件：按松阈值补过竖笔（见 `rasterizePage` 里 `mergeVertical` 那段）。 */
   faint: boolean;
+  /**
+   * 细线扫描件的灰度图（与 `bin` 同尺寸、同样推平去倾斜过），别的页没有。
+   * 给识别器回头核「断开的小节线」用（`recognize.ts::bridgeFaintBars`）。
+   */
+  gray?: Uint8Array;
   /** 位图像素 → PDF 页面点的缩放（页宽 / 位图宽）。 */
   scale: number;
   /** 页面尺寸（PDF 点）。 */
@@ -102,10 +107,11 @@ export async function rasterizePage(page: any, OPS: any): Promise<RasterPage | n
   // 所以按松阈值再二值一遍，**只取其中纵向长游程**（小节线、符干）并回原图。
   // 只看彩色档：其余底本线宽/线距实测都在 0.067 以上（见 `FAINT_RATIO`）。
   let faint = false;
+  let gray: Uint8Array | undefined;
   if (kind === "rgb") {
     const u = estimateUnit(prepared(bin));
     const soft = u && u.lineThick / u.space < FAINT_RATIO ? decodeImage(best, w, h, SAUVOLA_K_FAINT, up) : null;
-    if (soft && u) mergeVertical(bin, soft, Math.round(u.space * VERT_RUN)), (faint = true);
+    if (soft && u) mergeVertical(bin, soft, Math.round(u.space * VERT_RUN)), (faint = true), (gray = grayOf(best, w, h, up) ?? undefined);
   }
 
   // **极性自检**：ImageMask 里置位的是墨，`kind: 1`（GRAYSCALE_1BPP）里置位的是白，
@@ -129,8 +135,9 @@ export async function rasterizePage(page: any, OPS: any): Promise<RasterPage | n
   // 拿 `findStaffLines` 数一数谱线，没多出一成半就整幅还原。
   // 不验的话干净位图那一档会被推坏（实测歌词 67.7% → 59.9%）——那一档本来就是平的，
   // 逐列偏移量全是噪声。
-  dewarpPage(bin);
-  deskew(bin);
+  const also = gray ? [gray] : [];
+  dewarpPage(bin, also);
+  deskew(bin, also);
   // 推平之前行投影一行谱都找不到的页（父恩广大那张扫描件谱线微弯，推平前一行都不成），
   // 网纹那一步就没做（网纹符头 166 个音只认出 15 个）；推平之后有尺子了，补做一次——**只补针孔，不去网**。
   // 这一档是低分辨率扫描件（齐来谢主歌线距 11px），谱线细得断成点，孤立点把网点率
@@ -139,7 +146,7 @@ export async function rasterizePage(page: any, OPS: any): Promise<RasterPage | n
   if (halftone == null) halftone = cleanTexture(bin, false);
 
   const vp = page.getViewport({ scale: 1 });
-  return { bin, kind, halftone: halftone ?? 0, faint, scale: vp.width / bin.w, pageWidth: vp.width, pageHeight: vp.height };
+  return { bin, kind, halftone: halftone ?? 0, faint, gray, scale: vp.width / bin.w, pageWidth: vp.width, pageHeight: vp.height };
 }
 
 /** 行投影找出来的谱行数不到逐列游程看见的这个比例，才判这一页「弯得行投影已经废了」。 */
@@ -194,7 +201,7 @@ function cleanTexture(bin: Binary, allowDescreen: boolean): number | null {
   return halftone;
 }
 
-export function dewarpPage(bin: Binary): boolean {
+export function dewarpPage(bin: Binary, also: Uint8Array[] = []): boolean {
   const curves = trackCurves(bin);
   if (!curves) return false;
   const before = staffScore(bin);
@@ -212,7 +219,10 @@ export function dewarpPage(bin: Binary): boolean {
     // 不能拿原图还没去倾斜时的残缺谱行数当底线：破碎扫描 p3 原图行投影是 0 行，
     // 仅去倾斜就能找全 12 行；长轨迹推平后虽然行投影增加，最终却只剩 11 行。
     // 这一验要走两遍 deskew + 补线，只在过了上面那道闸之后才做（`keep` 里就是原图）。
-    if (completedAfterDeskew(bin) >= completedAfterDeskew({ ...bin, data: keep })) return true;
+    if (completedAfterDeskew(bin) >= completedAfterDeskew({ ...bin, data: keep })) {
+      if (also.length) applyTrackWarp({ ...bin, data: new Uint8Array(bin.w * bin.h) }, curves, also);
+      return true;
+    }
   }
   bin.data.set(keep);
   return false;
@@ -257,7 +267,7 @@ const MIN_SLOPE = 0.0004;
  * **按列整像素错切**，不做旋转也不插值：位图是 1-bit 的，插值只会把谱线糊宽；
  * 而错切与旋转在这个角度上（正切值 0.015 以内）纵向差别不到一个像素。
  */
-export function deskew(bin: Binary): number {
+export function deskew(bin: Binary, also: Uint8Array[] = []): number {
   const { w, h, data } = bin;
   // 墨点坐标（列抽稀一半）
   const xs: number[] = [];
@@ -319,6 +329,17 @@ export function deskew(bin: Binary): number {
     }
   }
   data.set(out);
+  for (const a of also) {
+    const o = new Uint8Array(w * h).fill(255);
+    for (let x = 0; x < w; x++) {
+      const dy = Math.round(best * (x - (w >> 1)));
+      for (let y = 0; y < h; y++) {
+        const sy = y - dy;
+        if (sy >= 0 && sy < h) o[y * w + x] = a[sy * w + x];
+      }
+    }
+    a.set(o);
+  }
   return best;
 }
 
@@ -350,6 +371,21 @@ function decodeImage(obj: any, w: number, h: number, k = SAUVOLA_K, up = 1): Bin
     }
     return { w, h, data };
   }
+  const gray = grayOf(obj, w, h, up);
+  if (!gray) return null;
+  if (up > 1) {
+    const out = new Uint8Array(w * up * h * up);
+    sauvola(gray, w * up, h * up, out, k);
+    return { w: w * up, h: h * up, data: out };
+  }
+  sauvola(gray, w, h, data, k);
+  return { w, h, data };
+}
+
+/** 彩色/灰度图转灰度（放大 `up` 倍）；1-bit 打包的返回 null。 */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function grayOf(obj: any, w: number, h: number, up = 1): Uint8Array | null {
+  const src: Uint8Array | Uint8ClampedArray = obj.data;
   const step = src.length === w * h * 4 ? 4 : src.length === w * h * 3 ? 3 : src.length === w * h ? 1 : 0;
   if (!step) return null;
   const gray = new Uint8Array(w * h);
@@ -357,14 +393,7 @@ function decodeImage(obj: any, w: number, h: number, k = SAUVOLA_K, up = 1): Bin
     // Rec.601 luma（与 `src/omr/preprocess.ts::toGray` 同一口径）
     gray[i] = step === 1 ? src[p] : (src[p] * 0.299 + src[p + 1] * 0.587 + src[p + 2] * 0.114) | 0;
   }
-  if (up > 1) {
-    const big = upsample(gray, w, h, up);
-    const out = new Uint8Array(w * up * h * up);
-    sauvola(big, w * up, h * up, out, k);
-    return { w: w * up, h: h * up, data: out };
-  }
-  sauvola(gray, w, h, data, k);
-  return { w, h, data };
+  return up > 1 ? upsample(gray, w, h, up) : gray;
 }
 
 /** 灰度图双线性放大 `up` 倍（像素中心对齐）。 */

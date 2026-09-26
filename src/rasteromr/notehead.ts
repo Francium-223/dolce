@@ -374,6 +374,8 @@ const RING = 0.22;
 const HOLE_RATIO = 1.2;
 /** 贴着真符干时内腔宽高比的下限。 */
 const HOLE_RATIO_ROUND = 0.95;
+/** 全音符（圈厚、内腔斜）内腔宽高比的下限，见 `ringOuter`。 */
+const HOLE_RATIO_WHOLE = 0.6;
 /** 二分符头一定带符干（全音符才不带，靠宽度分）。放开这一条实测音符 69.57% → 67.81%。 */
 const HOLE_NEED_STEM = true;
 const FILL_RING = [0.3, 0.75] as const;
@@ -448,9 +450,16 @@ export function hollowHeadsFromHoles(
     // 接近圆的（0.95~1.2）只在贴着一根真符干时收——粗体铅字本的二分头内腔是斜的、近乎圆
     //（《来敬拜荣耀王》C♯5、B4 两个二分头，内腔 12×11px、1.09）。
     const round = hole.w / hole.h < HOLE_RATIO;
-    if (round && hole.w / hole.h < HOLE_RATIO_ROUND) continue;
-    const box: Rect = { x: hole.x - ring, y: hole.y - ring, w: hole.w + ring * 2, h: hole.h + ring * 2 };
-    if (round && !stemOf(box, stems, unit) && !stemThrough(box, stems, unit)) continue;
+    if (round && hole.w / hole.h < HOLE_RATIO_WHOLE) continue;
+    let box: Rect = { x: hole.x - ring, y: hole.y - ring, w: hole.w + ring * 2, h: hole.h + ring * 2 };
+    if (round && (hole.w / hole.h < HOLE_RATIO_ROUND || (!stemOf(box, stems, unit) && !stemThrough(box, stems, unit)))) {
+      // 没干（或更瘦）的近圆内腔只可能是**全音符**：这类字体的全音符圈厚、内腔斜得竖起来（我一生要赞美你，
+      // 头 25px 宽 1.7 格、内腔被谱线豁开并回来 9×11），内腔外扩一圈的盒只有 1 格、够不上全音符宽。
+      // 头盒按图上的圈量到外缘，够全音符宽的才往下走。
+      const outer = ringOuter(nl, hole, sp);
+      if (!outer || outer.w / sp < W_WHOLE) continue;
+      box = outer;
+    }
     const w = box.w / sp;
     const h = box.h / sp;
     if (w < W_HOLLOW_MIN || w > W_MAX || h < H_MIN || h > H_MAX) continue;
@@ -515,6 +524,42 @@ export function hollowHeadsFromHoles(
     taken.push(m.box);
   }
   return out;
+}
+
+/**
+ * 内腔四周的圈量到外缘：逐行从内腔最左 / 最右的白往外、逐列从最上 / 最下的白往外，穿过一段墨到白为止，
+ * 墨段超过 0.7 格的那一道不算（连着别的笔画）；四边各取最远。谱线常从内腔中间横穿过去
+ *（头上下都连着墨，去线时留下了），所以不从中心点出发。
+ */
+function ringOuter(nl: Binary, hole: Rect, sp: number): Rect | null {
+  const cap = Math.round(sp * 0.7);
+  const ink = (x: number, y: number) => x >= 0 && y >= 0 && x < nl.w && y < nl.h && nl.data[y * nl.w + x] === 1;
+  const run = (x: number, y: number, dx: number, dy: number): number | null => {
+    let j = 0;
+    while (j <= cap && ink(x + dx * j, y + dy * j)) j++;
+    return j === 0 || j > cap ? null : j;
+  };
+  let l = Infinity, r = -Infinity, t = Infinity, b = -Infinity;
+  for (let y = hole.y; y < hole.y + hole.h; y++) {
+    let xa = -1, xb = -1;
+    for (let x = hole.x; x < hole.x + hole.w; x++) if (!ink(x, y)) { if (xa < 0) xa = x; xb = x; }
+    if (xa < 0) continue;
+    const a = run(xa - 1, y, -1, 0);
+    const c = run(xb + 1, y, 1, 0);
+    if (a !== null) l = Math.min(l, xa - a);
+    if (c !== null) r = Math.max(r, xb + c);
+  }
+  for (let x = hole.x; x < hole.x + hole.w; x++) {
+    let ya = -1, yb = -1;
+    for (let y = hole.y; y < hole.y + hole.h; y++) if (!ink(x, y)) { if (ya < 0) ya = y; yb = y; }
+    if (ya < 0) continue;
+    const a = run(x, ya - 1, 0, -1);
+    const c = run(x, yb + 1, 0, 1);
+    if (a !== null) t = Math.min(t, ya - a);
+    if (c !== null) b = Math.max(b, yb + c);
+  }
+  if (!isFinite(l) || !isFinite(r) || !isFinite(t) || !isFinite(b)) return null;
+  return { x: l, y: t, w: r - l + 1, h: b - t + 1 };
 }
 
 /**

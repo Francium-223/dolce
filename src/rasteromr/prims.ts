@@ -183,6 +183,66 @@ function centerLine(mask: Uint8Array, w: number, c: Component, horizontal: boole
   return { x0: meanX(b.y, b.y + q), y0: b.y, x1: meanX(b.y + b.h - q, b.y + b.h), y1: b.y + b.h - 1, lw: c.area / Math.max(b.h, 1), maxLw: b.w };
 }
 
+/** `narrowPart` 取出的窄段至少多长（格）。 */
+const NARROW_STEM = 3;
+
+/** `isolated` 按 `maxLw` 开的邻墨窗里（中心列两侧）有没有一列从第五线到第一线都有墨（≥95% 行）。 */
+function barColumnNear(bin: Binary, x: number, maxLw: number, bands: [number, number][]): boolean {
+  const { w, data } = bin;
+  const half = Math.max(1, Math.ceil(maxLw / 2));
+  const near = half + 1;
+  const far = half + Math.max(2, Math.round(maxLw * 2));
+  const cx = Math.round(x);
+  for (const [t, bt] of bands) {
+    const top = Math.round(t), bot = Math.round(bt);
+    for (let d = near; d <= far; d++)
+      for (const xx of [cx - d, cx + d]) {
+        if (xx < 0 || xx >= w) continue;
+        let n = 0;
+        for (let y = top; y <= bot; y++) if (data[y * w + xx]) n++;
+        if (n >= (bot - top + 1) * 0.95) return true;
+      }
+  }
+  return false;
+}
+
+/**
+ * 块里**窄的那一段**：竖笔连着别的细笔画（二分头的圈边横向游程也细，进了竖笔掩模，与符干连成一块），
+ * 最宽处超过平均线宽两倍时，取行宽不超过平均线宽加 2 的最长连续行重做中心线。
+ * 只给孤立性没过的块用：按整块最宽处开的邻墨窗伸到 26px，贴着小节线 1.2 格的符干一路碰到小节线、
+ * 判成「不孤立」扔掉，小节线随后被当成那个头的干（我一生要赞美你第六行 x=240）。
+ * 直接按平均线宽开窗是全局改动，谱号、升号的竖笔也跟着过了闸（赞美三一真神音符 94 → 55%）。
+ */
+function narrowPart(mask: Uint8Array, w: number, c: Component, lw: number, unit: RasterUnit): LineSeg | null {
+  const b = c.bbox;
+  if (b.w <= lw * 2) return null;
+  let best: [number, number] | null = null;
+  let start = -1;
+  const rows: [number, number][] = [];
+  for (let y = b.y; y <= b.y + b.h; y++) {
+    let a = -1, z = -1;
+    if (y < b.y + b.h) for (let x = b.x; x < b.x + b.w; x++) if (mask[y * w + x]) { if (a < 0) a = x; z = x; }
+    const ok = a >= 0 && z - a + 1 <= lw + 2;
+    rows.push([a, z]);
+    if (ok && start < 0) start = y;
+    if (!ok && start >= 0) {
+      if (!best || y - start > best[1] - best[0]) best = [start, y];
+      start = -1;
+    }
+  }
+  // 够一根符干长：破碎干净版这样收进来的多是 1.5~2.7 格的短笔（满拍自检 64.6 → 61.8），真干约 3.5 格
+  if (!best || best[1] - best[0] < unit.space * NARROW_STEM) return null;
+  let sx = 0, n = 0, maxW = 0;
+  for (let y = best[0]; y < best[1]; y++) {
+    const [a, z] = rows[y - b.y];
+    sx += (a + z) / 2;
+    n++;
+    maxW = Math.max(maxW, z - a + 1);
+  }
+  const x = sx / n;
+  return { x0: x, y0: best[0], x1: x, y1: best[1] - 1, lw: maxW, maxLw: maxW };
+}
+
 /**
  * 这条笔画是不是**孤立**的——两侧（横段则上下）**都**空着。
  *
@@ -264,6 +324,9 @@ export function ledgerGrid(lineYs: number[], unit: RasterUnit): (y: number) => b
   };
 }
 
+/** 正好盖满谱表的竖段续出去的那截里，横向墨至少这么宽（格）才算续进了符头，见 `extendVSegs`。 */
+const EXACT_HEAD_W = 0.6;
+
 /**
  * 竖段的端点**沿着墨往里续**，至多 `cap` 个像素。返回续过的副本。
  *
@@ -283,12 +346,64 @@ export function ledgerGrid(lineYs: number[], unit: RasterUnit): (y: number) => b
  * 续的时候看中心线左右各一列（符干只有一两个像素宽，中心线是拟合出来的，
  * 只看一列会被半像素的偏差卡住）。碰到白就停——不跨空隙，所以续不出别的符号。
  */
-export function extendVSegs(bin: Binary, segs: LineSeg[], cap: number): LineSeg[] {
+export function extendVSegs(bin: Binary, segs: LineSeg[], cap: number, staffBands: [number, number][] = [], lineThick = 1): LineSeg[] {
+  // **正好从第五线画到第一线的**（`barlineCore` / `bandColumns` 取出的）续出去的那截要**进了符头**才留：
+  // 连线收尾弯进小节线下端，续出 5px（0.35 格）就过不了 `findBarlines` 的「出界端须落谱线」
+  //（我一生要赞美你第六、七行各漏一刀）；而和弦的长符干正要靠续进上下两端的头伸出谱表，
+  // 才不被收成小节线（一律封顶 0.2 格，万古磐石歌多切两刀）。续出段里（谱线那几行不算）
+  // 有一行横向墨宽过 `EXACT_HEAD_W` 算进了头；或者**笔直延续**（符杠下的长符干，同曲 x=1602 上下各伸出半格）
+  // 也留。连线收尾只有一笔宽、又斜着偏开。
+  const bandOf = (s: LineSeg) => staffBands.find(([t, b]) => Math.abs(Math.min(s.y0, s.y1) - t) <= 1 && Math.abs(Math.max(s.y0, s.y1) - b) <= 1);
   return segs.map((s) => {
     const out = { ...s };
     extendIntoInk(bin, out, cap);
+    const band = bandOf(s);
+    if (band) {
+      const space = (band[1] - band[0]) / 4;
+      const skip = Math.ceil(lineThick / 2) + 1;
+      const x = (s.x0 + s.x1) / 2;
+      const keep = (from: number, to: number) => reachesHead(bin, x, from, to, space) || straight(bin, x, from, to, s.maxLw);
+      if (!keep(Math.round(s.y0) - skip, Math.round(out.y0))) out.y0 = s.y0;
+      if (!keep(Math.round(s.y1) + skip, Math.round(out.y1))) out.y1 = s.y1;
+    }
     return out;
   });
+}
+
+/** 从 `from` 到 `to`（含，任一方向）每行都有墨、墨段中心离 `x` 不过 1px 且不漂、宽不过线宽加 2：竖笔笔直往外延续。 */
+function straight(bin: Binary, x: number, from: number, to: number, lw: number): boolean {
+  const { w, h, data } = bin;
+  const cx = Math.round(x);
+  const step = to >= from ? 1 : -1;
+  if ((to - from) * step < 1) return false;
+  let lo = Infinity, hi = -Infinity;
+  for (let y = from; step > 0 ? y <= to : y >= to; y += step) {
+    if (y < 0 || y >= h || !data[y * w + cx]) return false;
+    let a = cx, b = cx;
+    while (a > 0 && data[y * w + a - 1]) a--;
+    while (b + 1 < w && data[y * w + b + 1]) b++;
+    const c = (a + b) / 2;
+    if (b - a + 1 > lw + 2 || Math.abs(c - x) > 1) return false;
+    lo = Math.min(lo, c);
+    hi = Math.max(hi, c);
+  }
+  // 逐行中心的极差也不过 1px：连线收尾每行都离竖段不到 1px，却一路往一边偏（241 → 239.5）
+  return hi - lo <= 1;
+}
+
+/** 从 `from` 到 `to`（含，任一方向）逐行量过 `x` 的横向墨宽，有一行够一个符头宽就算。 */
+function reachesHead(bin: Binary, x: number, from: number, to: number, space: number): boolean {
+  const { w, h, data } = bin;
+  const cx = Math.round(x);
+  const step = to >= from ? 1 : -1;
+  for (let y = from; step > 0 ? y <= to : y >= to; y += step) {
+    if (y < 0 || y >= h || !data[y * w + cx]) continue;
+    let a = cx, b = cx;
+    while (a > 0 && data[y * w + a - 1]) a--;
+    while (b + 1 < w && data[y * w + b + 1]) b++;
+    if (b - a + 1 >= space * EXACT_HEAD_W) return true;
+  }
+  return false;
 }
 
 function extendIntoInk(bin: Binary, seg: LineSeg, cap: number): void {
@@ -503,7 +618,13 @@ export function findPrimitives(
     }
     const seg = centerLine(vMask, w, c, false);
     // 谱行左缘那条（系统线）免检，其余要判孤立性——谱号的中央竖笔、升号的竖笔不是原语
-    if (!atStaffLeft((seg.x0 + seg.x1) / 2) && !spansStaff(seg) && !isolated(bin, seg, true)) continue;
+    if (!atStaffLeft((seg.x0 + seg.x1) / 2) && !spansStaff(seg) && !isolated(bin, seg, true)) {
+      // 只在原窗里有一根盖满谱表的整列（小节线）时按窄段重判：只因某一行偏宽、原本被别的邻墨判不孤立的块
+      // 也放进来的话，破碎干净版满拍自检 64.8 → 58.2
+      const narrow = narrowPart(vMask, w, c, seg.lw, unit);
+      if (narrow && isolated(bin, narrow, true) && barColumnNear(bin, (seg.x0 + seg.x1) / 2, seg.maxLw, staffBands)) vSegs.push(narrow);
+      continue;
+    }
     vSegs.push(seg);
   }
   vSegs.push(...bandColumns(bin, vMask, staffBands, vSegs, thinV, staffLefts, unit));

@@ -387,6 +387,8 @@ const KEY_ACCID_TEMPLATE_DIST = 100;
 
 /** 空心头按模板再搜的得分门槛。见「空心头按模板再搜」那一段。 */
 const HOLLOW_MASK_SCORE = 0.38;
+/** 整格谱间白（见 `cellLike`）的外框里白至少占多少。 */
+const CELL_WHITE = 0.9;
 /** 开口内腔（`openCavities`）：射线窗外扩多少格、内腔至少多少格²、中心离谱表上下至多几格。 */
 const OPEN_CAVITY_PAD = 0.3;
 const OPEN_CAVITY_AREA = 0.06;
@@ -892,7 +894,29 @@ export async function recognizeRasterPage(
   // 缝落在谱线或加线上都算（`onGrid` 只管谱表外的加线位置）：《高举主大能》第三线上的 B4 二分头
   // 被第三线切成 10×5 与 13×5 两半，谱线上的不认就并不回来，头盒只剩下半截、读低一格
   const onLineOrGrid = (y: number) => onGrid(y) || gridYs.some((ly) => Math.abs(ly - y) <= unit.space * 0.25);
-  const holes = mergeHoles(rawHoles, unit, onLineOrGrid);
+  // **成摞的整格谱间白**（小节线与贴着它的符干夹出来、隔着谱线一格摞一格）先剔掉：它们纵向相接，
+  // 会顺着链把旁边头的内腔并成一个高孔（我一生要赞美你第六行，小节线右边紧贴的 A4 二分头
+  // 与上面两格并成 17×42）。单独一格不剔：谱间里的二分头圈的上下边融进谱线、内腔被截平，
+  // 也上下贴线、白也近乎占满外框（整格一律剔，坚固保障等掉一刀）。
+  const half = unit.lineThick / 2;
+  const cellLike = (b: Rect) => {
+    if (b.h < unit.space * 0.6 || !onLineOrGrid(b.y - half - 0.5) || !onLineOrGrid(b.y + b.h + half - 0.5)) return false;
+    let white = 0;
+    for (let y = b.y; y < b.y + b.h; y++) for (let x = b.x; x < b.x + b.w; x++) if (!raster.bin.data[y * raster.bin.w + x]) white++;
+    return white >= b.w * b.h * CELL_WHITE;
+  };
+  // 窄于 0.8 格的不剔：符干紧挨着小节线的那道窄缝（坚固保障第二行 x=996，0.47 格）剔了，
+  // 缝底那一小截白单独成了「内腔」，认出一个贴着小节线的假二分头，那一刀就没了。
+  const cells = rawHoles.filter((b) => b.w >= unit.space * 0.8 && b.w <= unit.space * 1.4 && cellLike(b));
+  const stackedCell = (b: Rect) =>
+    cells.includes(b) &&
+    cells.some((o) => {
+      if (o === b) return false;
+      const ov = Math.min(b.x + b.w, o.x + o.w) - Math.max(b.x, o.x);
+      const gap = o.y > b.y ? o.y - (b.y + b.h) : b.y - (o.y + o.h);
+      return ov >= Math.min(b.w, o.w) * 0.6 && gap >= 0 && gap <= unit.lineThick + 2;
+    });
+  const holes = mergeHoles(rawHoles.filter((b) => !stackedCell(b)), unit, onLineOrGrid);
   // 和弦字母的**内腔**也是洞（`D`/`G`/`B`/`A` 都有），不挡住就从这一路漏回来
   // ——检测框一并算「已被占」。
   const takenBoxes = [...heads.map((h) => h.box), ...harmonyMasks];
@@ -2020,6 +2044,8 @@ export async function recognizeRasterPage(
       nl,
       [...prims.vSegs.filter((v) => !usedSegs.has(v)), ...stemSegs, ...inkStems],
       Math.round(unit.space * 0.35),
+      groups.map((g) => [g.lines[0].y, g.lines[4].y] as [number, number]),
+      unit.lineThick,
     ), headBoxes.map((h) => h.box), unit), unit),
     syms,
     braces: findBraces(nl, prims, unit, staffLefts, groups.map((g) => ({ top: g.lines[0].y, bottom: g.lines[4].y }))).map((c) => c.bbox),

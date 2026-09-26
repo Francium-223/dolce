@@ -656,7 +656,83 @@ export function findPrimitives(
     const line = centerLine(bMaskC, w, c, true);
     beams.push({ ...line, box: c.bbox });
   }
+  beams.push(...partialBeams(bin, beams, unit));
   return { hSegs, vSegs, beams };
+}
+
+/**
+ * **半截符杠**：附点八分 + 十六分那种，十六分那一侧的第二道杠只有一个头宽（1 格左右），
+ * 过不了符杠「≥1.5 格、3:1 往上」的闸，就被当成实心符头挂在干上（《倚靠主永远膀臂》整曲的十六分都读成八分、
+ * 还多出一个高音）。它的位置是死的：贴着一条已认出的杠的**端头**、隔一道白缝、与杠平行、厚度与杠相近。
+ *
+ * 做法：沿每条杠两端 1.6 格内逐列往杠的上下两侧走——跨过杠本身、跨过 1px~0.6 格的白缝、
+ * 再遇到一段厚 0.6~1.6 倍杠厚的墨，这一列就是半截杠的一列。从杠端（容 0.4 格）起连续够 0.5 格的，收成一截杠。
+ * 另卡：高 0.3~0.8 格（薄的是弧线、文字笔画）、杠端有一列从主杠连墨到它（同一根干上）、已认出的杠与重复的不算。
+ */
+/** 半截符杠的高度范围（格）。 */
+const PARTIAL_BEAM_H = [0.3, 0.8] as const;
+
+function partialBeams(bin: Binary, beams: BeamQuad[], unit: RasterUnit): BeamQuad[] {
+  const sp = unit.space;
+  const out: BeamQuad[] = [];
+  const ink = (x: number, y: number) => y >= 0 && y < bin.h && x >= 0 && x < bin.w && !!bin.data[y * bin.w + x];
+  for (const b of beams) {
+    const lw = Math.max(2, b.lw);
+    const yAt = (x: number) => b.y0 + ((b.y1 - b.y0) * (x - b.x0)) / Math.max(1, b.x1 - b.x0);
+    for (const side of [-1, 1])
+      for (const end of [b.box.x, b.box.x + b.box.w - 1]) {
+        const dir = end === b.box.x ? 1 : -1;
+        const cols: { x: number; y0: number; y1: number }[] = [];
+        for (let k = 0; k < sp * 1.6; k++) {
+          const x = end + dir * k;
+          let y = Math.round(yAt(x));
+          if (!ink(x, y)) {
+            if (cols.length) break;
+            continue;
+          }
+          while (ink(x, y + side)) y += side; // 跨过杠本身
+          let g = 0;
+          while (!ink(x, y + side * (g + 1)) && g <= sp * 0.6) g++;
+          const s0 = y + side * (g + 1);
+          let r = 0;
+          while (ink(x, s0 + side * r) && r <= lw * 1.6) r++;
+          const ok = g >= 1 && g <= sp * 0.6 && r >= lw * 0.6 && r <= lw * 1.6;
+          if (!ok) {
+            if (cols.length || k > sp * 0.4) break;
+            continue;
+          }
+          cols.push({ x, y0: Math.min(s0, s0 + side * (r - 1)), y1: Math.max(s0, s0 + side * (r - 1)) });
+        }
+        if (cols.length < sp * 0.5) continue;
+        const xs = cols.map((c) => c.x);
+        const x0 = Math.min(...xs);
+        const x1 = Math.max(...xs);
+        const top = Math.min(...cols.map((c) => c.y0));
+        const bot = Math.max(...cols.map((c) => c.y1));
+        // 落在已认出的杠上的不算（十六分那组两条杠都是整条，从第一条往外走就撞上第二条）
+        const cy = (top + bot) / 2;
+        if (beams.some((q) => q !== b && x0 >= q.box.x - 2 && x1 <= q.box.x + q.box.w + 2 && cy >= q.box.y && cy <= q.box.y + q.box.h)) continue;
+        if (bot - top + 1 < sp * PARTIAL_BEAM_H[0] || bot - top + 1 > sp * PARTIAL_BEAM_H[1]) continue;
+        // 与主杠**同一根干**：杠端附近有一列从主杠一直连墨到这一截（干穿过那道白缝）
+        const reachY = side > 0 ? bot : top;
+        const onStem = [...Array(Math.round(unit.lineThick * 2) + 5).keys()].some((d) => {
+          const x = end + dir * (d - 2);
+          for (let y = Math.round(yAt(x)); y !== reachY; y += side) if (!ink(x, y)) return false;
+          return true;
+        });
+        if (!onStem) continue;
+        if (out.some((q) => Math.abs(q.box.x - x0) <= 2 && Math.abs(q.box.y - top) <= 2)) continue;
+        const first = cols.find((c) => c.x === x0)!;
+        const last = cols.find((c) => c.x === x1)!;
+        out.push({
+          x0, x1, y0: (first.y0 + first.y1) / 2, y1: (last.y0 + last.y1) / 2,
+          lw: cols.reduce((a, c) => a + c.y1 - c.y0 + 1, 0) / cols.length,
+          maxLw: Math.max(...cols.map((c) => c.y1 - c.y0 + 1)),
+          box: { x: x0, y: top, w: x1 - x0 + 1, h: bot - top + 1 },
+        });
+      }
+  }
+  return out;
 }
 
 /**

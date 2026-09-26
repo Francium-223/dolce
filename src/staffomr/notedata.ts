@@ -781,21 +781,40 @@ export function buildNotes(
  * ——实测小节时值自检里最大的一档偏差正是 0.88（缺八分之一），那就是漏附点的特征。
  */
 function attachDots(notes: StaffNote[], dots: Sym[], sp: number): void {
+  // dx 从和弦里**贴着的最右那个头**量起：二度和弦错开画在干另一侧的头把附点列往右推了一个头宽
+  //（《恩友歌》C5/A4/G4 附点四分，C5 离点 1.8 格）。
+  const rightOf = (n: StaffNote) => {
+    let r = n.sym.box.right;
+    for (const m of notes)
+      if (m.staff === n.staff && m.sym.box.left <= n.sym.box.right + 2 && m.sym.box.right >= n.sym.box.left && Math.abs(m.sym.py - n.sym.py) <= sp * 1.5)
+        r = Math.max(r, m.sym.box.right);
+    return r;
+  };
+  const rights = new Map(notes.map((n) => [n, rightOf(n)]));
+  /** 每个音已收的点（x）：同一列的点一个头只收一个（和弦两个线上音的点各在自己上方的间，离两头一样远）。 */
+  const got = new Map<StaffNote, number[]>();
   for (const d of dots) {
     let best: StaffNote | undefined;
     let bd = Infinity;
     for (const n of notes) {
-      if (d.px <= n.sym.box.right) continue;
-      const dx = d.px - n.sym.box.right;
+      const r = rights.get(n)!;
+      if (d.px <= r) continue;
+      const dx = d.px - r;
       if (dx > sp * 1.5) continue;
       // 线上音符的附点写在上方那个间里，差半格；再放一点余量
-      if (Math.abs(d.py - n.sym.py) > sp * 0.75) continue;
-      if (dx < bd) {
-        bd = dx;
+      const dy = Math.abs(d.py - n.sym.py);
+      if (dy > sp * 0.75) continue;
+      if (got.get(n)?.some((x) => Math.abs(x - d.px) < sp * 0.3)) continue;
+      // 能不能挂按和弦右缘判，**谁优先按自己的右缘**：两个声部错开画的二度（以马内利 m19 A4 在 G4 左边），
+      // 点是右边那个的；同距离的，点在头上方的优先（线上音的点写在上方的间），再按高度差
+      const key = (d.px - n.sym.box.right) + (d.py <= n.sym.py + sp * 0.1 ? 0 : 0.02) + dy * 0.01;
+      if (key < bd) {
+        bd = key;
         best = n;
       }
     }
     if (!best) continue;
+    got.set(best, [...(got.get(best) ?? []), d.px]);
     best.dots++;
     d.addTag("Augmentation");
   }

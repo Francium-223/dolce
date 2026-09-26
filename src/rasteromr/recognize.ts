@@ -3037,6 +3037,9 @@ function midOfStaff(box: { y: number; h: number }, lines: { y: number }[], unit:
  * 大小 0.15~0.6 格、宽高比 0.6~1.7、填充过半；已经有符号压着的不算；
  * 同一列上下一格处还有一个这样的点，那是反复记号的两点，不算。
  */
+/** 附点窗口往下探多少格：线上的音附点写在上方的间，可和弦里上方那个间被别的音的点占了时写在下方（《恩友歌》G4）。 */
+const DOT_BELOW = 0.35;
+
 function findDots(bin: Binary, syms: RasterSym[], unit: RasterUnit): Rect[] {
   const sp = unit.space;
   const out: Rect[] = [];
@@ -3089,17 +3092,30 @@ function findDots(bin: Binary, syms: RasterSym[], unit: RasterUnit): Rect[] {
       }
     return found;
   };
+  /** 附点窗口的左缘：和弦里**贴着的最右那个头**的右缘。二度和弦错开画在干另一侧的头把附点列往右推了一个头宽，
+   *  按自己的右缘开窗够不着（《恩友歌》C5/A4/G4 附点四分，上下两个点又被当成反复记号的双点剔掉，23 处读成四分）。 */
+  const rightOf = (b: Rect) => {
+    const cy = b.y + b.h / 2;
+    let r = b.x + b.w;
+    for (const h2 of heads) {
+      const c = h2.box;
+      if (c.x <= b.x + b.w + 2 && c.x + c.w >= b.x && Math.abs(c.y + c.h / 2 - cy) <= sp * 1.5) r = Math.max(r, c.x + c.w);
+    }
+    return r;
+  };
   /** 点落在这个头的附点窗口里吗。 */
   const inWindow = (b: Rect, d: Rect) => {
     const cx = d.x + d.w / 2;
     const cy = d.y + d.h / 2;
     const hy = b.y + b.h / 2;
-    return cx > b.x + b.w + sp * 0.05 && cx < b.x + b.w + sp * 1.3 && cy > hy - sp * 0.85 && cy < hy + sp * 0.35;
+    const r = rightOf(b);
+    return cx > r + sp * 0.05 && cx < r + sp * 1.3 && cy > hy - sp * 0.85 && cy < hy + sp * DOT_BELOW;
   };
   for (const hd of heads) {
     const b = hd.box;
     const cy = b.y + b.h / 2;
-    for (const d of blobsIn(b.x + b.w + sp * 0.05, cy - sp * 0.85, b.x + b.w + sp * 1.3, cy + sp * 0.35)) {
+    const r = rightOf(b);
+    for (const d of blobsIn(r + sp * 0.05, cy - sp * 0.85, r + sp * 1.3, cy + sp * DOT_BELOW)) {
       if (out.some((o) => overlapFrac(o, d) > 0)) continue;
       if (syms.some((s0) => overlapFrac(d, s0.box) > 0.3)) continue;
       // 反复记号的两点：同一列上下一格处还有一个点。

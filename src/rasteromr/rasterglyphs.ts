@@ -306,7 +306,11 @@ export function bootstrapClefs(
     // 细种子要比谱表还高、又压在谱行左缘上（就是系统线本身）才换：扫描件里别的竖笔
     // 当了种子时换掉，谱号是补出来了，调号窗口跟着挪，同页几行反倒少认一批音
     // （破碎扫描件三处，音符 −0.11、歌词 −0.24）。
-    if (!fits(box) && blobs[seed].w < space * 0.5 && blobs[seed].h >= space * 4.5 && blobs[seed].x <= st.left + space * 0.3) {
+    // 系统线在两行谱之间断开时只有谱表那么高（信心使我得胜第二页低音谱表 4.2 格），
+    // 所以「罩满整个谱表」也算：那一行没谱号，低音谱表整段按高音谱号读、错十二级。
+    const sd = blobs[seed];
+    const spansStaff = sd.y <= top + space * 0.3 && sd.y + sd.h >= bottom - space * 0.3;
+    if (!fits(box) && sd.w < space * 0.5 && (sd.h >= space * 4.5 || spansStaff) && sd.x <= st.left + space * 0.3) {
       const wide = cand.filter((i) => blobs[i].w >= space * 0.5);
       if (wide.length) (seed = tallest(wide)), (box = grow(seed));
     }

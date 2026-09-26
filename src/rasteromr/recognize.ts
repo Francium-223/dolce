@@ -2200,7 +2200,15 @@ export async function recognizeRasterPage(
           if (cy <= top || cy >= bot) return false;
           // 拉丁行：字母被收成符头之后就不在字格里了（「we」的 e），落在行的左右端之内就算
           if (latinRows.has(r)) return cx > Math.min(...r.cells.map((c) => c.x)) && cx < Math.max(...r.cells.map((c) => c.x + c.w));
-          return r.cells.some((c) => cx > c.x - pad(r) && cx < c.x + c.w + pad(r) && cy > c.y - pad(r) && cy < c.y + c.h + pad(r));
+          // **残格按整行高判**：字的上半截被收成符头时，那一格只剩下半截（我灵镇静第三行「萬」，
+          // 残格高 15、字高 40，头中心在残格上方 7px、谱表下 2.4 格，按残格判就漏了）。
+          // 只放宽不到字高六成的格、且头在谱表下两格开外：一律按整行高判，齐来称颂、齐来谢主歌各误删一个
+          // 真的低音；合唱谱破碎两处谱表下一格的加一线音也被删
+          const far = cy >= n.staff.box.bottom + unit.space * 2;
+          return r.cells.some((c) => {
+            const [y0, y1] = far && c.h < r.charH * 0.6 ? [top, bot] : [c.y, c.y + c.h];
+            return cx > c.x - pad(r) && cx < c.x + c.w + pad(r) && cy > y0 - pad(r) && cy < y1 + pad(r);
+          });
         });
       };
       for (let i = notes.length - 1; i >= 0; i--) if (inRow(notes[i])) notes.splice(i, 1);

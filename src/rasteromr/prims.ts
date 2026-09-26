@@ -340,6 +340,76 @@ function barlineCore(mask: Uint8Array, w: number, c: Component, bands: [number, 
 }
 
 /**
+ * **掩模里断开了、二值图里却盖满谱表带的竖线**：按谱表带逐列扫原图补回来。
+ *
+ * 弧线斜着压过小节线、交点又挨着一条谱线时，那几行的横向游程连弧带线超过「细」，
+ * 竖笔掩模在那里断开四五行，闭运算接不上；上下两截各连着一段弧、块偏宽，
+ * `barlineCore` 又要整块盖满谱表带，两截都被扔掉（我灵镇静第四行低音谱表 x=686，
+ * 高低音谱表从此错开一个小节）。原图上那一列从第五线到第一线每行都有墨，谱线本身也算墨，
+ * 所以断口不影响。带内 ≥95% 行有墨、且闭运算后的竖笔掩模里也有 ≥75% 的列连成一段
+ * （后一条挡住别的块的边缘列、终止线那种粗线），宽不过一个「细」；
+ * 半格内已有竖段的不补，行首四格（谱号、系统线）不补。符干与小节线照旧交给 `findStems`/`findBarlines` 分。
+ */
+function bandColumns(
+  bin: Binary,
+  vMask: Uint8Array,
+  bands: [number, number][],
+  have: LineSeg[],
+  maxW: number,
+  staffLefts: number[],
+  unit: RasterUnit,
+): LineSeg[] {
+  const { w, data } = bin;
+  const out: LineSeg[] = [];
+  for (const [t, bt] of bands) {
+    const top = Math.round(t), bot = Math.round(bt);
+    const need = (bot - top + 1) * 0.95;
+    const thinNeed = (bot - top + 1) * 0.75;
+    const full = (x: number) => {
+      let n = 0;
+      let m = 0;
+      for (let y = top; y <= bot; y++) {
+        if (data[y * w + x]) n++;
+        if (vMask[y * w + x]) m++;
+      }
+      return n >= need && m >= thinNeed;
+    };
+    for (let x = 0; x < w; x++) {
+      if (!full(x)) continue;
+      const x0 = x;
+      while (x + 1 < w && full(x + 1)) x++;
+      const cx = (x0 + x) / 2;
+      const width = x - x0 + 1;
+      if (width > maxW) continue;
+      if (staffLefts.some((l) => cx >= l - unit.space && cx <= l + unit.space * 4)) continue;
+      const near = have.some(
+        (s) => Math.abs((s.x0 + s.x1) / 2 - cx) <= unit.space * 0.5 && Math.min(s.y0, s.y1) <= bot && Math.max(s.y0, s.y1) >= top,
+      );
+      if (near) continue;
+      // **贴着符头、符杠的是符干**（向主唱新歌的三音和弦、万古磐石歌的八分十六分，干都盖满谱表带，
+      // 原先不在竖段里，补进来向主唱新歌音符掉 1.8 点、万古磐石歌时值掉 4 点）：从线的外缘往外量每行连着的墨，
+      // 长过半格算「宽行」，宽行连着超过 0.4 格就是挨着一块符头或符杠。小节线外侧只有谱线（线粗那几行）
+      // 与擦过的弧（我灵镇静那道弧连线才 6px、三分之一格）。
+      const attached = (dir: -1 | 1) => {
+        const from = dir < 0 ? x0 - 1 : x + 1;
+        let run = 0;
+        let best = 0;
+        for (let y = top; y <= bot; y++) {
+          let len = 0;
+          for (let sx = from; sx >= 0 && sx < w && data[y * w + sx] && len <= unit.space; sx += dir) len++;
+          run = len >= unit.space * 0.5 ? run + 1 : 0;
+          best = Math.max(best, run);
+        }
+        return best > unit.space * 0.4;
+      };
+      if (attached(-1) || attached(1)) continue;
+      out.push({ x0: cx, y0: top, x1: cx, y1: bot, lw: width, maxLw: width });
+    }
+  }
+  return out;
+}
+
+/**
  * 抽出全部几何原语。
  *
  * 三道门槛都按线距 `space` 写（与矢量路同口径，不写绝对像素）：
@@ -436,6 +506,7 @@ export function findPrimitives(
     if (!atStaffLeft((seg.x0 + seg.x1) / 2) && !spansStaff(seg) && !isolated(bin, seg, true)) continue;
     vSegs.push(seg);
   }
+  vSegs.push(...bandColumns(bin, vMask, staffBands, vSegs, thinV, staffLefts, unit));
 
   // ── 符杠 ──
   const bMask = new Uint8Array(w * h);

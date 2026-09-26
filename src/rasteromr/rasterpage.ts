@@ -46,6 +46,13 @@ export interface RasterPage {
    * 给识别器回头核「断开的小节线」用（`recognize.ts::bridgeFaintBars`）。
    */
   gray?: Uint8Array;
+  /**
+   * 彩色页的灰度图（与 `bin` 同尺寸、同样推平去倾斜过），歌词条送 OCR 用这一份（`lyric.ts::stripOf`）。
+   * 二值化、去网把细笔画一起吃了：坚固保障（网点 0.36）英文字高 14px，「mighty」只剩几截残笔，原图其实清清楚楚，
+   * 送灰度中文 80.7 → 99.2%、拉丁 85.5 → 99.4%。先只给去过网的页，放开到全部彩色页再净涨（独唱谱中文 96.78 → 96.99%）。
+   * 与 `gray` 分开放：那一个一有就触发 `bridgeFaintBars`（细线页两个都有时歌词用 `gray`）。
+   */
+  lyricGray?: Uint8Array;
   /** 位图像素 → PDF 页面点的缩放（页宽 / 位图宽）。 */
   scale: number;
   /** 页面尺寸（PDF 点）。 */
@@ -128,6 +135,7 @@ export async function rasterizePage(page: any, OPS: any): Promise<RasterPage | n
   // 位置在推平之前：网点会把逐列游程打断，推平那一步也指望这张图是实的。
   // 一行谱都没找到的页面（封面、歌词页）不做：没有尺子定窗口，也没有东西要认。
   let halftone = cleanTexture(bin, true);
+  const lyricGray = kind === "rgb" && !gray ? grayOf(best, w, h, up) ?? undefined : undefined;
 
   // **先按逐列的黑白游程把弯的谱线推平**（`dewarp.ts`），再让 `deskew` 收拾残余的整页倾斜。
   //
@@ -135,7 +143,7 @@ export async function rasterizePage(page: any, OPS: any): Promise<RasterPage | n
   // 拿 `findStaffLines` 数一数谱线，没多出一成半就整幅还原。
   // 不验的话干净位图那一档会被推坏（实测歌词 67.7% → 59.9%）——那一档本来就是平的，
   // 逐列偏移量全是噪声。
-  const also = gray ? [gray] : [];
+  const also = [gray, lyricGray].filter((g): g is Uint8Array => !!g);
   dewarpPage(bin, also);
   deskew(bin, also);
   // 推平之前行投影一行谱都找不到的页（父恩广大那张扫描件谱线微弯，推平前一行都不成），
@@ -146,7 +154,7 @@ export async function rasterizePage(page: any, OPS: any): Promise<RasterPage | n
   if (halftone == null) halftone = cleanTexture(bin, false);
 
   const vp = page.getViewport({ scale: 1 });
-  return { bin, kind, halftone: halftone ?? 0, faint, gray, scale: vp.width / bin.w, pageWidth: vp.width, pageHeight: vp.height };
+  return { bin, kind, halftone: halftone ?? 0, faint, gray, lyricGray, scale: vp.width / bin.w, pageWidth: vp.width, pageHeight: vp.height };
 }
 
 /** 行投影找出来的谱行数不到逐列游程看见的这个比例，才判这一页「弯得行投影已经废了」。 */

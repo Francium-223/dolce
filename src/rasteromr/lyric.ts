@@ -53,6 +53,8 @@ const MIN_CELLS = 3;
  *  ——16 格时末行谱下面的英文第 2、3、4 段整片落在带外，一条都切不出来。
  *  取 24 格；再往下就是页脚的版权行了。 */
 const TAIL_BAND = 24;
+/** 末行谱下第一行歌词离谱表底最多几个线距（实测 1.8~3.3 格；谱末经文 8.5 格）。 */
+const TAIL_FIRST = 6;
 
 const median = (a: number[]) => (a.length ? [...a].sort((x, y) => x - y)[a.length >> 1] : 0);
 
@@ -90,7 +92,27 @@ export function findLyricRows(blobs: Component[], staves: LyricStaff[], unit: Ra
     const flat = band.filter(isFlat);
     const solid = band.filter((c) => !isFlat(c));
     if (solid.length < MIN_CELLS) continue;
-    for (const row of splitRows(solid, sp)) {
+    let rowsHere = splitRows(solid, sp).sort((a, b) => Math.min(...a.map((c) => c.bbox.y)) - Math.min(...b.map((c) => c.bbox.y)));
+    // **末行谱下面的带要一行接一行**：第一行离谱表不过 `TAIL_FIRST` 个线距，往下每行与上一行的间隔不过上一行高。
+    // 谱末印的经文、版权、出处（《信心使我得胜》末行谱下 8.5 格处的「我倚靠神，我要讚美祂的話……詩篇五十六篇」）
+    // 字号与歌词一样，只有位置分得开；真的歌词第一行离谱表 1.8~3.3 格，各段紧挨着排
+    if (i === staves.length - 1) {
+      const kept: Component[][] = [];
+      for (const r of rowsHere) {
+        const top = Math.min(...r.map((c) => c.bbox.y));
+        const prev = kept[kept.length - 1];
+        if (!prev) {
+          if (top - st.bottom > sp * TAIL_FIRST) break;
+        } else {
+          const p0 = Math.min(...prev.map((c) => c.bbox.y));
+          const p1 = Math.max(...prev.map((c) => rbottom(c.bbox)));
+          if (top - p1 > p1 - p0) break;
+        }
+        kept.push(r);
+      }
+      rowsHere = kept;
+    }
+    for (const row of rowsHere) {
       // 这一行的字号：块高的中位数（偏旁比整字矮，所以只是个初值，下面还要按字格改）
       const charH = Math.max(median(row.map((c) => c.bbox.h)), sp * CHAR_MIN);
       const top = Math.min(...row.map((c) => c.bbox.y));
@@ -207,6 +229,7 @@ function splitRows(band: Component[], sp: number): Component[][] {
   return rows.flatMap(splitTall).filter((r) => r.length >= MIN_CELLS);
 }
 
+
 /**
  * **两行并成了一行**的，按纵向覆盖量的谷切开。
  *
@@ -231,18 +254,75 @@ function splitTall(row: Component[]): Component[][] {
   const top = Math.min(...row.map((c) => c.bbox.y));
   const bot = Math.max(...row.map((c) => c.bbox.y + c.bbox.h));
   const H = bot - top;
-  if (H <= median(row.map((c) => c.bbox.h)) * 1.7) return [row];
+  // 「太高」按块高的 85 分位（整字高）量，不按中位数（偏旁高）：大字底本（《所信有根基》字高 2.5 个线距）
+  // 一行字 80px、偏旁十几像素，按中位数算行行都「太高」，又在偏旁之间找得到谷，一行的上半截偏旁被劈成单独一条
+  const hs = row.map((c) => c.bbox.h).sort((a, b) => a - b);
+  if (H <= hs[Math.min(hs.length - 1, Math.floor(hs.length * 0.85))] * 1.7) return [row];
   const cov = new Float64Array(H);
   for (const c of row) for (let y = c.bbox.y; y < c.bbox.y + c.bbox.h; y++) cov[y - top] += c.bbox.w;
   const peak = Math.max(...cov);
   let at = -1;
   for (let y = Math.round(H * TALL_MID[0]); y < Math.round(H * TALL_MID[1]); y++) if (at < 0 || cov[y] < cov[at]) at = y;
-  if (at < 0 || cov[at] > peak * TALL_VALLEY) return [row];
+  if (at < 0 || cov[at] > peak * TALL_VALLEY) return splitTallByColumns(row);
   const cut = top + at;
   const up = row.filter((c) => c.cy < cut);
   const dn = row.filter((c) => c.cy >= cut);
   if (up.length < MIN_CELLS || dn.length < MIN_CELLS) return [row];
   return [...splitTall(up), ...splitTall(dn)];
+}
+
+/** 切不开的高行按横向空白分块的门槛（整字高的倍数，整字高取块高的 85 分位）。 */
+const COLUMN_GAP = 2.5;
+
+/**
+ * **切不开的高行，按横向的大空白分块、各块分别再切**（整行从上到下都空着、宽过 `COLUMN_GAP` 个字高处切开）。
+ *
+ * 《信心使我得胜》第二页主歌四段印在左边，副歌中文一行印在右边、落在第 2 段的高度：第 1 段（左边 6 个字）
+ * 与第 2 段那一层（左 6 字 + 右 10 字）覆盖量一稀一密，两行之间的谷只有峰值的一半，并成一条。
+ * 左边一块单独切就分得开；右边的副歌单独成行，`numberVersesByScript` 按横向盖不盖得住归到第 1 段。
+ * **只在切不开的高行里分块**：整条歌词带一律先分块，长音底下各段一起留白很常见，一切就碎
+ * （独唱谱中文 94.80 → 90.16%、拉丁 94.86 → 79.74%，奇异恩典整首塌掉）。
+ */
+function splitTallByColumns(row: Component[]): Component[][] {
+  const hs = row.map((c) => c.bbox.h).sort((a, b) => a - b);
+  const gap = hs[Math.min(hs.length - 1, Math.floor(hs.length * 0.85))] * COLUMN_GAP;
+  const sorted = [...row].sort((a, b) => a.bbox.x - b.bbox.x);
+  const parts: Component[][] = [];
+  let right = -Infinity;
+  for (const c of sorted) {
+    if (!parts.length || c.bbox.x - right > gap) parts.push([]);
+    parts[parts.length - 1].push(c);
+    right = Math.max(right, rright(c.bbox));
+  }
+  if (parts.length < 2 || parts.some((p) => p.length < MIN_CELLS)) return [row];
+  const span = (r: Component[]) => [Math.min(...r.map((c) => c.bbox.y)), Math.max(...r.map((c) => rbottom(c.bbox)))] as const;
+  // 切出来的相邻两条要上下分得开（重叠不到矮者三成）：大字本一行字本身就高，块里会被劈成上下半截
+  //（所信有根基 82.1 → 75.0%）
+  const clean = (rs: Component[][]) =>
+    rs.every((r, i) => {
+      if (!i) return true;
+      const [a0, a1] = span(rs[i - 1]);
+      const [b0, b1] = span(r);
+      return Math.min(a1, b1) - Math.max(a0, b0) < Math.min(a1 - a0, b1 - b0) * 0.3;
+    });
+  const out = parts.flatMap((p) => {
+    const r = splitTall(p).sort((a, b) => span(a)[0] - span(b)[0]);
+    return r.length > 1 && clean(r) ? r : [p];
+  });
+  // 哪一块都没切开，分块也就没意义，照原样
+  if (out.length <= parts.length) return [row];
+  // 各块切出来的行，纵向重叠过半的是同一行，横向并回（没切开的块整块留着会把一行碎成并排几条：所信有根基 82.1 → 75.0%）
+  const rows: Component[][] = [];
+  for (const r of out.sort((a, b) => span(a)[0] - span(b)[0])) {
+    const [b0, b1] = span(r);
+    const hit = rows.find((q) => {
+      const [a0, a1] = span(q);
+      return Math.min(a1, b1) - Math.max(a0, b0) > Math.min(a1 - a0, b1 - b0) * 0.5;
+    });
+    if (hit) hit.push(...r);
+    else rows.push([...r]);
+  }
+  return rows.length > 1 ? rows : [row];
 }
 
 // ── 歌词条：送 OCR 的单位 ──────────────────────────────────────────────────
@@ -265,10 +345,12 @@ export interface LyricStrip {
   box: Rect;
   /** 字号（字格高的中位数），合成文本对象时当 `sizeDev`。 */
   charH: number;
+  /** 同一块的灰度（0~255，255 = 白）。有就送 OCR 这一份（见 `RasterPage.lyricGray`），`data` 仍是二值、量词界用。 */
+  gray?: Uint8Array;
 }
 
 /** 从二值图里裁出一条歌词条。 */
-export function stripOf(bin: { w: number; h: number; data: Uint8Array }, row: LyricRow, pad = 2): LyricStrip | null {
+export function stripOf(bin: { w: number; h: number; data: Uint8Array }, row: LyricRow, pad = 2, grayPage?: Uint8Array): LyricStrip | null {
   const x0 = Math.max(0, Math.min(...row.cells.map((c) => c.x)) - pad);
   const x1 = Math.min(bin.w, Math.max(...row.cells.map((c) => c.x + c.w)) + pad);
   const y0 = Math.max(0, Math.min(...row.cells.map((c) => c.y)) - pad);
@@ -279,6 +361,12 @@ export function stripOf(bin: { w: number; h: number; data: Uint8Array }, row: Ly
   const data = new Uint8Array(w * h);
   for (let y = 0; y < h; y++)
     for (let x = 0; x < w; x++) data[y * w + x] = bin.data[(y0 + y) * bin.w + x0 + x];
+  let gray: Uint8Array | undefined;
+  if (grayPage) {
+    gray = new Uint8Array(w * h);
+    for (let y = 0; y < h; y++)
+      for (let x = 0; x < w; x++) gray[y * w + x] = grayPage[(y0 + y) * bin.w + x0 + x];
+  }
   return {
     w,
     h,
@@ -286,6 +374,7 @@ export function stripOf(bin: { w: number; h: number; data: Uint8Array }, row: Ly
     box: { x: x0, y: y0, w, h },
     charH: row.charH,
     cells: row.cells.map((c) => ({ x0: (c.x - x0) / w, x1: (c.x + c.w - x0) / w, box: c })),
+    ...(gray ? { gray } : {}),
   };
 }
 
@@ -297,12 +386,14 @@ export function stripOf(bin: { w: number; h: number; data: Uint8Array }, row: Ly
  * FNV-1a，够用且不引依赖（`src/` 两端都要能跑，别用 node:crypto）。
  */
 export function stripKey(s: LyricStrip): string {
+  // 有灰度的条送 OCR 的是灰度，指纹也按灰度算（前缀 `g` 与二值条分开）
+  const px = s.gray ?? s.data;
   let h1 = 0x811c9dc5;
-  for (let i = 0; i < s.data.length; i++) {
-    h1 ^= s.data[i];
+  for (let i = 0; i < px.length; i++) {
+    h1 ^= px[i];
     h1 = Math.imul(h1, 0x01000193) >>> 0;
   }
-  return `${s.w}x${s.h}-${h1.toString(36)}`;
+  return `${s.gray ? "g" : ""}${s.w}x${s.h}-${h1.toString(36)}`;
 }
 
 /** 丢一个字的代价（条宽的分数）。比「摊到最近的格」贵一点：
@@ -324,6 +415,19 @@ const TRAIL_PUNCT = /[，。、；：！？…—”’）]/;
 /** 领起下一个字的标点（开引号、开括号）。 */
 const LEAD_PUNCT = /[“‘（]/;
 
+/** 行首括起来的段落标记（「(歌)」「（副歌）」「(和)」）：不是歌词，不占音符。 */
+const SECTION_LABEL = /^[(（](?:副歌|歌|和|合)[)）]$/;
+
+/** 去掉行首（段号之后）的段落标记（《所信有根基》副歌第一行「(歌)我不需要…」，「歌」挂上了第一个音）。 */
+function dropSectionLabel(chars: OcrChar[]): OcrChar[] {
+  const s = [...chars].sort((a, b) => a.xFrac - b.xFrac);
+  let k = 0;
+  while (k < s.length && /^[0-9.．、\s]$/.test(s[k].ch)) k++;
+  for (let n = 3; n <= 4 && k + n <= s.length; n++)
+    if (SECTION_LABEL.test(s.slice(k, k + n).map((c) => c.ch).join(""))) return [...s.slice(0, k), ...s.slice(k + n)];
+  return chars;
+}
+
 /**
  * **标点贴到相邻的字上**，不单独占一个位置。
  *
@@ -332,7 +436,7 @@ const LEAD_PUNCT = /[“‘（]/;
  * 一个字格于是拿到「字 + 尾随标点」（如「深，」），与简谱那条路的口径一致。
  */
 export function foldLyricChars(chars: OcrChar[]): OcrChar[] {
-  chars = chars.filter((c) => LYRIC_CH.test(c.ch));
+  chars = dropSectionLabel(chars).filter((c) => LYRIC_CH.test(c.ch));
   const out: OcrChar[] = [];
   let lead = "";
   for (const c of chars) {
@@ -358,6 +462,31 @@ export function foldLyricChars(chars: OcrChar[]): OcrChar[] {
  * 两字本就粘成一块。字数比格数多，单调对齐只能丢字——《主使我喜乐》每个「我要」丢一个「我」。
  * 分割那一步一律等分粘连字实测是净亏（见 `findLyricRows` 的记账），这里只在 OCR 字数佐证时才分。
  */
+/**
+ * **字比格多时，OCR 读出字、附近却没有格的，按字宽补一个格**。
+ *
+ * 字格只来自没人认领的连通块，而条子是从整张图裁的：字的块被别的识别器认领走了（《所信有根基》
+ * 粗体大字被当成音乐符号），OCR 照样读得出来，格里却没有它——一行 17 个字只剩 11 格，
+ * 「救」「靠」「藉」被对齐丢掉。`xFrac` 实测落在字中心附近（误差在半个字以内），
+ * 所以只补「左右 0.3 个字宽内一个格都没有」的字；字宽取整字宽那几格（不窄于最宽格一半）的中位数。
+ */
+function fillMissingCells(strip: LyricStrip, keep: OcrChar[]): LyricStrip {
+  if (!strip.cells.length) return strip;
+  const maxW = Math.max(...strip.cells.map((c) => c.x1 - c.x0));
+  const wf = median(strip.cells.map((c) => c.x1 - c.x0).filter((w) => w >= maxW * 0.5));
+  const ref = strip.cells.reduce((a, c) => (c.box.h > a.box.h ? c : a));
+  const cells = [...strip.cells];
+  for (const ch of keep) {
+    if (cells.some((c) => ch.xFrac >= c.x0 - wf * 0.3 && ch.xFrac <= c.x1 + wf * 0.3)) continue;
+    const x0 = Math.max(0, ch.xFrac - wf / 2);
+    const x1 = Math.min(1, ch.xFrac + wf / 2);
+    cells.push({ x0, x1, box: { x: strip.box.x + x0 * strip.box.w, y: ref.box.y, w: (x1 - x0) * strip.box.w, h: ref.box.h } });
+  }
+  if (cells.length === strip.cells.length) return strip;
+  cells.sort((a, b) => a.x0 - b.x0);
+  return { ...strip, cells };
+}
+
 function splitWideCells(strip: LyricStrip, extra: number): LyricStrip {
   const unit = strip.charH;
   if (!(unit > 0)) return strip;
@@ -395,7 +524,8 @@ function splitWideCells(strip: LyricStrip, extra: number): LyricStrip {
  */
 export function mapCharsToCells(strip0: LyricStrip, chars: OcrChar[]): { box: Rect; ch: string }[] {
   const keep = foldLyricChars(chars);
-  const strip = keep.length > strip0.cells.length ? splitWideCells(strip0, keep.length - strip0.cells.length) : strip0;
+  const filled = keep.length > strip0.cells.length ? fillMissingCells(strip0, keep) : strip0;
+  const strip = keep.length > filled.cells.length ? splitWideCells(filled, keep.length - filled.cells.length) : filled;
   const out = strip.cells.map((c) => ({ box: c.box, ch: "" }));
   if (!keep.length) return out;
   if (keep.length === strip.cells.length) {

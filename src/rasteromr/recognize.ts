@@ -2279,7 +2279,7 @@ export async function recognizeRasterPage(
     lyricStats.rows = rows.length;
     const stripRow = new Map<LyricStrip, LyricRow>();
     for (const row of rows) {
-      const strip = stripOf(nl, row);
+      const strip = stripOf(nl, row, 2, raster.lyricGray ?? raster.gray);
       if (strip) {
         lyricStrips.push(strip);
         stripRow.set(strip, row);
@@ -2294,7 +2294,8 @@ export async function recognizeRasterPage(
     // **拉丁行的连字符闸只卡种子**：同一谱行下、上下紧挨着（2.5 个字高以内）一条带连字符的拉丁行的，
     // 过得了前两道闸就不要连字符——整行单音节词的歌词行常有（《奇异恩典》四段英文一半行没有连字符，
     // 漏掉的行让后面各段整体错位，拉丁歌词 20%）。书眉不会紧挨着歌词块；版权行会（晨曦破晓末行下面），
-    // 但字号小：比相邻拉丁行矮两成以上的不链。
+    // 但字号小：比相邻拉丁行矮两成半以上的不链
+    // （原来卡两成，父恩广大末系统英文第 1 行字高 20、邻行 26，没连字符又链不进来，英文 2~4 段整体前移，拉丁 69.4 → 94.3%）。
     const latinStrips = new Set<LyricStrip>();
     {
       const cand = (ocr ? lyricStrips : []).filter((st) => { const ch = ocr!.get(stripKey(st)); return ch && isLatinRow(ch, false, LATIN_MIN_CHAINED); });
@@ -2305,7 +2306,7 @@ export async function recognizeRasterPage(
         for (const st of cand) {
           if (latinStrips.has(st)) continue;
           const r = stripRow.get(st)!;
-          if ([...latinStrips].some((o) => stripRow.get(o)!.staffIndex === r.staffIndex && st.charH >= o.charH * 0.8 && Math.abs(yOf(o) - yOf(st)) <= Math.max(o.charH, st.charH) * LATIN_CHAIN)) {
+          if ([...latinStrips].some((o) => stripRow.get(o)!.staffIndex === r.staffIndex && st.charH >= o.charH * 0.75 && Math.abs(yOf(o) - yOf(st)) <= Math.max(o.charH, st.charH) * LATIN_CHAIN)) {
             latinStrips.add(st);
             grew = true;
           }

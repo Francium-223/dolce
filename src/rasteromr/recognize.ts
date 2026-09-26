@@ -18,7 +18,7 @@ import { attachDynamicTexts, attachNotations, attachWedges, findNotations, findT
 import type { SPage, Staff, Sym, Tag } from "../staffomr/model";
 import { overlapY } from "../staffomr/model";
 import { buildRasterPage, makeSymObj, makeTextObj, type RasterSym } from "./adapt";
-import { binSig, blobImage, extendVSegs, findBlobs, findBraces, findPrimitives, groupByLeftInk, ledgerGrid, removeStaffLines, type BeamQuad, type LineSeg, type RasterPrims } from "./prims";
+import { binSig, blobImage, extendVSegs, findBlobs, findBraces, findPrimitives, groupByLeftInk, ledgerGrid, removeStaffLines, verticalStrokes, type BeamQuad, type LineSeg, type RasterPrims } from "./prims";
 import { findRasterHeads, hollowHeadsByPitch, hollowHeadsFromCavities, hollowHeadsFromHoles, hollowHeadsOnLedgers, judgeHeadBox, mergeHoles, type PitchStep } from "./notehead";
 import { bootstrapClefs, matchTemplate, RasterGlyphLookup, type BootStaff } from "./rasterglyphs";
 import { sigDistance } from "../omr/glyphdict";
@@ -424,6 +424,11 @@ const NUM_DIGITS = [2, 3, 4, 5, 6, 7, 8, 9] as const;
 const DEN_DIGITS = [2, 4, 8] as const;
 const TIME_NUM_DIST = 230;
 const TIME_DEN_DIST = 300;
+/** 按竖笔数升号（`sharpsByStrokes`）的起点：谱号左缘往右多少格。 */
+const KEY_FROM = 2.4;
+/** 粘连升号串（见谱号兜底那段）：盒高上限、竖笔高度范围（格）。 */
+const KEY_RUN_MAX_H = 5.2;
+const KEY_STROKE_H = [2.5, 3.4] as const;
 /** 分子读成 4 时的复核（见拍号那一段）：分子到分母 4 的签名距离过这个数，
  *  且别的数字在 `TIME_ALT_DIST` 以内，就改认那个数字。 */
 const TIME_SELF_DIST = 215;
@@ -1040,7 +1045,11 @@ export async function recognizeRasterPage(
   // 尺寸恰好像另一种谱号（宁静 p7 的高音谱号上半截 2.76×2.65 与 Maestro 的
   // fClef 模板 2.84×3.34 只差一点），认成 fClef 比认不出来更糟。
   // 自举那一路先把 x 上重叠的碎块并回一个盒，再拿模板签名比——那才是完整的谱号。
-  for (const h of bootstrapClefs(boxes, bootStaves, unit.space, look.templates ? { tpl: look.templates, sigOf: (b) => binSig(nl, b) } : undefined)) {
+  // **粘连的一串升号**不是谱号：粗体铅字本两个升号挤在一起连成一块（《耶和华是我的牧者》2.3×4.8 格），
+  // 比低音谱号还高，被取作种子认成高音谱号，真谱号反倒丢了。它在原图上有三四根 2.5~3.4 格高的竖笔；
+  // 44 首独唱谱的谱号候选里，高音谱号最多两根这么高的（另一根更高或更矮），没有第二种块是这样。
+  const keyRun = (b: Rect) => b.h <= unit.space * KEY_RUN_MAX_H && verticalStrokes(raster.bin, b, unit.space * KEY_STROKE_H[0]).filter((s0) => s0.h <= unit.space * KEY_STROKE_H[1]).length >= 3;
+  for (const h of bootstrapClefs(boxes, bootStaves, unit.space, look.templates ? { tpl: look.templates, sigOf: (b) => binSig(nl, b) } : undefined, keyRun)) {
     const b = h.box ?? blobs[h.index].bbox;
     // 落在这个盒里的字典结果作废（那是被切开的半截）。**按中心判**，不要求整个在盒里：
     // 低音谱号的圆头被当成全音符符头时，盒比谱号盒高出几个像素（《善牧恩慈歌》第二行
@@ -1054,6 +1063,42 @@ export async function recognizeRasterPage(
     }
     syms.push({ box: b, code: h.code });
     ledger.claim(b, `clef:${h.code}`);
+  }
+
+  // **调号按竖笔补认升号**（`sharpsByStrokes`）：全页至少两行、且过半的行数出同样多个升号才采信，
+  // 采信后每行数出的升号盖掉那一段里别的认法（被读成降号串、假符头的碎块）。44 首里它从不多数
+  // （降号曲全是 0，升号曲都不超过 GT，粘连升号的《耶和华是我的牧者》每行 2 个），少数由 `shareKeySignature` 补齐。
+  {
+    const clefOf = (g: (typeof groups)[number]) =>
+      syms.find((s0) => isClef(s0.code) && s0.box.y + s0.box.h / 2 > g.lines[0].y && s0.box.y + s0.box.h / 2 < g.lines[4].y && s0.box.x < Math.max(...g.lines.map((l) => l.left)) + unit.space * 4);
+    const found = groups.map((g) => {
+      const c = clefOf(g);
+      return c ? sharpsByStrokes(raster.bin, g.lines.map((l) => l.y), c.box, unit.space) : [];
+    });
+    const tally = new Map<number, number>();
+    for (const f of found) if (f.length) tally.set(f.length, (tally.get(f.length) ?? 0) + 1);
+    const [k, n] = [...tally].sort((a, b) => b[1] - a[1])[0] ?? [0, 0];
+    if (k && n >= 2 && n * 2 >= groups.length)
+      for (const f of found) {
+        if (!f.length) continue;
+        const span: Rect = { x: f[0].x, y: Math.min(...f.map((b) => b.y)), w: f[f.length - 1].x + f[f.length - 1].w - f[0].x, h: 0 };
+        span.h = Math.max(...f.map((b) => b.y + b.h)) - span.y;
+        for (let i = syms.length - 1; i >= 0; i--) {
+          const b = syms[i].box;
+          const cx = b.x + b.w / 2;
+          const cy = b.y + b.h / 2;
+          if (!isClef(syms[i].code) && cx >= span.x && cx <= span.x + span.w && cy >= span.y && cy <= span.y + span.h) syms.splice(i, 1);
+        }
+        for (const b of f) {
+          syms.push({ box: b, code: "accidentalSharp" });
+          ledger.claim(b, "key:accidentalSharp");
+        }
+        for (const c of blobs) {
+          const cx = c.bbox.x + c.bbox.w / 2;
+          const cy = c.bbox.y + c.bbox.h / 2;
+          if (cx >= span.x && cx <= span.x + span.w && cy >= span.y && cy <= span.y + span.h) claimed.add(c.id);
+        }
+      }
   }
 
   // ── 碎块并起来再查一次字典 ────────────────────────────────────────────────
@@ -1342,8 +1387,12 @@ export async function recognizeRasterPage(
         // **两个数字摞起来**：按中线几何切开，不按碎块自己的位置分上下半
         // ——碎块的盒互相重叠（实测上半那块高 2.76 格、已经探进下半的地界）。
         // 拍号的版式是死的：上面那个坐在第五线到第三线之间、下面那个第三线到第一线。
-        const up: Rect = { x: box.x, y: box.y, w: box.w, h: Math.round(mid) - box.y };
-        const dn: Rect = { x: box.x, y: Math.round(mid), w: box.w, h: box.y + box.h - Math.round(mid) };
+        // 上下各截到谱表外 0.25 格：数字夹在第一线与第五线之间，列里并进来的谱表外杂点
+        // 会把半边拉高、过不了数字的高度闸（《耶和华是我的牧者》第一行顶上多出 0.43 格）
+        const y0 = Math.max(box.y, Math.round(top - unit.space * 0.25));
+        const y1 = Math.min(box.y + box.h, Math.round(bottom + unit.space * 0.25));
+        const up: Rect = { x: box.x, y: y0, w: box.w, h: Math.round(mid) - y0 };
+        const dn: Rect = { x: box.x, y: Math.round(mid), w: box.w, h: y1 - Math.round(mid) };
         if (up.h < unit.space || dn.h < unit.space) continue;
         const two = [up, dn].map((b) => {
           const m = matchTemplate(binSig(nl, b), b.w / unit.space, b.h / unit.space, tpl, TIME_TEMPLATE_DIST);
@@ -2669,6 +2718,60 @@ function shareKeySignature(ctx: Map<Staff, StaffContext>): void {
 }
 
 /** 两个盒的交叠占 `a` 的比例。 */
+/**
+ * **按竖笔数调号升号**（Audiveris 的路子：不看连通块，看竖笔）。粗体升号两两粘连、又贴着谱号时，
+ * 按块认不出来（《耶和华是我的牧者》：一对升号连成 2.3×4.8 格一块，被读成一串降号、假符头）。
+ *
+ * 在带谱线的原图上，从谱号左缘起 `KEY_FROM` 格（谱号盒吞了升号时按正常谱号宽度起算）往右，逐列找
+ * 2 格以上的竖直连续墨；两根相距 0.15~0.8 格、中列在竖笔中点上下各有一道厚 0.25 格以上横杠的是一个升号。
+ * 串从头起、相邻不隔 1.6 格；碰到别的竖笔（降号、符干、拍号）就停。返回各升号的盒（两根竖笔围的那一段）。
+ */
+function sharpsByStrokes(bin: Binary, lineYs: number[], clef: Rect, sp: number): Rect[] {
+  const top = lineYs[0];
+  const bottom = lineYs[lineYs.length - 1];
+  const x0 = Math.round(clef.x + Math.min(clef.w, sp * KEY_FROM));
+  const box: Rect = { x: x0, y: Math.max(0, Math.round(top - sp * 1.5)), w: Math.round(sp * 9), h: Math.round(bottom - top + sp * 3) };
+  if (box.x + box.w > bin.w || box.y + box.h > bin.h) return [];
+  const strokes = verticalStrokes(bin, box, sp * 2);
+  // 中列上厚 0.25 格以上的横杠，要**一道在竖笔中点以上、一道在以下**：相邻两个降号的竖笔也相距半格多，
+  // 中列穿过前一个降号的肚子也是两道墨，可那两道都在竖笔下半截（《所信有根基》四个降号被数成两个升号）
+  const barsAcross = (xm: number, t: number, b: number): boolean => {
+    const mid = (t + b) / 2;
+    let up = false;
+    let dn = false;
+    let run = 0;
+    for (let y = box.y; y <= box.y + box.h; y++) {
+      if (y < box.y + box.h && bin.data[y * bin.w + xm]) run++;
+      else {
+        if (run >= sp * 0.25) {
+          const c = y - run / 2;
+          if (c < mid) up = true;
+          else dn = true;
+        }
+        run = 0;
+      }
+    }
+    return up && dn;
+  };
+  const out: Rect[] = [];
+  let lastX = x0;
+  for (let i = 0; i + 1 < strokes.length; i += 2) {
+    const a = strokes[i];
+    const b = strokes[i + 1];
+    if (a.h > sp * 3.6 || b.h > sp * 3.6) break;
+    const d = (b.x0 - a.x1) / sp;
+    if (d < 0.15 || d > 0.8) break;
+    if ((a.x0 - lastX) / sp > (out.length ? 1.6 : 2.5)) break;
+    if (!barsAcross(Math.round((a.x1 + b.x0) / 2), Math.min(a.top, b.top), Math.max(a.bottom, b.bottom))) break;
+    const t = Math.min(a.top, b.top);
+    // 横杠左右各探出竖笔约 0.2 格：盒按竖笔量会窄一截，调号串按盒缝判连续，窄了就在第三个上断开（齐来称颂 3 → 2 个）
+    const pad = Math.round(sp * 0.2);
+    out.push({ x: a.x0 - pad, y: t, w: b.x1 - a.x0 + 1 + pad * 2, h: Math.max(a.bottom, b.bottom) - t + 1 });
+    lastX = b.x1;
+  }
+  return out;
+}
+
 /**
  * **同音两声部**：一个符头右边一根朝上的干、左边一根朝下的干——闭合谱里
  * 女高女低（男高男低）唱同一个音时就这么记，一个头算两个音。

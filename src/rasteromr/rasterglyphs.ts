@@ -238,6 +238,8 @@ export function bootstrapClefs(
   space: number,
   /** 可选：拿签名再验一道。`sigOf` 按合并后的盒取签名（调用方从位图上算）。 */
   verify?: { tpl: OutlineTemplate[]; sigOf: (box: { x: number; y: number; w: number; h: number }) => Uint8Array },
+  /** 可选：明知不是谱号的块（粘连的升号串），不当候选。 */
+  skip?: (box: { x: number; y: number; w: number; h: number }) => boolean,
 ): BootHint[] {
   const out: BootHint[] = [];
   for (const st of staves) {
@@ -249,6 +251,7 @@ export function bootstrapClefs(
       const b = blobs[i];
       if (b.x < st.left - space || b.x > st.left + space * 4) continue;
       if (b.y > bottom || b.y + b.h < top) continue;
+      if (skip?.(b)) continue;
       cand.push(i);
     }
     if (!cand.length) continue;
@@ -318,7 +321,8 @@ export function bootstrapClefs(
     // 模板与高度都判成高音谱号，可它整个落在谱表里——SATB 的男声谱表全按高音谱号读，
     // 音高整行错一个六度。只管高度卡在门槛边上的（真高音谱号 4.7~7.5 格）：
     // 扫描件断掉半截的高音谱号也可能不探出谱表，不设上限的话照样被改判（破碎扫描件一处）。
-    if (code === "gClef" && box.h < space * 4.2 && Math.max(top - box.y, box.y + box.h - bottom) < space * 0.8) code = "fClef";
+    // 上限 4.2 → 4.4：《耶和华是我的牧者》第二页末行的低音谱号上下各擦出谱表一点，盒高 4.26 格，模板判成高音谱号。
+    if (code === "gClef" && box.h < space * 4.4 && Math.max(top - box.y, box.y + box.h - bottom) < space * 0.8) code = "fClef";
     out.push({ index: seed, box, code });
   }
   return out;

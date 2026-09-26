@@ -993,3 +993,30 @@ export function binSig(bin: Binary, box: Rect): Uint8Array {
   }
   return sig;
 }
+
+/**
+ * 盒里的**竖笔**：逐列取最长的竖直连续墨（容 `gap` 像素的断口），够 `minH` 高的相邻列并成一笔。
+ * 返回每一笔的左右列、高度与上下端（像素）。在**带谱线的原图**上量：去线图里竖笔被当原语抽走了。
+ */
+export function verticalStrokes(bin: Binary, box: Rect, minH: number, gap = 2): { x0: number; x1: number; h: number; top: number; bottom: number }[] {
+  const out: { x0: number; x1: number; h: number; top: number; bottom: number }[] = [];
+  let cur: (typeof out)[number] | null = null;
+  for (let x = box.x; x < box.x + box.w; x++) {
+    let best = 0;
+    let bestTop = 0;
+    let st = -1;
+    let miss = 0;
+    for (let y = box.y; y < box.y + box.h; y++) {
+      if (bin.data[y * bin.w + x]) {
+        if (st < 0) st = y;
+        miss = 0;
+        if (y - st + 1 > best) (best = y - st + 1), (bestTop = st);
+      } else if (st >= 0 && ++miss > gap) (st = -1), (miss = 0);
+    }
+    if (best >= minH) {
+      if (cur && x - cur.x1 <= 1) (cur.x1 = x), (cur.h = Math.max(cur.h, best)), (cur.top = Math.min(cur.top, bestTop)), (cur.bottom = Math.max(cur.bottom, bestTop + best - 1));
+      else out.push((cur = { x0: x, x1: x, h: best, top: bestTop, bottom: bestTop + best - 1 }));
+    } else cur = null;
+  }
+  return out;
+}

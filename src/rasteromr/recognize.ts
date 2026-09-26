@@ -24,7 +24,7 @@ import { bootstrapClefs, matchTemplate, RasterGlyphLookup, type BootStaff } from
 import { sigDistance } from "../omr/glyphdict";
 import { completeStaffBars, cutJianpuStrip, eraseInBand, findJianpuBands, jianpuKey, type JianpuStrip } from "./jianpuband";
 import { fuseJianpu, type FuseStats, type JianpuRow } from "./jianpufuse";
-import { findLyricRows, foldLyricChars, isLatinRow, latinCells, mapCharsToCells, stripKey, stripOf, type LyricRow, type LyricStrip, type OcrChar } from "./lyric";
+import { findLyricRows, foldLyricChars, isLatinRow, LATIN_MIN_CHAINED, latinCells, mapCharsToCells, splitMixedChars, stripKey, stripOf, stripWithout, type LyricRow, type LyricStrip, type OcrChar } from "./lyric";
 import { findHoles, traceContours, type ContourMap } from "./contour";
 import { buildHeadMasks, buildHollowMasks, headFromStemBlock, splitHeadCluster } from "./headmask";
 import { headProb, trainHeadClassifier } from "./headclass";
@@ -2297,7 +2297,7 @@ export async function recognizeRasterPage(
     // 但字号小：比相邻拉丁行矮两成以上的不链。
     const latinStrips = new Set<LyricStrip>();
     {
-      const cand = (ocr ? lyricStrips : []).filter((st) => { const ch = ocr!.get(stripKey(st)); return ch && isLatinRow(ch, false); });
+      const cand = (ocr ? lyricStrips : []).filter((st) => { const ch = ocr!.get(stripKey(st)); return ch && isLatinRow(ch, false, LATIN_MIN_CHAINED); });
       for (const st of cand) if (isLatinRow(ocr!.get(stripKey(st))!)) latinStrips.add(st);
       const yOf = (st: LyricStrip) => Math.min(...stripRow.get(st)!.cells.map((c) => c.y));
       for (let grew = true; grew; ) {
@@ -2333,13 +2333,19 @@ export async function recognizeRasterPage(
       // 行里的笔画照样当字剔（上面已进 `readRows`），只是不出歌词：直接跳过的话，那一行被收成符头的
       // 笔画留下来成了假音（齐来称颂 −1.3、父恩广大 −0.6）
       if (!latin && foldLyricChars(chars).length <= 1) continue;
-      const cells = latin ? latinCells(strip, chars) : mapCharsToCells(strip, chars);
+      // **中英混在一条的切成两份**，各出一个文本对象（见 `splitMixedChars`）：拉丁那份归英文段
+      const mix = splitMixedChars(chars);
+      const parts = mix
+        ? [latinCells(strip, mix.la), mapCharsToCells(stripWithout(strip, mix.spans), mix.zh)]
+        : [latin ? latinCells(strip, chars) : mapCharsToCells(strip, chars)];
       // 「字数 == 格数」这个结构指标只对汉字行有意义（拉丁行压根不切格）
-      if (!latin && foldLyricChars(chars).length === strip.cells.length) lyricStats.parity++;
-      if (!cells.some((c) => c.ch)) continue;
-      const o = makeTextObj(pg.objs.length + objs.length, { cells, sizeDev: strip.charH });
-      o.addTag("Lyric");
-      objs.push(o);
+      if (!latin && !mix && foldLyricChars(chars).length === strip.cells.length) lyricStats.parity++;
+      for (const cells of parts) {
+        if (!cells.some((c) => c.ch)) continue;
+        const o = makeTextObj(pg.objs.length + objs.length, { cells, sizeDev: strip.charH });
+        o.addTag("Lyric");
+        objs.push(o);
+      }
     }
     pg.objs.push(...objs);
     // **歌词行里的「符头」是字的笔画**：歌词离谱表近的底本（《是谁》第一段歌词只在谱表下
@@ -2516,6 +2522,9 @@ function foldBilingualLyrics(pg: SPage, lines: LyricLine[]): void {
 
 /** 拉丁段在页内先编成 `LATIN_VERSE + k`，整首的中文段数定了再挪到中文段后面（`settleLyricVerses`）。 */
 const LATIN_VERSE = 100;
+/** 一行里伸出上方各行范围的音节，至少连着这么多个才拆成单独一段（见 `numberVersesByScript`）。 */
+const SPLIT_RUN = 3;
+const median = (a: number[]) => (a.length ? [...a].sort((x, y) => x - y)[a.length >> 1] : 0);
 
 const isLatinLine = (l: LyricLine) => {
   const t = l.syllables.map((s) => s.text).join("");
@@ -2533,14 +2542,43 @@ const isLatinLine = (l: LyricLine) => {
  * 英文从第几段起要看**整首**的中文段数（倚靠主第二页只有副歌），这里先占位，见 `settleLyricVerses`。
  */
 function numberVersesByScript(pg: SPage, lines: LyricLine[]): void {
+  const span = (l: LyricLine) => [Math.min(...l.syllables.map((s) => s.left)), Math.max(...l.syllables.map((s) => s.right))] as const;
+  const extra: LyricLine[] = [];
   for (const st of pg.staves) {
     const ls = lines.filter((l) => l.staff === st).sort((a, b) => a.top - b.top);
-    let zh = 0;
-    let la = 0;
-    for (const l of ls) l.verse = isLatinLine(l) ? LATIN_VERSE + ++la : ++zh;
+    // 第几段 = 上方同文种、**横向盖得住**它的行数 + 1。各段全宽排的，彼此都盖得住，照旧按上下次序；
+    // 副歌只印在右半边的（信心使我得胜「Faith is the vic-to-ry!」印在中文第 3 段那一行的右边），
+    // 左边主歌那几段盖不着它，就是本文种的第 1 段。
+    // **按音节数**：一行的后半截伸进上方各行都没印的地方（倚靠主低音谱表下第 2 行英文「…arms. Lean-ing on Je-sus,」，
+    // 后半是副歌的呼应句，上面那行英文到「arms.」就停了），那一截是本文种的第 1 段，拆出去单独成行。
+    // 伸出去不到一个音节宽、或不到 `SPLIT_RUN` 个音节的不拆：各段结尾差一两个音（melisma）是常事。
+    // **只拆拉丁行**：汉字行各段字数不同、尾巴伸出上一行范围的很常见，拆了是谁 100 → 58.7%、
+    // 以马内利、你的信实广大、耶和华都掉（只救回数算主恩第 3 段行尾的副歌起句「主的恩典，樣樣」），净亏。
+    const done: LyricLine[] = [];
+    for (const l of ls) {
+      const lat = isLatinLine(l);
+      const above = done.filter((o) => isLatinLine(o) === lat).map(span);
+      const sw = median(l.syllables.map((s) => s.right - s.left));
+      const ks = l.syllables.map((s) => above.filter(([a, b]) => s.cx > a - sw && s.cx < b + sw).length + 1);
+      const k0 = above.filter(([a, b]) => a < span(l)[1] && b > span(l)[0]).length + 1;
+      // 连续同号的段，太短的并回整行的号
+      const runs: { k: number; from: number; to: number }[] = [];
+      ks.forEach((k, i) => {
+        const r = runs[runs.length - 1];
+        if (r && r.k === k) r.to = i + 1;
+        else runs.push({ k, from: i, to: i + 1 });
+      });
+      const cut = lat ? runs.filter((r) => r.k !== k0 && r.to - r.from >= SPLIT_RUN) : [];
+      l.verse = lat ? LATIN_VERSE + k0 : k0;
+      for (const r of cut) {
+        extra.push({ ...l, verse: lat ? LATIN_VERSE + r.k : r.k, syllables: l.syllables.slice(r.from, r.to) });
+      }
+      if (cut.length) l.syllables = l.syllables.filter((_, i) => !cut.some((r) => i >= r.from && i < r.to));
+      done.push(l);
+    }
   }
+  lines.push(...extra);
 }
-
 /**
  * 整首的音符（各页 `recognizeRasterPage` 的 `notes` 连起来）：拉丁段挪到中文段后面
  *（中文三段就从第 4 段起），段号与独唱谱的约定一致（坚固保障：中文 1~4、英文 5~8）。

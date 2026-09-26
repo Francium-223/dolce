@@ -479,9 +479,12 @@ export function mapCharsToCells(strip0: LyricStrip, chars: OcrChar[]): { box: Re
  *  一整行下来必带；书眉、版权、脚注一个也没有。
  *  代价是整行全是单音节词的歌词行会漏掉（实测主，差遣我有一行 `takeupthecross;`），
  *  拿它换掉六行书眉，划算。**紧挨着带连字符的拉丁行**的那几行不要连字符（见 `recognize.ts`，
- *  《奇异恩典》四段英文里有一半行没有连字符）。 */
+ *  《奇异恩典》四段英文里有一半行没有连字符）。
+ *  链进来的行字母下限也放到 `LATIN_MIN_CHAINED`：有邻行作保，短句不必凑够 20 个字母
+ *  （信心使我得胜第二页英文第 3 段「And ech-o with our shout.」17 个字母，整行丢了，第 4 段顶上来）。 */
 const LATIN_FRAC = 0.9;
 const LATIN_MIN = 20;
+export const LATIN_MIN_CHAINED = 8;
 const LATIN_MIN_HYPHEN = 1;
 
 /** 收得下的拉丁歌词字符：字母、撇号（`God's`）、连字符、以及贴字尾的半角标点。 */
@@ -500,7 +503,7 @@ const LATIN_CH = /[A-Za-z'\u2019\-\u2013\u2014,.;:!?]/;
 const SPACE_GAP = 0.7;
 
 /** 这一行是拉丁歌词吗。 */
-export function isLatinRow(chars: OcrChar[], needHyphen = true): boolean {
+export function isLatinRow(chars: OcrChar[], needHyphen = true, minLatin = LATIN_MIN): boolean {
   let latin = 0;
   let cjk = 0;
   for (const c of chars) {
@@ -508,7 +511,51 @@ export function isLatinRow(chars: OcrChar[], needHyphen = true): boolean {
     else if (/[\u4e00-\u9fff]/.test(c.ch)) cjk++;
   }
   const hyphens = chars.filter((c) => /[-\u2013\u2014]/.test(c.ch)).length;
-  return latin >= LATIN_MIN && (!needHyphen || hyphens >= LATIN_MIN_HYPHEN) && latin / (latin + cjk) >= LATIN_FRAC;
+  return latin >= minLatin && (!needHyphen || hyphens >= LATIN_MIN_HYPHEN) && latin / (latin + cjk) >= LATIN_FRAC;
+}
+
+/** 混排条里拉丁段够格的门槛：至少这么多字母，且带连字符或字母不少于 `MIX_LATIN_LONG`。 */
+const MIX_LATIN_MIN = 5;
+const MIX_LATIN_LONG = 12;
+
+/**
+ * **中英混在一条里的，切成汉字与拉丁两份**（按 OCR 字的 `xFrac` 分文种连续段）。
+ *
+ * 副歌一呼一应的谱，同一行里前半是中文某段的尾巴、后半是英文副歌（《信心使我得胜》
+ * 「歡呼聲迴響應。Faith is the vic-to-ry!」、《倚靠主永远膀臂》「倚靠主耶穌永遠膀臂。Lean-ing,」），
+ * 或者反过来。整条按一种文种走，另一半就丢了（汉字行只收汉字，拉丁行只收字母）。
+ * 拉丁段要够格（`MIX_LATIN_MIN` 个字母，带连字符或够长）才切，汉字行里 OCR 吐出的零星字母不算；
+ * 汉字不到两个的不切。标点、数字跟着前一段。切不出来返回 `null`。
+ * 返回拉丁段在条内的 x 区间（分数），汉字那份的字格要避开它。
+ */
+export function splitMixedChars(chars: OcrChar[]): { zh: OcrChar[]; la: OcrChar[]; spans: [number, number][] } | null {
+  const sorted = [...chars].sort((a, b) => a.xFrac - b.xFrac);
+  const runs: { latin: boolean; chars: OcrChar[] }[] = [];
+  for (const c of sorted) {
+    const kind = /[A-Za-z]/.test(c.ch) ? true : /[\u3400-\u9fff]/.test(c.ch) ? false : null;
+    const last = runs[runs.length - 1];
+    if (last && (kind === null || kind === last.latin)) last.chars.push(c);
+    else runs.push({ latin: kind ?? false, chars: [c] });
+  }
+  const good = (r: { latin: boolean; chars: OcrChar[] }) => {
+    if (!r.latin) return false;
+    const letters = r.chars.filter((c) => /[A-Za-z]/.test(c.ch)).length;
+    return letters >= MIX_LATIN_MIN && (letters >= MIX_LATIN_LONG || r.chars.some((c) => /[-\u2013\u2014]/.test(c.ch)));
+  };
+  const la = runs.filter(good);
+  const zh = runs.filter((r) => !good(r)).flatMap((r) => r.chars);
+  if (!la.length || zh.filter((c) => /[\u3400-\u9fff]/.test(c.ch)).length < 2) return null;
+  return {
+    zh,
+    la: la.flatMap((r) => r.chars),
+    spans: la.map((r) => [r.chars[0].xFrac, r.chars[r.chars.length - 1].xFrac] as [number, number]),
+  };
+}
+
+/** 条里只留不压着 `spans`（拉丁段）的字格——混排条汉字那份的字格。 */
+export function stripWithout(strip: LyricStrip, spans: [number, number][]): LyricStrip {
+  const pad = strip.charH / Math.max(1, strip.w);
+  return { ...strip, cells: strip.cells.filter((c) => !spans.some(([a, b]) => (c.x0 + c.x1) / 2 >= a - pad && (c.x0 + c.x1) / 2 <= b + pad)) };
 }
 
 /**

@@ -2382,6 +2382,7 @@ export async function recognizeRasterPage(
     }
     lyricLines.push(...buildLyricLines(pg, objs));
     foldBilingualLyrics(pg, lyricLines);
+    moveEchoLines(pg, lyricLines, notes, unit.space);
     numberVersesByScript(pg, lyricLines);
     attachLyrics(notes, lyricLines);
   }
@@ -2552,8 +2553,8 @@ function numberVersesByScript(pg: SPage, lines: LyricLine[]): void {
     // **按音节数**：一行的后半截伸进上方各行都没印的地方（倚靠主低音谱表下第 2 行英文「…arms. Lean-ing on Je-sus,」，
     // 后半是副歌的呼应句，上面那行英文到「arms.」就停了），那一截是本文种的第 1 段，拆出去单独成行。
     // 伸出去不到一个音节宽、或不到 `SPLIT_RUN` 个音节的不拆：各段结尾差一两个音（melisma）是常事。
-    // **只拆拉丁行**：汉字行各段字数不同、尾巴伸出上一行范围的很常见，拆了是谁 100 → 58.7%、
-    // 以马内利、你的信实广大、耶和华都掉（只救回数算主恩第 3 段行尾的副歌起句「主的恩典，樣樣」），净亏。
+    // 汉字行也拆：GT 约定统一成「副歌只印一次的，副歌记第 1 段」（原先是谁、以马内利来临歌、你的信实广大
+    // 三份照印记在第 2 段，已改成第 1 段；数算主恩、更亲近恩主本来就记第 1 段）。
     const done: LyricLine[] = [];
     for (const l of ls) {
       const lat = isLatinLine(l);
@@ -2568,7 +2569,13 @@ function numberVersesByScript(pg: SPage, lines: LyricLine[]): void {
         if (r && r.k === k) r.to = i + 1;
         else runs.push({ k, from: i, to: i + 1 });
       });
-      const cut = lat ? runs.filter((r) => r.k !== k0 && r.to - r.from >= SPLIT_RUN) : [];
+      // 汉字行的副歌起句（数算主恩第 3 段行尾「…見天父．主的恩典，樣樣」、是谁第 2 段「捨命，是你，主耶穌…」）。
+      // 两道闸：末段后的「阿们」不算（GT 记在末段：唱完末段才唱，不是副歌；万古磐石歌、救主降生等七首）；
+      // 行首那一截（上一行接下来的副歌，是谁「你。是你，主耶穌，唯有你。」）要以句末标点收尾——
+      // 各段字数不同的曲子行首本来就参差（耶和华是我的牧者「我擺設筵」「隨着」，96.2 → 90.9%）
+      const refrain = (r: { from: number; to: number }) =>
+        !/^[（(]?阿$/.test(l.syllables[r.from].text) && (r.from > 0 || /[。！？!?]$/.test(l.syllables[r.to - 1].text));
+      const cut = runs.filter((r) => r.k !== k0 && r.to - r.from >= (lat ? SPLIT_RUN : 2) && (lat || refrain(r)));
       l.verse = lat ? LATIN_VERSE + k0 : k0;
       for (const r of cut) {
         extra.push({ ...l, verse: lat ? LATIN_VERSE + r.k : r.k, syllables: l.syllables.slice(r.from, r.to) });
@@ -2579,6 +2586,45 @@ function numberVersesByScript(pg: SPage, lines: LyricLine[]): void {
   }
   lines.push(...extra);
 }
+/** 呼应句改挂下一行谱：音节「明显离下一行谱的音更近」至少占这么多（明显 = 近半个线距以上）。 */
+const ECHO_LOWER = 0.5;
+/** 同时「明显离上一行谱更近」的不超过这么多；上方要有一行跟上一行谱走的（明显离下一行谱更近的不超过 `ECHO_UPPER_ROW`）。 */
+const ECHO_UPPER = 0.1;
+const ECHO_UPPER_ROW = 0.15;
+
+/**
+ * **印在两行谱之间、其实是下一行谱声部的词**，改挂下一行谱（`buildLyricLines` 一律挂上方最近的谱行）。
+ *
+ * 副歌一呼一应的谱（倚靠主永远膀臂）：高音唱长音「倚——靠」，低音接「倚靠主耶穌」，
+ * 低音的词印在两谱表之间、主歌各行下面，被当成高音谱表的第 2 段（GT 记在低音的第 1 段）。
+ * 判据是**音节离哪一行谱的音近**：四部和声两行谱节奏大多一样，两边一样近，照旧挂上面；
+ * 应答句落在高音没有音的地方，明显离低音近（倚靠主三处 0.57~0.75，主歌各行 0~0.1）。
+ * **要有对比**：同一行谱下，上面先有一行跟着上一行谱走，它下面才出现跟低音走的行，从那一行起往下都挂下一行谱。
+ * 耶和华是我的牧者一行谱下三段词全都偏向低音（0.40~0.69，高音谱表的音认漏了），不能挪——只看单行挪了，中文 96 → 45%。
+ */
+function moveEchoLines(pg: SPage, lines: LyricLine[], notes: StaffNote[], sp: number): void {
+  const xsOf = (st: Staff) => notes.filter((n) => n.staff === st && !n.rest && !n.grace).map((n) => n.x);
+  const near = (x: number, xs: number[]) => Math.min(Infinity, ...xs.map((y) => Math.abs(y - x)));
+  for (const sys of pg.systems) {
+    for (let i = 0; i + 1 < sys.staves.length; i++) {
+      const up = sys.staves[i];
+      const lo = sys.staves[i + 1];
+      const upX = xsOf(up);
+      const loX = xsOf(lo);
+      const frac = (l: LyricLine, a: number[], b: number[]) => l.syllables.filter((q) => near(q.cx, a) + sp * 0.5 < near(q.cx, b)).length / l.syllables.length;
+      const gap = lines.filter((l) => l.staff === up && l.top < lo.box.top && l.syllables.length >= 3).sort((p, q) => p.top - q.top);
+      let seenUpper = false;
+      let from = -1;
+      gap.forEach((l, k) => {
+        const lb = frac(l, loX, upX);
+        if (from < 0 && seenUpper && lb >= ECHO_LOWER && frac(l, upX, loX) <= ECHO_UPPER) from = k;
+        if (lb <= ECHO_UPPER_ROW) seenUpper = true;
+      });
+      if (from >= 0) for (const l of gap.slice(from)) l.staff = lo;
+    }
+  }
+}
+
 /**
  * 整首的音符（各页 `recognizeRasterPage` 的 `notes` 连起来）：拉丁段挪到中文段后面
  *（中文三段就从第 4 段起），段号与独唱谱的约定一致（坚固保障：中文 1~4、英文 5~8）。

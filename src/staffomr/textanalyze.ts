@@ -538,8 +538,10 @@ export function attachLyrics(notes: NoteLike[], lines: LyricLine[]): void {
     // 要出 `middle`/`end` 而不是 `single`（`a-bid-eth` 的中段）。
     let cont = false;
     for (const syl of line.syllables) {
-      // 往前推到「再往前就更远」为止
-      while (ni + 1 < cand.length && Math.abs(cand[ni + 1].x - syl.cx) < Math.abs(cand[ni].x - syl.cx)) ni++;
+      // 往前推到「再往前就更远」为止。**同 x 的音（两个声部叠在一起）不算「更远」**，要越过去接着找：
+      // 原来碰到距离相等就停，一行从中间起头的词（位图路从主歌行尾拆出来的副歌起句）整串卡在第一个音上
+      for (let j = ni + 1; j < cand.length && cand[j].x - syl.cx <= Math.abs(cand[ni].x - syl.cx); j++)
+        if (Math.abs(cand[j].x - syl.cx) < Math.abs(cand[ni].x - syl.cx)) ni = j;
       const n = cand[ni];
       (n.lyrics ??= []).push({ verse: line.verse, text: syl.text, hyphen: syl.hyphen, cont });
       cont = syl.hyphen;

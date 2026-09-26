@@ -424,6 +424,10 @@ const NUM_DIGITS = [2, 3, 4, 5, 6, 7, 8, 9] as const;
 const DEN_DIGITS = [2, 4, 8] as const;
 const TIME_NUM_DIST = 230;
 const TIME_DEN_DIST = 300;
+/** 分子读成 4 时的复核（见拍号那一段）：分子到分母 4 的签名距离过这个数，
+ *  且别的数字在 `TIME_ALT_DIST` 以内，就改认那个数字。 */
+const TIME_SELF_DIST = 215;
+const TIME_ALT_DIST = 265;
 /** 派生的「9」要比别的数字近出这么多才采信（见 `digitOf`）。 */
 const NINE_MARGIN = 30;
 
@@ -1363,6 +1367,14 @@ export async function recognizeRasterPage(
         }
       }
       if (!hits.length) continue;
+      // **分子读成 4 时拿分母复核**：分母那个 4 是同一本同一字号的真 4，分子真是 4 就该长得像它。
+      // 模板法分不开的两首（万福泉源歌放大后的「3」到 `timeSig4` 200、到 `timeSig3` 225；
+      // 来敬拜荣耀王粗体铅字「3」181 对 244）：分子到分母 232~244，退而求其次的数字 225~256；
+      // 真 4/4 那 60 多行分子到分母至多 196、别的数字至少 277。两条都过才改认。
+      if (hits.length === 2 && hits[0].code === "timeSig4" && hits[1].code === "timeSig4" && sigDistance(binSig(nl, hits[0].box), binSig(nl, hits[1].box)) > TIME_SELF_DIST) {
+        const alt = digitOf(hits[0].box, NUM_DIGITS.filter((k) => k !== 4), TIME_ALT_DIST);
+        if (alt) hits[0] = alt;
+      }
       if (pass === 1 && !timeFound.some((t) => t.codes === hits.map((h0) => h0.code).join("/") && Math.abs(t.x - box.x) <= unit.space * 1.5)) continue;
       // 拍号**盖过字典**（与谱号同一条）：落在它盒里的字典结果作废，那是被切开的碎块
       for (let k = syms.length - 1; k >= 0; k--) {

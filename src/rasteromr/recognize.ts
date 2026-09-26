@@ -19,7 +19,7 @@ import type { SPage, Staff, Sym, Tag } from "../staffomr/model";
 import { overlapY } from "../staffomr/model";
 import { buildRasterPage, makeSymObj, makeTextObj, type RasterSym } from "./adapt";
 import { binSig, blobImage, extendVSegs, findBlobs, findBraces, findPrimitives, groupByLeftInk, ledgerGrid, joinVSegs, removeStaffLines, verticalStrokes, type BeamQuad, type LineSeg, type RasterPrims } from "./prims";
-import { findRasterHeads, hollowHeadsByPitch, headsOnBareStems, probeBareStems, hollowHeadsFromCavities, hollowHeadsFromHoles, hollowHeadsOnLedgers, judgeHeadBox, mergeHoles, type PitchStep } from "./notehead";
+import { findRasterHeads, hollowHeadsByPitch, headsOnBareStems, probeBareStems, hollowHeadsFromCavities, hollowHeadsFromHoles, hollowHeadsOnLedgers, inkColumn, judgeHeadBox, mergeHoles, type PitchStep } from "./notehead";
 import { bootstrapClefs, matchTemplate, RasterGlyphLookup, type BootStaff } from "./rasterglyphs";
 import { sigDistance } from "../omr/glyphdict";
 import { completeStaffBars, cutJianpuStrip, eraseInBand, findJianpuBands, jianpuKey, type JianpuStrip } from "./jianpuband";
@@ -604,6 +604,8 @@ const FLAG_HEAD_BAND = 2.5;
 const FLAG_GAP = 2.8;
 /** 头盒中心离整音级这么多（级）以上算悬着，交模板定夺。 */
 const SNAP_AMBIG = 0.25;
+/** 墨柱补干：从头心算起伸出去的长度（格），同 `notehead.ts::INK_STEM`。 */
+const INK_STEM_REACH = [2.5, 7] as const;
 
 /** 认一页。顺序照 `staffomr/index.ts::recognizeStaffPage`，**别调**。 */
 export async function recognizeRasterPage(
@@ -2202,6 +2204,36 @@ export async function recognizeRasterPage(
   // **切加线要用最终认出来的全部符头**：除了 `findRasterHeads`，还有按内腔找的、
   // 拆块拆出来的、字典查出来的、碎块并回再判出来的——少算哪一路，那一路的符头
   // 就只能蹭邻居的加线，`findLegers` 判否、整批挂不上谱行。
+  // ── 找不到竖段的二分头：**顺着头缘的墨柱补干** ─────────────────────────────
+  //
+  // 三度叠置的空心和弦（赞美三一真神第二行 m5 的 F4/A4 附点二分），朝下的干左侧贴着两个头的圈，
+  // 一半以上的行有邻墨，`findPrimitives` 的孤立性判它「属于某个符号」、不出竖段；干没挂上，读成全音符。
+  // 这里对已判为二分、头缘两倍线宽内又没有竖段的头，从头心沿头缘的墨柱往上下走（`inkColumn`），
+  // 伸出去 2.5~7 格的当干补进去。两端都压在首末线附近的是小节线，不算。
+  // 独唱谱时值 90.42 → 90.66%（奇异恩典 +2.7、流血歌伴奏 +2.5、赞美三一真神 +2.4、父恩广大音符 +1.2），无一首掉；
+  // 合唱谱扫描档音符 +0.10、小节自检 +1.2，干净档小节自检 +0.65、歌词 +0.09、音符 −0.02（一个音），按接受记。
+  {
+    const sp = unit.space;
+    const tol = Math.max(unit.lineThick * 2, sp * 0.25);
+    for (const s0 of syms) {
+      if (s0.code !== "noteheadHalf") continue;
+      const b = s0.box;
+      const cy = b.y + b.h / 2;
+      const has = [...prims.vSegs, ...stemSegs, ...inkStems].some((v) => {
+        const vx = (v.x0 + v.x1) / 2;
+        return (Math.abs(vx - b.x) <= tol || Math.abs(vx - b.x - b.w) <= tol) && Math.min(v.y0, v.y1) <= cy + sp && Math.max(v.y0, v.y1) >= cy - sp;
+      });
+      if (has) continue;
+      const col = inkColumn(nl, b, unit);
+      if (!col) continue;
+      const reach = Math.max(cy - col[0], col[1] - cy);
+      if (reach < sp * INK_STEM_REACH[0] || reach > sp * INK_STEM_REACH[1]) continue;
+      const g = groups.find((q) => cy > q.lines[0].y - sp * 4 && cy < q.lines[4].y + sp * 4);
+      if (g && Math.abs(col[0] - g.lines[0].y) <= sp * 0.5 && Math.abs(col[1] - g.lines[4].y) <= sp * 0.5) continue;
+      inkStems.push({ x0: col[2], y0: col[0], x1: col[2], y1: col[1], lw: unit.lineThick, maxLw: unit.lineThick * 2 });
+    }
+  }
+
   const headBoxes = syms.filter((s0) => /notehead/i.test(s0.code)).map((s0) => ({ box: s0.box }));
 
   const pg = buildRasterPage({

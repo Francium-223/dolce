@@ -676,6 +676,7 @@ function partialBeams(bin: Binary, beams: BeamQuad[], unit: RasterUnit): BeamQua
   const sp = unit.space;
   const out: BeamQuad[] = [];
   const ink = (x: number, y: number) => y >= 0 && y < bin.h && x >= 0 && x < bin.w && !!bin.data[y * bin.w + x];
+  const holeTol = Math.max(1, Math.ceil(unit.lineThick));
   for (const b of beams) {
     const lw = Math.max(2, b.lw);
     const yAt = (x: number) => b.y0 + ((b.y1 - b.y0) * (x - b.x0)) / Math.max(1, b.x1 - b.x0);
@@ -690,13 +691,29 @@ function partialBeams(bin: Binary, beams: BeamQuad[], unit: RasterUnit): BeamQua
             if (cols.length) break;
             continue;
           }
-          while (ink(x, y + side)) y += side; // 跨过杠本身
+          // 跨过杠本身，顺带量这一列的杠厚（平均线宽对斜杠估得偏薄：当我们回到天家 5.96px，实际 8~10）
+          let t = 1;
+          for (let yy = y; ink(x, yy - side); yy -= side) t++;
+          while (ink(x, y + side)) (y += side), t++;
+          // 夹在平均线宽的 1~1.7 倍：杠外侧连着别的墨时（相邻的杠、头）t 会量大（倚靠主丢了半杠）
+          const lwx = Math.min(Math.max(lw, t), lw * 1.7);
           let g = 0;
           while (!ink(x, y + side * (g + 1)) && g <= sp * 0.6) g++;
           const s0 = y + side * (g + 1);
-          let r = 0;
-          while (ink(x, s0 + side * r) && r <= lw * 1.6) r++;
-          const ok = g >= 1 && g <= sp * 0.6 && r >= lw * 0.6 && r <= lw * 1.6;
+          // 先按连着的墨段判；不合格再容一个线宽的断口数一次：半杠被谱线横穿，去线时在它中间啃出一两行白
+          //（当我们回到天家）。只用后者的话，墨段会越过断口连上后面别的墨，原本合格的半杠反倒超厚（倚靠主 −2.9）
+          const runLen = (tol: number) => {
+            let n = 0;
+            for (let miss = 0; n <= lwx * 1.6; ) {
+              if (ink(x, s0 + side * (n + miss))) (n += miss + 1), (miss = 0);
+              else if (++miss > tol) break;
+            }
+            return n;
+          };
+          const fits = (n: number) => n >= lwx * 0.6 && n <= lwx * 1.6;
+          let r = runLen(0);
+          if (!fits(r)) r = runLen(holeTol);
+          const ok = g >= 1 && g <= sp * 0.6 && fits(r);
           if (!ok) {
             if (cols.length || k > sp * 0.4) break;
             continue;
@@ -707,8 +724,10 @@ function partialBeams(bin: Binary, beams: BeamQuad[], unit: RasterUnit): BeamQua
         const xs = cols.map((c) => c.x);
         const x0 = Math.min(...xs);
         const x1 = Math.max(...xs);
-        const top = Math.min(...cols.map((c) => c.y0));
-        const bot = Math.max(...cols.map((c) => c.y1));
+        // 上下缘取各列的中位数：杠里的白洞会让个别列读岔（把杠的下半截当成半杠），min/max 会把盒拉高
+        const med = (a: number[]) => a.sort((p, q) => p - q)[a.length >> 1];
+        const top = med(cols.map((c) => c.y0));
+        const bot = med(cols.map((c) => c.y1));
         // 落在已认出的杠上的不算（十六分那组两条杠都是整条，从第一条往外走就撞上第二条）
         const cy = (top + bot) / 2;
         if (beams.some((q) => q !== b && x0 >= q.box.x - 2 && x1 <= q.box.x + q.box.w + 2 && cy >= q.box.y && cy <= q.box.y + q.box.h)) continue;

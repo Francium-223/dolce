@@ -831,6 +831,8 @@ function attachDots(notes: StaffNote[], dots: Sym[], sp: number): void {
 const STEM_JOIN_X = 0.3;
 /** 同上，两段之间允许的断口（线距的倍数）。 */
 const STEM_JOIN_GAP = 1.0;
+/** 断成两段的干，断口不过这个数（线距的倍数）才统一两段的时值（见 `inheritDur`）。 */
+const STEM_SPLIT_DUR_GAP = 0.4;
 
 /** 落单的符头并回和弦时，与和弦里最近那个头的**音级差**上限（见 `initChords`）。 */
 const ORPHAN_STEP = 5;
@@ -876,6 +878,26 @@ const headSize = (n: StaffNote): number => n.sym.box.bottom - n.sym.box.top;
  *     「x 差不到半个符头宽」判不出来；按符干归没这问题。
  *   - 一根符干上的符头无论差几度都是一个和弦，不必再猜。
  */
+/**
+ * **同一枚和弦里没带杠的头随带杠的那个**（同一种符头才抄：实心随实心、空心随空心；附点取多的）。
+ * 两种来路：落单没挂干的头按缺省给了四分；一根干被中间那个头切成两段，下段没挂上杠。
+ * 它们常是最低音、成了主音（`guessDur` 取 `notes[0]`），整枚和弦于是按四分走——
+ * 《耶和华是我的牧者》三度叠着的八分和弦一百多处都这么读成了四分。
+ */
+function inheritDur(ch: StaffChord, ns: StaffNote[], orphan: boolean): void {
+  for (const n of ns) {
+    if (n.beams !== 0 || (orphan && n.stemUp !== null)) continue;
+    // 落单的头照抄任一挂干的同种头（附点也跟着来：附点四分、附点二分和弦常只有一个头认出附点）；
+    // 断干下段只抄带杠的那段
+    const ref = ch.notes.find((m) => m !== n && m.sym.code === n.sym.code && (orphan ? m.stemUp !== null : m.beams > 0));
+    if (!ref) continue;
+    n.base = ref.base;
+    n.beams = ref.beams;
+    n.dots = Math.max(n.dots, ref.dots);
+    n.duration = n.base * (2 - 1 / 2 ** n.dots);
+  }
+}
+
 function initChords(notes: StaffNote[], stems: StemInfo[], sp: number): StaffChord[] {
   const byNote = new Map<StaffNote, StaffChord>();
   const out: StaffChord[] = [];
@@ -954,6 +976,9 @@ function initChords(notes: StaffNote[], stems: StemInfo[], sp: number): StaffCho
       ca.top = Math.min(ca.top, cb.top);
       ca.notes.sort((m, n) => m.diatonic - n.diatonic);
       ca.notes.forEach((n, i) => (n.chordExtra = i > 0 || undefined));
+      // 时值只在断口极小时统一：真被中间那个头切断的干只断几个像素（耶和华 3px）；断口大的
+      // 多是两个声部各一根干（上声部朝上、下声部朝下）碰巧同 x，时值本来就不同（万口欢唱、父恩广大、称谢歌）
+      if (gap <= sp * STEM_SPLIT_DUR_GAP) inheritDur(ca, ca.notes, false);
       out.splice(b, 1);
     }
   }
@@ -989,18 +1014,8 @@ function initChords(notes: StaffNote[], stems: StemInfo[], sp: number): StaffCho
       }
     }
     if (!best) continue;
-    // **时值随挂干的那个头**：落单的头没有干，`buildNotes` 按缺省给了四分（空心给二分），
-    // 可它和挂干的头是同一枚和弦。它又常是最低音、成了和弦的主音（`guessDur` 取 `notes[0]`），
-    // 整枚和弦于是按四分走——《耶和华是我的牧者》三度叠着的八分和弦一百多处都这么读成了四分。
-    // 只照抄同一种符头的（实心随实心、空心随空心）；附点各头自己认，取多的那个。
-    const ref = best.notes.find((m) => m.sym.code === n.sym.code && m.stemUp !== null);
-    if (ref && n.stemUp === null && n.beams === 0) {
-      n.base = ref.base;
-      n.beams = ref.beams;
-      n.dots = Math.max(n.dots, ref.dots);
-      n.duration = n.base * (2 - 1 / 2 ** n.dots);
-    }
     best.notes.push(n);
+    inheritDur(best, [n], true);
     best.notes.sort((a, b) => a.diatonic - b.diatonic);
     best.notes.forEach((m, i) => (m.chordExtra = i > 0 || undefined));
     best.left = Math.min(best.left, n.sym.box.left);

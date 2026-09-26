@@ -676,6 +676,8 @@ export function buildNotes(
   beams: BeamShape[],
   /** 出参：这一页的符干（三连音那一步要用）。 */
   stemsOut?: StemInfo[],
+  /** 可选：认成实心、其实中间是空的头（位图路按墨判）。没有杠和尾的，时值按空心头算。 */
+  hollowish?: (s: Sym) => boolean,
 ): StaffNote[] {
   const sp = pg.normalStaffSpace || pg.space;
   const stems = buildStems(pg, sp);
@@ -743,6 +745,8 @@ export function buildNotes(
     } else if (s.code === "noteheadWhole" || s.code === "noteheadDoubleWhole") {
       base = s.code === "noteheadDoubleWhole" ? 2 : 1;
     } else if (s.code === "noteheadHalf") {
+      base = stem ? 1 / 2 : 1;
+    } else if (nb === 0 && s.code === "noteheadBlack" && hollowish?.(s)) {
       base = stem ? 1 / 2 : 1;
     } else {
       base = 1 / 4;

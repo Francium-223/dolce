@@ -425,6 +425,8 @@ const NUM_DIGITS = [2, 3, 4, 5, 6, 7, 8, 9] as const;
 const DEN_DIGITS = [2, 4, 8] as const;
 const TIME_NUM_DIST = 230;
 const TIME_DEN_DIST = 300;
+/** 实心头中心椭圆里白占这么多以上、又没有杠和尾的，时值按空心头算（见 `hollowish`）。 */
+const HOLLOW_FILL = 0.3;
 /** 被符头隔断的竖段接回一根（`joinVSegs`）：中心差（px）、断口上限（格）。 */
 const VSEG_JOIN_DX = 2;
 const VSEG_JOIN_GAP = 1.2;
@@ -2147,7 +2149,28 @@ export async function recognizeRasterPage(
   }
   const beams = toBeamShapes(prims.beams);
   const stems: StemInfo[] = [];
-  const notes = buildNotes(pg, ctx, beams, stems);
+  // **认成实心、其实中间是空的头**：圈细、内腔被没抹掉的谱线切成几小块的空心头（耶和华、高举主大能、你的信实广大），
+  // 过不了空心头的形状闸，被收成实心。头的中心椭圆（半径取盒的三成，跳过谱线那几行）里白占 HOLLOW_FILL 以上、
+  // 又没有杠和尾的，时值按空心头算。不在收头那一步改种类：改成空心头会走另一套收头规则，全音符大小的头反倒丢了（主使我喜乐）。
+  const hollowish = (s0: Sym): boolean => {
+    const b = s0.box;
+    const cx = (b.left + b.right) / 2;
+    const cy = (b.top + b.bottom) / 2;
+    const rx = (b.right - b.left) * 0.3;
+    const ry = (b.bottom - b.top) * 0.3;
+    let wht = 0;
+    let tot = 0;
+    for (let y = Math.ceil(cy - ry); y <= cy + ry; y++) {
+      if (gridYs.some((ly) => Math.abs(ly - y) <= unit.lineThick / 2 + 1)) continue;
+      for (let x = Math.ceil(cx - rx); x <= cx + rx; x++) {
+        if (((x - cx) / rx) ** 2 + ((y - cy) / ry) ** 2 > 1) continue;
+        tot++;
+        if (!raster.bin.data[y * raster.bin.w + x]) wht++;
+      }
+    }
+    return tot > 0 && wht / tot >= HOLLOW_FILL;
+  };
+  const notes = buildNotes(pg, ctx, beams, stems, hollowish);
   attachAccidentalsByPitch(pg, ctx, notes);
   splitUnisons(notes, stems);
   findTuplets(pg, beams, stems, notes);

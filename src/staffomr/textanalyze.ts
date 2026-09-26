@@ -529,7 +529,7 @@ interface NoteLike {
  * **休止不挂词**（谱面上歌词只写在发声的音上）。同一行谱内按 x 双指针就近配对，
  * 保持顺序——不保持顺序的话，一个音节撞上邻音就会把后面整行错位。
  */
-export function attachLyrics(notes: NoteLike[], lines: LyricLine[]): void {
+export function attachLyrics(notes: NoteLike[], lines: LyricLine[], sameCol = 0): void {
   for (const line of lines) {
     const cand = notes.filter((n) => n.staff === line.staff && !n.rest).sort((a, b) => a.x - b.x);
     if (!cand.length) continue;
@@ -545,6 +545,10 @@ export function attachLyrics(notes: NoteLike[], lines: LyricLine[]): void {
       const n = cand[ni];
       (n.lyrics ??= []).push({ verse: line.verse, text: syl.text, hyphen: syl.hyphen, cont });
       cont = syl.hyphen;
+      // 同一列（x 差不到 `sameCol`）的其余和弦成员一并跳过：一个和弦只挂一个音节。
+      // 位图路才传（0.3 个线距）：只挪一个音，下一个音节常落到同一和弦的另一个成员上，
+      // 两个音节挤在同一拍，按拍位展开从高到低排，词序就反了（信心使我得胜「they like a」读成「they a like」）
+      while (sameCol > 0 && ni + 1 < cand.length && Math.abs(cand[ni + 1].x - n.x) < sameCol) ni++;
       if (ni + 1 < cand.length) ni++;
     }
   }

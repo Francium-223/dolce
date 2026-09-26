@@ -2386,7 +2386,8 @@ export async function recognizeRasterPage(
     foldBilingualLyrics(pg, lyricLines);
     moveEchoLines(pg, lyricLines, notes, unit.space);
     numberVersesByScript(pg, lyricLines);
-    attachLyrics(notes, lyricLines);
+    attachLyrics(notes, lyricLines, unit.space * 0.3);
+    liftLyrics(pg, notes, unit.space);
   }
 
   // ── 拍号兜底：整页一个拍号都没认出、前页也没传下来 ─────────────────────────
@@ -2520,6 +2521,44 @@ function foldBilingualLyrics(pg: SPage, lines: LyricLine[]): void {
       // 段号由 `numberVersesByScript` 按文种重编，这里只管挪谱行
       for (const l of lo) l.staff = sys.staves[i];
     }
+  }
+}
+
+/** 闭合谱的门槛：和弦附音与主音之比。 */
+const LIFT_CHORDY = 0.3;
+
+/**
+ * **字挂到同一拍最上面的音**（旋律）：`attachLyrics` 只按 x 找最近的音，同一 x 上的几个和弦成员、
+ * 上下两个声部谁排在前面就给谁，常落在女低或和弦的下方音上（万福泉源歌第 1 段每个字都挂在 E4、GT 在 G4）。
+ * 测评按拍位展开后同一拍的音从高到低排，挂错一个成员就错开一位。同一行谱、x 相差不到半个线距、
+ * 更高又没挂这一段字的音，把字挪上去。
+ */
+function liftLyrics(pg: SPage, notes: StaffNote[], sp: number): void {
+  // 只在**闭合谱**的谱行上挪（和弦附音占这行音的 `LIFT_CHORDY` 以上：女高女低同印一行，几乎每个音都是和弦）。
+  // **三行谱以上的系统不挪**（合唱谱：一个声部一行谱，外加钢琴）。那种声部行上同 x 更高的「和弦成员」多是多认出来的
+  // 假头（破碎女高那行 C5 上叠出 F5），挪上去女高、女低歌词 98 → 96、97 → 94%。按「三行以上挂着歌词」判不够：
+  // 扫描件（望十架）只在最上面一行认出了歌词。独唱谱语料的系统都是高低音两行
+  const choral = new Set<Staff>();
+  for (const sys of pg.systems) if (sys.staves.length >= 3) for (const st of sys.staves) choral.add(st);
+  const chordy = new Set<Staff>();
+  for (const st of new Set(notes.map((n) => n.staff))) {
+    if (choral.has(st)) continue;
+    const ns = notes.filter((n) => n.staff === st && !n.rest && !n.grace);
+    if (ns.filter((n) => n.chordExtra).length >= ns.filter((n) => !n.chordExtra).length * LIFT_CHORDY) chordy.add(st);
+  }
+  for (const n of notes) {
+    if (!n.lyrics?.length || n.rest || !chordy.has(n.staff)) continue;
+    let top = n;
+    for (const m of notes)
+      if (m.staff === n.staff && !m.rest && !m.grace && Math.abs(m.x - n.x) < sp * 0.5 && m.diatonic > top.diatonic &&
+        (m.chordExtra || n.chordExtra) && m.duration === n.duration)
+        top = m;
+    if (top === n) continue;
+    const move = n.lyrics.filter((l) => !top.lyrics?.some((q) => q.verse === l.verse));
+    if (!move.length) continue;
+    (top.lyrics ??= []).push(...move);
+    n.lyrics = n.lyrics.filter((l) => !move.includes(l));
+    if (!n.lyrics.length) n.lyrics = undefined;
   }
 }
 

@@ -405,8 +405,9 @@ const LYRIC_MIN_H = 0.4;
 const KEY_GAP_FIRST = 2.0;
 /** 调号串里后一个记号的左缘可以伸进前一个右缘多少格。 */
 const KEY_OVERLAP = 0.5;
-/** 不带连字符的拉丁行离带连字符的那行多近（字高的倍数）算同一块歌词。 */
-const LATIN_CHAIN = 2.5;
+/** 不带连字符的拉丁行离带连字符的那行多近（字高的倍数）算同一块歌词。
+ *  2.5 → 3：拉丁行的字高常只量到小写字母高（更亲近恩主 12px、行距 34px），末段后半「heights of joy…」链不进来。 */
+const LATIN_CHAIN = 3;
 /** 上下贴着的两个头（`isStackedPair`）拆分时每个头的得分门槛。 */
 const PAIR_SCORE_MIN = 0.4;
 

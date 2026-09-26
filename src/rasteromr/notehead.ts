@@ -893,3 +893,149 @@ function stemThrough(b: Rect, stems: LineSeg[], unit: RasterUnit): LineSeg | nul
 function overlaps(a: Rect, b: Rect, tol: number): boolean {
   return Math.abs(a.x + a.w / 2 - (b.x + b.w / 2)) < tol + (a.w + b.w) / 4 && Math.abs(a.y + a.h / 2 - (b.y + b.h / 2)) < tol + (a.h + b.h) / 4;
 }
+
+// ── **光杆符干端头的无主墨**（叠成「8」字的三度空心和弦，以及漏掉的单个头）────────
+//
+// 这套字体（圈粗、内腔是一道斜缝）的三度空心和弦，两个内腔的斜缝常通到圈外，
+// `findHoles` 连一个闭合孔都取不到，按内腔找的三路都进不来；取得到孔的，按音高配模板
+// 也只打到 0.27~0.29（门槛 0.30）——页内自举的空心模板太糊，把两张模板合成一张给一对位置整体打分
+// 也只有 0.27（试过撤了）。去谱线又把这团墨切成几片，按单块判也不成。
+// 于是整团墨无人认领（齐来谢主歌、我灵镇静、父恩广大）。
+//
+// 先验取**符干**：一根够长的干、两端都没挂上符头，本身就是「这里漏了音」
+//（干朝下的和弦中段的头常认得出、只漏端头那个，所以只看两端）。在端头一侧收拢无主碎片：
+// 一个头宽、一个或两个头高，头心在原图里是空的就落空心头，一个头高且头心实的落实心头。
+/** 光杆干的长度（格）：下限挡符尾碎段，上限挡系统左端的连谱线。 */
+const BARE_LEN = [2.5, 6] as const;
+/** 比这还小的碎片不收（附点、噪点）。 */
+const DOT_MAX = 0.45;
+
+export interface BareStemProbe {
+  stem: LineSeg;
+  end: "top" | "bottom";
+  box: Rect;
+  area: number;
+  ids: number[];
+}
+
+export function probeBareStems(
+  stems: LineSeg[],
+  heads: Rect[],
+  free: { id: number; box: Rect; area: number }[],
+  unit: RasterUnit,
+  isBar: (s: LineSeg) => boolean,
+): BareStemProbe[] {
+  const sp = unit.space;
+  const out: BareStemProbe[] = [];
+  for (const s of stems) {
+    const top = Math.min(s.y0, s.y1);
+    const bot = Math.max(s.y0, s.y1);
+    if (bot - top < sp * BARE_LEN[0] || bot - top > sp * BARE_LEN[1]) continue;
+    if (isBar(s)) continue;
+    const sx = (s.x0 + s.x1) / 2;
+    /** 端头挂着头。只看两端不看中段：干朝下的和弦，中段的头照常认得出、只有端头那个漏了。 */
+    const headAt = (e: number) =>
+      heads.some((h) => Math.abs(h.x + h.w / 2 - sx) < sp * 1.6 && Math.abs(h.y + h.h / 2 - e) < sp * 1.2);
+    for (const end of ["top", "bottom"] as const) {
+      const e = end === "top" ? top : bot;
+      // 另一端挂着头的，这一端是干的自由端（符尾就挂在这里，别当成头）
+      if (headAt(e) || headAt(end === "top" ? bot : top)) continue;
+      const y0 = end === "top" ? e - sp * 0.9 : e - sp * 2.0;
+      const y1 = end === "top" ? e + sp * 2.0 : e + sp * 0.9;
+      // 干朝上（光杆的是下端）头在干左，干朝下头在干右；另一侧的附点、邻音不收
+      const x0 = end === "bottom" ? sx - sp * 1.8 : sx - sp * 0.3;
+      const x1 = end === "bottom" ? sx + sp * 0.3 : sx + sp * 1.8;
+      const got = free.filter((f) => {
+        const cx = f.box.x + f.box.w / 2;
+        const cy = f.box.y + f.box.h / 2;
+        if (f.box.w < sp * DOT_MAX && f.box.h < sp * DOT_MAX) return false;
+        return cx > x0 && cx < x1 && cy > y0 && cy < y1;
+      });
+      if (!got.length) continue;
+      let l = Infinity, r = -Infinity, t = Infinity, b = -Infinity, area = 0;
+      for (const f of got) {
+        l = Math.min(l, f.box.x);
+        r = Math.max(r, f.box.x + f.box.w);
+        t = Math.min(t, f.box.y);
+        b = Math.max(b, f.box.y + f.box.h);
+        area += f.area;
+      }
+      out.push({ stem: s, end, box: { x: l, y: t, w: r - l, h: b - t }, area, ids: got.map((f) => f.id) });
+    }
+  }
+  return out;
+}
+
+/** 光杆干端头收拢出来的墨，够得上一个 / 两个（三度叠头）头的尺寸（格）与填充。 */
+const BARE_W = [0.8, 1.6] as const;
+const BARE_H1 = [0.8, 1.35] as const;
+const BARE_H2 = [1.6, 2.5] as const;
+const BARE_FILL = [0.15, 0.6] as const;
+/** 头心墨占比：空心头的斜缝内腔实测 0.0~0.51（我灵镇静一处糊的 0.74），实心头 1.0。扫过 0.7 / **0.8**：92.10 / 92.14%。 */
+const BARE_CORE = 0.8;
+/** 一个头高、头心墨占比到这么多才落实心头。 */
+const BARE_SOLID = 0.9;
+
+/**
+ * 光杆干端头 → 空心头（一个，或三度叠着的两个），或一个实心头（被连音线之类粘住漏掉的四分，晨曦破晓）。
+ * `snap` 把 y 吸到线/间中心。头心判空实（`core`）：填充比挡不住被去谱线切过的实心头
+ *（晨曦破晓两声部同音共用一个实心头，朝下那根干被当成光杆）。
+ * 头盒取本页已认空心头的尺寸（`size`）、以收拢墨的中心定位：收拢出来的墨被去谱线啃过，
+ * 照它的外框出盒偏窄，混进后面「空心头按模板再搜」的样本与中位尺寸，会把别处的头带偏（齐来谢主歌实测丢两个）。
+ */
+export function headsOnBareStems(
+  probes: BareStemProbe[],
+  unit: RasterUnit,
+  snap: (y: number) => number | null,
+  size: { w: number; h: number },
+  bin: Binary,
+  onLine: (y: number) => boolean,
+): { box: Rect; code: SmuflName; ids: number[]; weak: true }[] {
+  const sp = unit.space;
+  /** 头心一小块（0.6×0.4 格）在原图里的墨占比，谱线那几行不算。实心头近 1，空心头的斜缝内腔低得多。 */
+  const core = (cx: number, cy: number): number => {
+    let n = 0;
+    let ink = 0;
+    for (let y = Math.round(cy - sp * 0.2); y <= Math.round(cy + sp * 0.2); y++) {
+      if (onLine(y)) continue;
+      for (let x = Math.round(cx - sp * 0.3); x <= Math.round(cx + sp * 0.3); x++) {
+        if (x < 0 || y < 0 || x >= bin.w || y >= bin.h) continue;
+        n++;
+        if (bin.data[y * bin.w + x]) ink++;
+      }
+    }
+    return n ? ink / n : 1;
+  };
+  const out: { box: Rect; code: SmuflName; ids: number[]; weak: true }[] = [];
+  const used = new Set<number>();
+  for (const p of probes) {
+    const { box } = p;
+    const w = box.w / sp;
+    const h = box.h / sp;
+    const fill = p.area / (box.w * box.h);
+    if (w < BARE_W[0] || w > BARE_W[1] || fill < BARE_FILL[0]) continue;
+    if (p.ids.some((id) => used.has(id))) continue;
+    let ys: number[];
+    if (h >= BARE_H1[0] && h <= BARE_H1[1]) {
+      const c = snap(box.y + box.h / 2);
+      if (c === null) continue;
+      ys = [c];
+    } else if (h >= BARE_H2[0] && h <= BARE_H2[1]) {
+      // 两个头各高 box.h − 1 格（中心隔一格）
+      const hh = Math.max(sp * 0.8, box.h - sp);
+      const a = snap(box.y + hh / 2);
+      const b = snap(box.y + box.h - hh / 2);
+      if (a === null || b === null || Math.abs(Math.abs(b - a) - sp) > sp * 0.3) continue;
+      ys = [a, b];
+    } else continue;
+    const cx = box.x + box.w / 2;
+    const cores = ys.map((y) => core(cx, y));
+    let code: SmuflName;
+    if (fill <= BARE_FILL[1] && cores.every((c) => c <= BARE_CORE)) code = "noteheadHalf";
+    else if (ys.length === 1 && cores[0] >= BARE_SOLID) code = "noteheadBlack";
+    else continue;
+    for (const id of p.ids) used.add(id);
+    for (const y of ys) out.push({ box: { x: Math.round(cx - size.w / 2), y: Math.round(y - size.h / 2), w: size.w, h: size.h }, code, ids: p.ids, weak: true });
+  }
+  return out;
+}

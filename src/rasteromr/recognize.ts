@@ -19,7 +19,7 @@ import type { SPage, Staff, Sym, Tag } from "../staffomr/model";
 import { overlapY } from "../staffomr/model";
 import { buildRasterPage, makeSymObj, makeTextObj, type RasterSym } from "./adapt";
 import { binSig, blobImage, extendVSegs, findBlobs, findBraces, findPrimitives, groupByLeftInk, ledgerGrid, joinVSegs, removeStaffLines, verticalStrokes, type BeamQuad, type LineSeg, type RasterPrims } from "./prims";
-import { findRasterHeads, hollowHeadsByPitch, hollowHeadsFromCavities, hollowHeadsFromHoles, hollowHeadsOnLedgers, judgeHeadBox, mergeHoles, type PitchStep } from "./notehead";
+import { findRasterHeads, hollowHeadsByPitch, headsOnBareStems, probeBareStems, hollowHeadsFromCavities, hollowHeadsFromHoles, hollowHeadsOnLedgers, judgeHeadBox, mergeHoles, type PitchStep } from "./notehead";
 import { bootstrapClefs, matchTemplate, RasterGlyphLookup, type BootStaff } from "./rasterglyphs";
 import { sigDistance } from "../omr/glyphdict";
 import { completeStaffBars, cutJianpuStrip, eraseInBand, findJianpuBands, jianpuKey, type JianpuStrip } from "./jianpuband";
@@ -589,6 +589,13 @@ function toBeamShapes(beams: BeamQuad[]): BeamShape[] {
   });
 }
 
+/** 符尾围出的「空心头」离干端不超过这么多格（见「符尾围出来的空心头不要」）。 */
+const FLAG_REACH = 1.6;
+/** 符尾判据里「另一端的实心头」离谱表首末线不超过这么多格。 */
+const FLAG_HEAD_BAND = 2.5;
+/** 符尾与干那端实心头的最小距离（格）。 */
+const FLAG_GAP = 2.8;
+
 /** 认一页。顺序照 `staffomr/index.ts::recognizeStaffPage`，**别调**。 */
 export async function recognizeRasterPage(
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -1008,6 +1015,24 @@ export async function recognizeRasterPage(
     }
   }
 
+  // ── **光杆符干端头的无主墨**（`notehead.ts::headsOnBareStems`）───────────────
+  //
+  // 在拆块之后、字典之前：前面各路认下的头都算「挂上了」，剩下的无主碎片才轮得到这里。
+  // 头盒取本页已认二分头的中位尺寸，标 `weak`（不进后面空心模板的样本）。
+  {
+    const headBoxes = [...heads.filter((h) => !dropHead.has(h.comp.id)).map((h) => h.box), ...stacked.map((q) => q.box), ...split.map((q) => q.box), ...restSyms.map((q) => q.box)];
+    const free = blobs.filter((c) => !claimed.has(c.id) && inBand(c.bbox.y + c.bbox.h / 2)).map((c) => ({ id: c.id, box: c.bbox, area: c.area }));
+    // 小节线：上下端正落在谱表首末线上
+    const isBar = (q: LineSeg) => staffGeoms.some((g) => Math.abs(Math.min(q.y0, q.y1) - g.top) < unit.space * 0.4 && Math.abs(Math.max(q.y0, q.y1) - g.bottom) < unit.space * 0.4);
+    const probes = probeBareStems(prims.vSegs, headBoxes, free, unit, isBar);
+    const halves = [...heads.map((h) => ({ box: h.box, code: h.code })), ...stacked].filter((q) => q.code === "noteheadHalf" && !(q as { weak?: boolean }).weak);
+    const med = (xs: number[]) => xs.sort((p, q) => p - q)[xs.length >> 1];
+    const size = halves.length ? { w: med(halves.map((q) => q.box.w)), h: med(halves.map((q) => q.box.h)) } : { w: Math.round(unit.space * 1.3), h: Math.round(unit.space * 1.1) };
+    for (const hd of headsOnBareStems(probes, unit, pitchGrid, size, raster.bin, (y) => gridYs.some((ly) => Math.abs(ly - y) <= unit.lineThick))) {
+      for (const id of hd.ids) claimed.add(id);
+      stacked.push(hd);
+    }
+  }
   const syms: RasterSym[] = [
     ...heads.filter((h) => !dropHead.has(h.comp.id)).map((h) => ({ box: h.box, code: h.code })),
     ...stacked,
@@ -2072,6 +2097,60 @@ export async function recognizeRasterPage(
     const accs = syms.filter((s0) => isAccidental(s0.code));
     for (let i = syms.length - 1; i >= 0; i--)
       if (/^notehead/.test(syms[i].code) && accs.some((a) => overlapFrac(syms[i].box, a.box) > 0.7)) syms.splice(i, 1);
+  }
+
+  // **符尾围出来的「空心头」不要**：干朝下的八分音符，干底向右弯回的符尾围出一个内腔，
+  // 按内腔找的几路把它收成空心二分头（《所信有根基》低音谱表每小节多一个 A2/F2 二分）。
+  // 一根干只在一端挂头（同一根干上时值只有一种）：另一端已挂着实心头，这一端就只能是符尾。
+  {
+    const sp = unit.space;
+    const blacks = syms.filter((s0) => s0.code === "noteheadBlack");
+    // 干被符头、谱线切成几段：同一 x、缺口不到一格的接成一根
+    const joined: LineSeg[] = [];
+    for (const q of [...prims.vSegs].sort((a, b) => Math.min(a.y0, a.y1) - Math.min(b.y0, b.y1))) {
+      const x = (q.x0 + q.x1) / 2;
+      const prev = joined.find((j) => Math.abs((j.x0 + j.x1) / 2 - x) <= unit.lineThick && Math.min(q.y0, q.y1) - j.y1 <= sp);
+      if (prev) prev.y1 = Math.max(prev.y1, q.y0, q.y1);
+      else joined.push({ ...q, y0: Math.min(q.y0, q.y1), y1: Math.max(q.y0, q.y1) });
+    }
+    const bin = raster.bin;
+    /** 从 y 沿 x 列（左右各容一个线宽）往 dir 方向走墨，断口不过 3 像素，返回走到的最远 y。 */
+    const walk = (x: number, y: number, dir: number): number => {
+      let last = y;
+      for (let yy = y, miss = 0; miss <= 3 && yy >= 0 && yy < bin.h; yy += dir) {
+        let on = false;
+        for (let xx = Math.round(x - unit.lineThick); xx <= Math.round(x + unit.lineThick) && !on; xx++) on = xx >= 0 && xx < bin.w && bin.data[yy * bin.w + xx] === 1;
+        if (on) {
+          last = yy;
+          miss = 0;
+        } else miss++;
+      }
+      return last;
+    };
+    const isFlag = (b: Rect) => {
+      const cy = b.y + b.h / 2;
+      return joined.some((q) => {
+        if (q.y1 - q.y0 < sp * 1.5) return false;
+        const sx = (q.x0 + q.x1) / 2;
+        if (sx < b.x - sp * 0.3 || sx > b.x + b.w + sp * 0.3) return false;
+        if (cy < q.y0 - sp * FLAG_REACH || cy > q.y1 + sp * FLAG_REACH) return false;
+        // 两头都顺着墨走，取离它远的那一端（干被切剩的一截两端离它都近，按近端判方向会判反）
+        const up = walk(sx, q.y0, -1);
+        const dn = walk(sx, q.y1, 1);
+        const far = cy - up > dn - cy ? up : dn;
+        if (Math.abs(far - cy) < sp * 2.5) return false;
+        // 远端的头要在谱表近旁：干的墨顺着断口接进下方歌词，字的笔画也被认成过实心头（齐来崇拜「能」）
+        const nearStaff = (y: number) => staffGeoms.some((g) => y > g.top - sp * FLAG_HEAD_BAND && y < g.bottom + sp * FLAG_HEAD_BAND);
+        // 符尾离那根干上的头至少三格多（所信有根基 3.5~4 格）；两格上下的是和弦里另一个头
+        //（来敬拜荣耀王加线上的空心头被误认成实心，离上面那个空心头只隔两格）
+        return blacks.some((h) => {
+          const hy = h.box.y + h.box.h / 2;
+          return Math.abs(h.box.x + h.box.w / 2 - sx) < sp * 1.3 && Math.abs(hy - far) < sp && Math.abs(hy - cy) >= sp * FLAG_GAP && nearStaff(hy);
+        });
+      });
+    };
+    for (let i = syms.length - 1; i >= 0; i--)
+      if ((syms[i].code === "noteheadHalf" || syms[i].code === "noteheadWhole") && isFlag(syms[i].box)) syms.splice(i, 1);
   }
 
   // **切加线要用最终认出来的全部符头**：除了 `findRasterHeads`，还有按内腔找的、

@@ -517,6 +517,66 @@ export function hollowHeadsFromHoles(
   return out;
 }
 
+/**
+ * **开口内腔** → 空心符头：低分辨率小图上头右上那一笔印得极淡（万福泉源歌第二行末的二分音符，
+ * 原图灰度 240 以上，不是二值化丢的），内腔从缺口漏到谱线间的空白里，`findHoles` 找不到孔。
+ * 内腔由调用方按「四向都碰得到墨」拼出来（`recognize.ts::openCavities`），常连着头与符干之间那一截、
+ * 近乎圆，过不了 `hollowHeadsFromHoles` 的横椭圆闸——这里不看内腔形状，
+ * 头盒取本页已认二分头的中位尺寸、以内腔中心为心，再按那边同一套填充与符干判据收。
+ */
+export function hollowHeadsFromCavities(
+  nl: Binary,
+  cavities: Rect[],
+  unit: RasterUnit,
+  stems: LineSeg[],
+  inStaffBand: (y: number) => boolean,
+  taken: Rect[],
+  size: { w: number; h: number },
+  /**
+   * 已认出的**实心**符头（带符尾的只能是实心头；空心的是和弦伙伴，不拦）。
+   * 上下隔一格以上、横向与盒相交或边缘相接的，说明两者之间那根干是那个头的，
+   * 这「内腔」是弯回符干的八分符尾：有一位神两处（头在干左下，旁边还挨着小节线，墨柱量到的是小节线）、
+   * 圣哉三一歌伴奏与来敬拜荣耀王三处（干朝下、头在正上方）。三度和弦的两个头只隔一格不到，不受影响。
+   */
+  heads: Rect[],
+): { box: Rect; code: SmuflName }[] {
+  const sp = unit.space;
+  const tol = Math.max(unit.lineThick * 2, sp * 0.25);
+  const out: { box: Rect; code: SmuflName }[] = [];
+  const flagOf = (b: Rect) =>
+    heads.some((h) => {
+      const dy = Math.abs(h.y + h.h / 2 - (b.y + b.h / 2));
+      if (dy < sp || dy > sp * INK_STEM[1]) return false;
+      return h.x <= b.x + b.w + tol && h.x + h.w >= b.x - tol;
+    });
+  for (const cav of cavities.slice().sort((a, b) => a.y - b.y)) {
+    const cw = cav.w / sp;
+    const ch = cav.h / sp;
+    if (cw < HOLE_W[0] || cw > HOLE_W[1] || ch < HOLE_H[0] || ch > HOLE_H[1]) continue;
+    const cx = cav.x + cav.w / 2;
+    const cy = cav.y + cav.h / 2;
+    if (!inStaffBand(cy)) continue;
+    const box: Rect = { x: Math.round(cx - size.w / 2), y: Math.round(cy - size.h / 2), w: size.w, h: size.h };
+    let ink = 0;
+    for (let y = box.y; y < box.y + box.h; y++)
+      for (let x = box.x; x < box.x + box.w; x++)
+        if (x >= 0 && y >= 0 && x < nl.w && y < nl.h && nl.data[y * nl.w + x]) ink++;
+    const fill = ink / Math.max(1, box.w * box.h);
+    if (fill < FILL_RING[0] || fill > FILL_RING[1]) continue;
+    if (taken.some((t) => overlaps(t, box, sp * 0.4))) continue;
+    if (flagOf(box)) continue;
+    // 二分头一定带干：竖段表里头落在一端的，或图上量得出的墨柱（穿过头的不算，旁边的小节线也穿得过）
+    if (!stemOf(box, stems, unit)) {
+      const col = inkColumn(nl, box, unit);
+      const reach = col ? Math.max(cy - col[0], col[1] - cy) : 0;
+      if (reach < sp * INK_STEM[0] || reach > sp * INK_STEM[1]) continue;
+    }
+    out.push({ box, code: "noteheadHalf" });
+    taken.push(box);
+  }
+  return out;
+}
+
 // ── 空心头：**按音高位置逐一配模板**（Audiveris 式）────────────────────────
 //
 // 叠成「8」字的三度空心和弦，两个内腔中间只隔两像素细圈，`mergeHoles` 把它们当成

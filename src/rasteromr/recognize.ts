@@ -19,7 +19,7 @@ import type { SPage, Staff, Sym, Tag } from "../staffomr/model";
 import { overlapY } from "../staffomr/model";
 import { buildRasterPage, makeSymObj, makeTextObj, type RasterSym } from "./adapt";
 import { binSig, blobImage, extendVSegs, findBlobs, findBraces, findPrimitives, groupByLeftInk, ledgerGrid, removeStaffLines, type BeamQuad, type LineSeg, type RasterPrims } from "./prims";
-import { findRasterHeads, hollowHeadsByPitch, hollowHeadsFromHoles, hollowHeadsOnLedgers, judgeHeadBox, mergeHoles, type PitchStep } from "./notehead";
+import { findRasterHeads, hollowHeadsByPitch, hollowHeadsFromCavities, hollowHeadsFromHoles, hollowHeadsOnLedgers, judgeHeadBox, mergeHoles, type PitchStep } from "./notehead";
 import { bootstrapClefs, matchTemplate, RasterGlyphLookup, type BootStaff } from "./rasterglyphs";
 import { sigDistance } from "../omr/glyphdict";
 import { completeStaffBars, cutJianpuStrip, eraseInBand, findJianpuBands, jianpuKey, type JianpuStrip } from "./jianpuband";
@@ -387,6 +387,10 @@ const KEY_ACCID_TEMPLATE_DIST = 100;
 
 /** 空心头按模板再搜的得分门槛。见「空心头按模板再搜」那一段。 */
 const HOLLOW_MASK_SCORE = 0.38;
+/** 开口内腔（`openCavities`）：射线窗外扩多少格、内腔至少多少格²、中心离谱表上下至多几格。 */
+const OPEN_CAVITY_PAD = 0.3;
+const OPEN_CAVITY_AREA = 0.06;
+const OPEN_CAVITY_BAND = 2;
 /** 演奏记号离谱表最远几格（线距）：带加线的低音再往下一格，四格半够了。 */
 const ARTIC_REACH = 4.5;
 
@@ -1843,6 +1847,13 @@ export async function recognizeRasterPage(
     const hollowMask = buildHollowMasks(raster.bin, syms.filter((s0) => !(s0 as { weak?: boolean }).weak), unit, [])[0] ?? null;
     if (hollowMask) {
       const free = blobs.filter((c) => !claimed.has(c.id) && !dictClaimed.has(c.id) && !merged.has(c.id) && inBand(c.bbox.y + c.bbox.h / 2));
+      /** 本页已认二分头的中位尺寸（开口内腔那一档用）。 */
+      const halves = syms.filter((s0) => s0.code === "noteheadHalf");
+      const med = (xs: number[]) => xs.sort((p, q) => p - q)[xs.length >> 1];
+      const halfSize = halves.length ? { w: med(halves.map((s0) => s0.box.w)), h: med(halves.map((s0) => s0.box.h)) } : null;
+      // 带宽比 `HOLLOW_BAND` 窄：开口内腔不挑形状，歌词里的字母 o 也围得出一个（我灵镇静「soul」，在谱表下 2.7 格）
+      const inCavityBand = (y: number) =>
+        groups.some((g) => y > g.lines[0].y - unit.space * OPEN_CAVITY_BAND && y < g.lines[4].y + unit.space * OPEN_CAVITY_BAND);
       const used = new Set<number>();
       for (const a of free) {
         if (used.has(a.id)) continue;
@@ -1869,9 +1880,20 @@ export async function recognizeRasterPage(
         const w = box.w / unit.space;
         const h = box.h / unit.space;
         if (w < 0.8 || w > 2.2 || h < 0.6 || h > 3.2) continue; // 粗体全音符宽到 1.96 格（《赞美一神》）
-        // 块里要有内腔（空心头的先验）
-        if (!holes.some((o) => o.x >= box.x && o.x + o.w <= box.x + box.w && o.y >= box.y - 1 && o.y + o.h <= box.y + box.h + 1)) continue;
         if (syms.some((s0) => overlapFrac(box, s0.box) > 0.3)) continue;
+        // 块里要有内腔（空心头的先验）。没有封闭的孔就找**开口的内腔**：那种头模板也配不上
+        // （万福泉源歌连已认出的头都只打到 0.2 分），改按内腔中心直接定头（`hollowHeadsFromCavities`）
+        if (!holes.some((o) => o.x >= box.x && o.x + o.w <= box.x + box.w && o.y >= box.y - 1 && o.y + o.h <= box.y + box.h + 1)) {
+          if (!halfSize) continue;
+          const found = hollowHeadsFromCavities(nl, mergeHoles(openCavities(raster.bin, box, unit), unit, onLineOrGrid), unit, prims.vSegs, inCavityBand, syms.map((s0) => s0.box), halfSize, syms.filter((s0) => s0.code === "noteheadBlack").map((s0) => s0.box));
+          if (!found.length) continue;
+          for (const id of group) used.add(id), merged.add(id);
+          for (const f of found) {
+            syms.push(f);
+            ledger.claim(f.box, `opencavity:${f.code}`);
+          }
+          continue;
+        }
         const parts = splitHeadCluster(raster.bin, box, area, [hollowMask], unit, pitchGrid, onLineY, true, undefined, 1, HOLLOW_MASK_SCORE);
         if (!parts.length) continue;
         for (const id of group) used.add(id), merged.add(id);
@@ -3068,6 +3090,52 @@ const FAINT_BAR_FILL = 0.8;
 /** 淡墨要比左右 `FAINT_SIDE` 像素外暗过多少灰度。实测断口 170~206、页白 245 上下。 */
 const FAINT_DELTA = 25;
 const FAINT_SIDE = 4;
+
+/**
+ * 块里**开口的内腔**：四向射线（在块外扩 `OPEN_CAVITY_PAD` 格的窗里）都碰得到墨的白像素，按四连通拼块，
+ * 返回够 `OPEN_CAVITY_AREA` 格² 的那些块的外框。
+ */
+function openCavities(bin: Binary, box: Rect, unit: RasterUnit): Rect[] {
+  const pad = Math.round(unit.space * OPEN_CAVITY_PAD);
+  const x0 = Math.max(0, box.x - pad);
+  const x1 = Math.min(bin.w - 1, box.x + box.w - 1 + pad);
+  const y0 = Math.max(0, box.y - pad);
+  const y1 = Math.min(bin.h - 1, box.y + box.h - 1 + pad);
+  const ink = (x: number, y: number) => bin.data[y * bin.w + x] !== 0;
+  const hits = (x: number, y: number, dx: number, dy: number) => {
+    for (let cx = x + dx, cy = y + dy; cx >= x0 && cx <= x1 && cy >= y0 && cy <= y1; cx += dx, cy += dy) if (ink(cx, cy)) return true;
+    return false;
+  };
+  const bw = box.w;
+  const inside = new Uint8Array(bw * box.h);
+  for (let y = 0; y < box.h; y++)
+    for (let x = 0; x < bw; x++) {
+      const px = box.x + x;
+      const py = box.y + y;
+      if (px < 0 || py < 0 || px >= bin.w || py >= bin.h || ink(px, py)) continue;
+      if (hits(px, py, -1, 0) && hits(px, py, 1, 0) && hits(px, py, 0, -1) && hits(px, py, 0, 1)) inside[y * bw + x] = 1;
+    }
+  const out: Rect[] = [];
+  const minArea = unit.space * unit.space * OPEN_CAVITY_AREA;
+  for (let i = 0; i < inside.length; i++) {
+    if (inside[i] !== 1) continue;
+    const stack = [i];
+    inside[i] = 2;
+    let n = 0;
+    let [ax, ay, bx, by] = [bw, box.h, 0, 0];
+    while (stack.length) {
+      const k = stack.pop()!;
+      const x = k % bw;
+      const y = (k / bw) | 0;
+      n++;
+      ax = Math.min(ax, x), ay = Math.min(ay, y), bx = Math.max(bx, x), by = Math.max(by, y);
+      for (const q of [x > 0 ? k - 1 : -1, x + 1 < bw ? k + 1 : -1, y > 0 ? k - bw : -1, y + 1 < box.h ? k + bw : -1])
+        if (q >= 0 && inside[q] === 1) (inside[q] = 2), stack.push(q);
+    }
+    if (n >= minArea) out.push({ x: box.x + ax, y: box.y + ay, w: bx - ax + 1, h: by - ay + 1 });
+  }
+  return out;
+}
 
 /**
  * **细线扫描件回灰度核断开的小节线**（只有 `RasterPage.gray` 的页才走）。

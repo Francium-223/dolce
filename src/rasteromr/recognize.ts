@@ -2242,7 +2242,7 @@ export async function recognizeRasterPage(
     // 续过的段只进 `SPage`，不回写 `prims`——`findBlobs` 那边仍按原段抹墨，
     // 免得把符头啃掉（见 `extendVSegs` 的说明）。
     // 被并进升降号的竖段要摘掉（留着会被当成符干或小节线）
-    vSegs: snapHollowToStems(syms, splitVoiceStems(extendVSegs(
+    vSegs: snapHeadsToStems(syms, splitVoiceStems(extendVSegs(
       nl,
       joinVSegs(nl, [...prims.vSegs.filter((v) => !usedSegs.has(v)), ...stemSegs, ...inkStems], VSEG_JOIN_DX, Math.round(unit.space * VSEG_JOIN_GAP)),
       Math.round(unit.space * 0.35),
@@ -3328,15 +3328,19 @@ function splitVoiceStems(segs: LineSeg[], heads: Rect[], unit: RasterUnit): Line
 }
 
 /**
- * **空心头的盒缘收到它的干上**：按内腔外扩一圈得来的头盒比墨宽，干常落在盒里离边缘三四个像素，
+ * **头盒缘收到它的干上**：按内腔外扩一圈得来的空心头盒比墨宽，干常落在盒里离边缘三四个像素，
  * `findStems` 挂得上（两倍线宽），`buildStems` 认头却只容四分之一格，于是干有了、头没归上，
  * 下游把「没干的空心头」当全音符（《主我敬拜你》附点二分读成附点全音符）。只动 x，不动 y（音高不变）。
+ *
+ * **实心头同样要收**：拆块、按模板合成出来的实心头盒是定宽的，叠置和弦的干落在盒里离右缘 4~5 像素，
+ * 出了 `findStems` 的两倍线宽窗口，干一根没挂上，连杠的八分全读成四分（父恩广大首小节网点符杠下的两组三度）。
+ * 独唱谱音符 93.04 → 93.16%、时值 90.14 → 90.42%；合唱谱干净档音符 +0.06、扫描档 +0.36。
  * 原地改 `syms` 里的盒，原样返回竖段。
  */
-function snapHollowToStems(syms: RasterSym[], segs: LineSeg[], unit: RasterUnit): LineSeg[] {
+function snapHeadsToStems(syms: RasterSym[], segs: LineSeg[], unit: RasterUnit): LineSeg[] {
   const sp = unit.space;
   for (const s0 of syms) {
-    if (s0.code !== "noteheadHalf") continue;
+    if (s0.code !== "noteheadHalf" && s0.code !== "noteheadBlack") continue;
     const b = s0.box;
     for (const v of segs) {
       const vx = (v.x0 + v.x1) / 2;

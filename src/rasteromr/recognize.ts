@@ -18,7 +18,7 @@ import { attachDynamicTexts, attachNotations, attachWedges, findNotations, findT
 import type { SPage, Staff, Sym, Tag } from "../staffomr/model";
 import { overlapY } from "../staffomr/model";
 import { buildRasterPage, makeSymObj, makeTextObj, type RasterSym } from "./adapt";
-import { binSig, blobImage, extendVSegs, findBlobs, findBraces, findPrimitives, groupByLeftInk, ledgerGrid, removeStaffLines, verticalStrokes, type BeamQuad, type LineSeg, type RasterPrims } from "./prims";
+import { binSig, blobImage, extendVSegs, findBlobs, findBraces, findPrimitives, groupByLeftInk, ledgerGrid, joinVSegs, removeStaffLines, verticalStrokes, type BeamQuad, type LineSeg, type RasterPrims } from "./prims";
 import { findRasterHeads, hollowHeadsByPitch, hollowHeadsFromCavities, hollowHeadsFromHoles, hollowHeadsOnLedgers, judgeHeadBox, mergeHoles, type PitchStep } from "./notehead";
 import { bootstrapClefs, matchTemplate, RasterGlyphLookup, type BootStaff } from "./rasterglyphs";
 import { sigDistance } from "../omr/glyphdict";
@@ -182,9 +182,9 @@ function bootstrapFlags(bin: Binary, pg: SPage, beams: BeamQuad[], unit: RasterU
     // 符杠斜着搭在符干中段的也算（不只远端那一小截）
     if (beams.some((b) => b.x0 - sp * 0.5 <= st.cx && st.cx <= b.x1 + sp * 0.5 && st.top - sp * 0.5 < (b.y0 + b.y1) / 2 && (b.y0 + b.y1) / 2 < st.bottom + sp * 0.5)) continue;
     const toward = Math.sign(hy - far) || 1;
-    const frac = (d0: number, d1: number) => {
-      const x0 = Math.round(st.cx + sp * FLAG_X[0]);
-      const x1 = Math.round(st.cx + sp * FLAG_X[1]);
+    const frac = (d0: number, d1: number, side = 1) => {
+      const x0 = Math.round(side > 0 ? st.cx + sp * FLAG_X[0] : st.cx - sp * FLAG_X[1]);
+      const x1 = Math.round(side > 0 ? st.cx + sp * FLAG_X[1] : st.cx - sp * FLAG_X[0]);
       let ink = 0;
       let tot = 0;
       for (let dy = sp * d0; dy < sp * d1; dy++) {
@@ -210,6 +210,7 @@ function bootstrapFlags(bin: Binary, pg: SPage, beams: BeamQuad[], unit: RasterU
     const reach = unit.lineThick > sp * FLAG_REACH_LW ? Math.min(sp * 0.5, unit.lineThick * 3) : 0;
     while (frac(offset, offset + FLAG_TIP_Y) < FLAG_TIP && offset * sp < reach) offset += 1 / sp;
     if (frac(offset, offset + FLAG_TIP_Y) < FLAG_TIP || frac(offset, offset + FLAG_Y) < FLAG_INK) continue;
+    if (frac(offset, offset + FLAG_TIP_Y, -1) >= FLAG_LEFT) continue;
     const up = far < hy;
     // **第二个钩**：十六分的两道钩沿符干错开约一格。只认出第一道的话
     // 十六分整批读成八分（实测补上第一道之后 `16th→eighth` 一下涨到 171 处）。
@@ -424,6 +425,9 @@ const NUM_DIGITS = [2, 3, 4, 5, 6, 7, 8, 9] as const;
 const DEN_DIGITS = [2, 4, 8] as const;
 const TIME_NUM_DIST = 230;
 const TIME_DEN_DIST = 300;
+/** 被符头隔断的竖段接回一根（`joinVSegs`）：中心差（px）、断口上限（格）。 */
+const VSEG_JOIN_DX = 2;
+const VSEG_JOIN_GAP = 1.2;
 /** 按竖笔数升号（`sharpsByStrokes`）的起点：谱号左缘往右多少格。 */
 const KEY_FROM = 2.4;
 /** 粘连升号串（见谱号兜底那段）：盒高上限、竖笔高度范围（格）。 */
@@ -460,6 +464,7 @@ const FLAG_INK = 0.15;
  * 扫过 0.8 / **1.0** / 1.3：时值 92.1 / 92.1 / 90.9%。
  */
 const FLAG_X = [0.15, 1.0] as const;
+const FLAG_LEFT = 0.25;
 /** 符尾窗口的**纵向长度**（线距的倍数，从符干尖端往符头方向）。
  *  放到 2.5 格（罩住整条符尾）实测更差：符尾下半截是根细线，多罩进来的全是白的。 */
 const FLAG_Y = 1.5;
@@ -2103,7 +2108,7 @@ export async function recognizeRasterPage(
     // 被并进升降号的竖段要摘掉（留着会被当成符干或小节线）
     vSegs: snapHollowToStems(syms, splitVoiceStems(extendVSegs(
       nl,
-      [...prims.vSegs.filter((v) => !usedSegs.has(v)), ...stemSegs, ...inkStems],
+      joinVSegs(nl, [...prims.vSegs.filter((v) => !usedSegs.has(v)), ...stemSegs, ...inkStems], VSEG_JOIN_DX, Math.round(unit.space * VSEG_JOIN_GAP)),
       Math.round(unit.space * 0.35),
       groups.map((g) => [g.lines[0].y, g.lines[4].y] as [number, number]),
       unit.lineThick,

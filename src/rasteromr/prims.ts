@@ -1020,3 +1020,53 @@ export function verticalStrokes(bin: Binary, box: Rect, minH: number, gap = 2): 
   }
   return out;
 }
+
+/**
+ * **同一列上被符头隔断的竖段接回一根**。干穿过头的那几行横向墨宽、孤立性判不过，
+ * 干就在头那里断开（《耶和华是我的牧者》低音谱表朝下的干穿过下面那个头：上段连着两个头、没有杠，
+ * 下段挂着杠、头被上段占了，一整批八分和弦读成四分）。
+ * 中心差不过 `dx`、断口不过 `gap` 像素、且断口里那一列（左右各容一像素）**每行都有墨**才接——
+ * 墨是连着的，只是被头盖住了。接出来的段按两段长度加权取中心与线宽。
+ */
+export function joinVSegs(bin: Binary, segs: LineSeg[], dx: number, gap: number): LineSeg[] {
+  const top = (v: LineSeg) => Math.min(v.y0, v.y1);
+  const bot = (v: LineSeg) => Math.max(v.y0, v.y1);
+  const cx = (v: LineSeg) => (v.x0 + v.x1) / 2;
+  const vs = segs.filter((v) => bot(v) - top(v) > Math.abs(v.x1 - v.x0)).sort((a, b) => top(a) - top(b));
+  const others = segs.filter((v) => !vs.includes(v));
+  const out: LineSeg[] = [];
+  const used = new Set<LineSeg>();
+  for (const a of vs) {
+    if (used.has(a)) continue;
+    let cur = a;
+    for (let again = true; again; ) {
+      again = false;
+      for (const b of vs) {
+        if (b === cur || used.has(b) || b === a) continue;
+        const g = top(b) - bot(cur);
+        if (g < 0 || g > gap || Math.abs(cx(b) - cx(cur)) > dx) continue;
+        const x = Math.round((cx(b) + cx(cur)) / 2);
+        let solid = true;
+        for (let y = Math.ceil(bot(cur)); y <= Math.floor(top(b)) && solid; y++) {
+          const row = y * bin.w;
+          solid = !!(bin.data[row + x] || bin.data[row + x - 1] || bin.data[row + x + 1]);
+        }
+        if (!solid) continue;
+        const lwA = bot(cur) - top(cur);
+        const lwB = bot(b) - top(b);
+        cur = {
+          x0: (cur.x0 * lwA + b.x0 * lwB) / (lwA + lwB),
+          x1: (cur.x1 * lwA + b.x1 * lwB) / (lwA + lwB),
+          y0: top(cur),
+          y1: bot(b),
+          lw: (cur.lw * lwA + b.lw * lwB) / (lwA + lwB),
+          maxLw: Math.max(cur.maxLw, b.maxLw),
+        };
+        used.add(b);
+        again = true;
+      }
+    }
+    out.push(cur);
+  }
+  return [...out, ...others];
+}

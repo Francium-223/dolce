@@ -687,6 +687,23 @@ export function findPrimitives(
       if (c.bbox.w < c.bbox.h * 2.5) continue;
     }
     const line = centerLine(bMaskC, w, c, true);
+    // **杠厚要匀**：低分辨率页上一串八分的头沿谱线挨个粘成一条（有一位神 m4 五个 B4），过得了宽度与长宽比，
+    // 被当成一层杠，头全丢了。杠逐列厚度基本一样，头串是头处鼓、头间凹。沿中心线逐列量墨的竖游程
+    //（去掉 1.5 格以上的干列），中位厚过 `BEAM_EVEN_MED` 格、而第一成分位不到中位的 `BEAM_EVEN_LO` 的不收。
+    // 网点灰的真杠纹理也有洞（下分位 0.3~0.6），但中位厚正常（0.54 格），靠中位那一条放过。只在谱表上下三格内判：
+    // 页眉的粗体字也有这种剖面，剔掉后它的墨改走别的路，连带把拍号数字认成符头（齐来崇拜）。
+    if (!shortBeam && staffBands.some(([t, b]) => c.bbox.y + c.bbox.h / 2 > t - unit.space * 3 && c.bbox.y + c.bbox.h / 2 < b + unit.space * 3)) {
+      const ts: number[] = [];
+      const trim = Math.round(unit.space * 0.3);
+      for (let x = c.bbox.x + trim; x < c.bbox.x + c.bbox.w - trim; x++) {
+        const cy = Math.round(line.y0 + ((line.y1 - line.y0) * (x - line.x0)) / Math.max(1, line.x1 - line.x0));
+        const n = vr[cy * w + x];
+        if (n > 0 && n <= unit.space * 1.5) ts.push(n);
+      }
+      ts.sort((p, q) => p - q);
+      const med = ts[ts.length >> 1] || 1;
+      if (ts.length >= unit.space && med > unit.space * BEAM_EVEN_MED && ts[Math.floor(ts.length * 0.1)] < med * BEAM_EVEN_LO) continue;
+    }
     beams.push({ ...line, box: c.bbox });
   }
   // **网点灰的杠被纹理横着切成上下两条**（当我们回到天家 m12：一条杠读成高 3、高 4 两条），被当成两层，
@@ -722,6 +739,10 @@ export function findPrimitives(
  * 再遇到一段厚 0.6~1.6 倍杠厚的墨，这一列就是半截杠的一列。从杠端（容 0.4 格）起连续够 0.5 格的，收成一截杠。
  * 另卡：高 0.3~0.8 格（薄的是弧线、文字笔画）、杠端有一列从主杠连墨到它（同一根干上）、已认出的杠与重复的不算。
  */
+/** 杠厚要匀（见 `findPrimitives` 符杠那段）：中位厚下限（格）、第一成分位与中位之比的下限。
+ *  扫 BEAM_EVEN_LO 0.65 / 0.75 / 0.85：独唱谱音符 93.91 / 93.92 / 93.93%；BEAM_EVEN_MED 0.65 / 0.75 / 0.85：93.92 / 93.92 / 93.91%。 */
+const BEAM_EVEN_MED = 0.75;
+const BEAM_EVEN_LO = 0.85;
 /** 半截符杠的高度范围（格）。 */
 const PARTIAL_BEAM_H = [0.3, 0.8] as const;
 

@@ -72,11 +72,19 @@ export function classifyBarlines(pg: SPage, stf: Staff): BarlineMark[] {
     const style = g.lw > sp / 3 ? "light-heavy" : g.xs.length > 1 ? "light-light" : null;
     let before = false;
     let after = false;
+    // 只有一道细线的一处，反复点要贴着它（一格内）：附点二分和弦的两个点离后面的小节线两格，
+    // 位置又正好在第二、三间（我灵镇静 B♭4/G4），按两格开窗全被当成反复点
+    const reach = g.lw > sp / 3 || g.xs.length > 1 ? sp * 2 : sp * 1.0;
     for (const d of dots) {
       const dx = d.px - (left + x) / 2;
-      if (Math.abs(dx) > sp * 2) continue;
-      // `repeatDots` 一个字形就是上下两点；`augmentationDot` 要两枚才算
-      const pair = d.code === "repeatDots" || dots.some((o) => o !== d && Math.abs(o.px - d.px) < sp * 0.4 && Math.abs(o.py - d.py) > sp * 0.5);
+      if (Math.abs(dx) > reach) continue;
+      // `repeatDots` 一个字形就是上下两点；`augmentationDot` 要两枚才算，而且**夹着第三线**
+      // （在第二、三间，两点中点落在谱表中线上）：三度和弦的两个附点也是上下隔一格，但在别的间
+      // （我灵镇静 A4/F4 附点二分，点在第一、二间，右边两格就是小节线，被当成反复点，附点整批丢了）
+      const mid = (stf.box.top + stf.box.bottom) / 2;
+      const pair =
+        d.code === "repeatDots" ||
+        dots.some((o) => o !== d && Math.abs(o.px - d.px) < sp * 0.4 && Math.abs(o.py - d.py) > sp * 0.5 && Math.abs(o.py - d.py) < sp * 1.5 && Math.abs((o.py + d.py) / 2 - mid) < sp * 0.3);
       if (!pair) continue;
       if (dx < 0) before = true;
       else after = true;

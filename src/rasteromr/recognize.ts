@@ -3502,9 +3502,10 @@ function findDots(bin: Binary, syms: RasterSym[], unit: RasterUnit): Rect[] {
               stack.push(nx, ny);
             }
         }
-        if (edge) continue;
         const w = maxX - minX + 1;
         const h = maxY - minY + 1;
+        if (DB) console.error("  blob", minX, minY, w, h, area, "edge", edge);
+        if (edge) continue;
         if (w < Math.max(2, sp * 0.15) || h < Math.max(2, sp * 0.15) || w > sp * 0.6 || h > sp * 0.6) continue;
         if (w / h < 0.6 || w / h > 1.7 || area < w * h * 0.5) continue;
         found.push({ x: minX, y: minY, w, h });
@@ -3530,12 +3531,17 @@ function findDots(bin: Binary, syms: RasterSym[], unit: RasterUnit): Rect[] {
     const r = rightOf(b);
     return cx > r + sp * 0.05 && cx < r + sp * 1.3 && cy > hy - sp * 0.85 && cy < hy + sp * DOT_BELOW;
   };
+  const DBR = process.env.DBGR?.split(",").map(Number);
+  let DB = false;
   for (const hd of heads) {
     const b = hd.box;
     const cy = b.y + b.h / 2;
     const r = rightOf(b);
+    DB = !!DBR && b.x < DBR[0] + DBR[2] && b.x + b.w > DBR[0] && b.y < DBR[1] + DBR[3] && b.y + b.h > DBR[1];
+    if (DB) console.error("DOTHEAD", hd.code, JSON.stringify(b), "r", r, "sp", sp);
     for (const d of blobsIn(r + sp * 0.05, cy - sp * 0.85, r + sp * 1.3, cy + sp * DOT_BELOW)) {
       if (out.some((o) => overlapFrac(o, d) > 0)) continue;
+      if (DB) console.error("  cand", JSON.stringify(d), "covered", syms.filter((s0) => overlapFrac(d, s0.box) > 0.3).map((s0) => s0.code).join(","));
       if (syms.some((s0) => overlapFrac(d, s0.box) > 0.3)) continue;
       // 反复记号的两点：同一列上下一格处还有一个点。
       // 但**和弦的附点**也是这样上下一格排着：另一个点若落在同列**另一个头**的附点窗口里，

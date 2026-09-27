@@ -3542,6 +3542,8 @@ const DOT_BELOW = 0.35;
 const TWIN_COL = 0.5;
 /** 和弦里上方紧挨着另一个头的，附点窗口下沿放到这么多格（恩友歌 C5/A4/G4 附点四分，G4 的点写在下方的间，头心下 0.55 格）。 */
 const DOT_BELOW_STACKED = 0.75;
+/** 附点取块时窗口上下多放的余量（格），见 `findDots`。 */
+const DOT_PAD = 0.3;
 
 /** `onLine`：这一行像素在谱线上（去线后残渣所在）。连通照走，但不计入点的盒、也不算伸出窗口
  *  ——贴着谱线的附点在去线图上常连着一截残渣，盒高超限或伸出窗口就整个丢了（我灵镇静 m3 的附点四分）。 */
@@ -3640,7 +3642,13 @@ function findDots(bin: Binary, syms: RasterSym[], unit: RasterUnit, onLine: (y: 
     const b = hd.box;
     const cy = b.y + b.h / 2;
     const r = rightOf(b);
-    for (const d of blobsIn(r + sp * 0.05, cy - sp * 0.85, r + sp * 1.3, cy + sp * below(b))) {
+    // 取块的窗口上下各多放 0.3 格，再只留中心落在原窗口里的：窗口沿正切在点的边上时，
+    // 一两个毛刺像素伸出窗口就整块作废（齐来称颂低音谱表 C♯4/A3 附点二分，两个点都这么丢了）
+    const bl = below(b);
+    for (const d of blobsIn(r + sp * 0.05, cy - sp * (0.85 + DOT_PAD), r + sp * 1.3, cy + sp * (bl + DOT_PAD)).filter((q) => {
+      const qy = q.y + q.h / 2;
+      return qy > cy - sp * 0.85 && qy < cy + sp * bl;
+    })) {
       if (out.some((o) => overlapFrac(o, d) > 0)) continue;
       if (syms.some((s0) => overlapFrac(d, s0.box) > 0.3)) continue;
       // 反复记号的两点：同一列上下一格处还有一个点。

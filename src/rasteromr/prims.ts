@@ -816,7 +816,11 @@ function localLineCenters(bin: Binary, runs: Uint16Array, cy: number, unit: Rast
  * 都是白的，就抹掉；只要有一侧连着墨，就保留某个符号穿过谱线的那一截。
  * 不能直接按「纵向游程短」擦像素，否则会抹断骑线的拍号数字、休止符和谱号。
  */
-export function removeStaffLines(bin: Binary, lineYs: number[], unit: RasterUnit): Binary {
+/** 没成组的横线只抹竖游程不过这么多个线宽的列：谱线、加线约一个线宽，符杠约 0.5 格厚——
+ *  粗线页上只有线宽的两倍（主使我喜乐线宽 4、杠厚 8 像素）。 */
+const THIN_ONLY_RUN = 1.6;
+/** `thinOnly`：这几条线只抹竖游程不过 `THIN_ONLY_RUN` 个线宽的列（见 `recognize.ts` 调用处）。 */
+export function removeStaffLines(bin: Binary, lineYs: number[], unit: RasterUnit, thinOnly: Set<number> = new Set()): Binary {
   const { w, h, data } = bin;
   const out: Binary = { w, h, data: new Uint8Array(data) };
   const half = unit.lineThick / 2 + 1;
@@ -824,11 +828,18 @@ export function removeStaffLines(bin: Binary, lineYs: number[], unit: RasterUnit
   // 谱线就抹不掉了。
   const look = Math.max(1, Math.round(unit.lineThick));
   const runs = vRuns(bin);
+  const maxRun = unit.lineThick * THIN_ONLY_RUN;
   for (const cy of lineYs) {
     const centers = localLineCenters(bin, runs, cy, unit);
+    const thin = thinOnly.has(cy);
     for (let x = 0; x < w; x++) {
       const y0 = Math.max(0, Math.floor(centers[x] - half));
       const y1 = Math.min(h - 1, Math.ceil(centers[x] + half));
+      if (thin) {
+        let run = 0;
+        for (let y = y0; y <= y1; y++) run = Math.max(run, runs[y * w + x]);
+        if (run > maxRun) continue;
+      }
       let up = 0;
       for (let y = Math.max(0, y0 - look); y < y0; y++) up |= data[y * w + x];
       if (up) continue;

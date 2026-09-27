@@ -697,7 +697,10 @@ export async function recognizeRasterPage(
     for (let y = 0; y < bin.h; y++) if (!keep[y]) bin.data.fill(0, y * bin.w, (y + 1) * bin.w);
   }
 
-  const nl = removeStaffLines(raster.bin, lines.map((l) => l.y), unit);
+  // 没成组的横线（通长加线、谱表外的长横墨）只抹细的那几列：连成一长条的**符杠**也会被投影成一条「线」，
+  // 照谱线抹就整条没了（主使我喜乐第三行谱表下方一格的连杠八分，杠整条被抹、十来个八分读成四分）
+  const grouped = new Set(groups.flatMap((g) => g.lines.map((l) => l.y)));
+  const nl = removeStaffLines(raster.bin, lines.map((l) => l.y), unit, new Set(lines.map((l) => l.y).filter((y) => !grouped.has(y))));
   /** 分好组的谱线（五条一组）。`lines` 里还混着没成组的横线，按「五条一组」取第几线的判据（`nearRestLine`、`restKind`）
    *  用它会错位（《所信有根基》简谱行里的减时线过了休止的位置闸，读成二分休止）。 */
   const staffLines = groups.flatMap((g) => g.lines);

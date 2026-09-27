@@ -620,6 +620,8 @@ const FLAG_HEAD_BAND = 2.5;
 const FLAG_GAP = 2.8;
 /** 头盒中心离整音级这么多（级）以上算悬着，交模板定夺。 */
 const SNAP_AMBIG = 0.25;
+/** 谱线、加线上的「杠」厚不过这么多格、又挨着符头的不算层数（见 `thinOnLine`）。 */
+const THIN_BEAM_H = 0.3;
 /** 离最近谱表外线超过这么多格的符头要有加线链才留。扫过 **3.75** / 4.25 / 4.75：93.47 / 93.32 / 93.23%。 */
 const FAR_HEAD = 3.75;
 /** 墨柱补干：从头心算起伸出去的长度（格），同 `notehead.ts::INK_STEM`。 */
@@ -2396,7 +2398,18 @@ export async function recognizeRasterPage(
     const tag = SEG_TAGS.find((t) => sg.hasTag(t));
     if (tag) ledger.claim({ x: sg.box.left, y: sg.box.top, w: sg.box.right - sg.box.left, h: sg.box.bottom - sg.box.top }, `seg:${tag}`);
   }
-  const beams = toBeamShapes(prims.beams);
+  // **谱线、加线上挨着符头的薄条不算杠的层数**：线压着符头、被头的墨撑厚成三四像素，过了符杠那道闸
+  //（我一生要赞美你 m5–6 第五线上的 D4，八分读成十六分）。照旧留在 `prims.beams` 里抹墨（过检的杠是承重的，
+  // 直接丢掉该曲音符 −5.2），只是不交给下游数层数。真杠约半格厚、离头两三格
+  //（斜的网点杠只检出靠线的一片时也薄，所以要「挨着头」：大地风光 m1）
+  const noteHeads = pg.symbols.filter((s0) => s0.hasTag("Note") && /^notehead/.test(s0.code));
+  const thinOnLine = (b: BeamQuad) => {
+    if (b.box.h > unit.space * THIN_BEAM_H) return false;
+    const cy = b.box.y + b.box.h / 2;
+    if (!onGrid(cy) && !gridYs.some((ly) => Math.abs(ly - cy) <= unit.lineThick + 1)) return false;
+    return noteHeads.some((h) => h.box.left < b.box.x + b.box.w && h.box.right > b.box.x && Math.abs((h.box.top + h.box.bottom) / 2 - cy) <= unit.space * 0.6);
+  };
+  const beams = toBeamShapes(prims.beams.filter((b) => !thinOnLine(b)));
   const stems: StemInfo[] = [];
   // **认成实心、其实中间是空的头**：圈细、内腔被没抹掉的谱线切成几小块的空心头（耶和华、高举主大能、你的信实广大），
   // 过不了空心头的形状闸，被收成实心。头的中心椭圆（半径取盒的三成，跳过谱线那几行）里白占 HOLLOW_FILL 以上、

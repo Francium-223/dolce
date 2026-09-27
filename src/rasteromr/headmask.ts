@@ -248,6 +248,8 @@ export function splitHeadCluster(
   minHeads = 2,
   /** 认一个头的得分门槛（缺省 `SCORE_MIN`；空心模板那一路另给，见调用处）。 */
   minScore = SCORE_MIN,
+  /** 填充率上限（缺省 `CLUSTER_FILL[1]`；上下贴着的两个实心头另给，见调用处）。 */
+  maxFill: number = CLUSTER_FILL[1],
 ): Rect[] {
   const sp = unit.space;
   const w = box.w / sp;
@@ -255,7 +257,7 @@ export function splitHeadCluster(
   if (!anySize && (w < CLUSTER_W[0] || w > CLUSTER_W[1] || h < CLUSTER_H[0] || h > CLUSTER_H[1])) return [];
   if (anySize && (w < CLUSTER_W[0] || h < CLUSTER_H[0])) return [];
   const fill = area / Math.max(1, box.w * box.h);
-  if (fill < CLUSTER_FILL[0] || fill > CLUSTER_FILL[1]) return [];
+  if (fill < CLUSTER_FILL[0] || fill > maxFill) return [];
   // ── **匹配追踪**：找到一个头就把它的墨从块里减掉，再重新打分找下一个 ────────
   //
   // 原来是「一次打分、按得分贪心挑、只用间距去重」。那么做有个毛病：

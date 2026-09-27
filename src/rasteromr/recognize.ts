@@ -429,6 +429,8 @@ const KEY_OVERLAP = 0.5;
 const LATIN_CHAIN = 3;
 /** 上下贴着的两个头（`isStackedPair`）拆分时每个头的得分门槛。 */
 const PAIR_SCORE_MIN = 0.4;
+/** 上下贴着的两个实心头填满外框的九成以上（所信有根基 F4/D♭4 0.904），拆块的「太实是黑块」上限 0.9 对它放到这个数。 */
+const PAIR_FILL_MAX = 0.96;
 
 /** 拍号数字与模板的签名距离上限。见 `bootstrapTimeSig` 那段的说明。 */
 const TIME_TEMPLATE_DIST = 180;
@@ -1035,9 +1037,9 @@ export async function recognizeRasterPage(
       let parts = splitHeadCluster(noBeam, c.bbox, c.area, masksNB.length ? masksNB : masks, unit, pitchGrid, onLineY);
       // **上下贴着的两个头**（三度和弦，一个头宽、两个头高、很实）：模板要头的上下是白的，
       // 贴着就各扣一截，两个都卡在门槛下（《来敬拜荣耀王》低音谱表的 E3/G♯3 得 0.45 / 0.42，门槛 0.46）。
-      // 只对这种形状放到 0.40，而且要正好拆出两个、上下隔开 0.8 格以上。
+      // 只对这种形状放到 0.40，而且要正好拆出两个、上下隔开 0.8 格以上；填充率上限也放到 `PAIR_FILL_MAX`。
       if (!parts.length && isStackedPair(c.bbox, c.area, unit)) {
-        const p2 = splitHeadCluster(noBeam, c.bbox, c.area, masksNB.length ? masksNB : masks, unit, pitchGrid, onLineY, false, undefined, 2, PAIR_SCORE_MIN);
+        const p2 = splitHeadCluster(noBeam, c.bbox, c.area, masksNB.length ? masksNB : masks, unit, pitchGrid, onLineY, false, undefined, 2, PAIR_SCORE_MIN, PAIR_FILL_MAX);
         if (p2.length === 2 && Math.abs(p2[0].y - p2[1].y) >= unit.space * 0.8) parts = p2;
       }
       if (!parts.length) continue;

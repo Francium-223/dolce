@@ -410,6 +410,9 @@ const HOLLOW_MASK_SCORE = 0.38;
 /** 叠成「8」字的两个空心头（一块一个半头宽以内、两个头高）只拆出一个时，按成对再拆的门槛与形状（格）。
  *  万口欢唱低音 G3/E♭3 全音符：先认的下头 0.384，减掉它的墨后上头只剩 0.326。扫 0.3 / 0.25 / 0.2 读数相同。 */
 const HOLLOW_PAIR_SCORE = 0.3;
+/** 一个头大（1.1~1.7 × 0.85~1.3 格）或「8」字一对（高 1.6~2.2 格）的有腔块的门槛。扫 0.32 / 0.28 / 0.25 / **0.22** / 0.18 / 0.12：
+ *  独唱谱音符 93.73 / 93.75 / 93.75 / **93.79** / 93.76 / 93.78%，0.18 起你的信实广大、善牧恩慈歌、大地风光开始掉。 */
+const HOLLOW_SHAPED_SCORE = 0.22;
 const HOLLOW_PAIR_H = [1.6, 2.5] as const;
 const HOLLOW_PAIR_W = 2.2;
 /** 整格谱间白（见 `cellLike`）的外框里白至少占多少。 */
@@ -2069,9 +2072,12 @@ export async function recognizeRasterPage(
           }
           continue;
         }
-        let parts = splitHeadCluster(raster.bin, box, area, [hollowMask], unit, pitchGrid, onLineY, true, undefined, 1, HOLLOW_MASK_SCORE);
+        // 正好一个头大、或叠成「8」字一对的有腔块，门槛放到 `HOLLOW_SHAPED_SCORE`：模板多半由本页的二分头平均出来，
+        // 全音符宽、内腔斜，配上去分数低（齐来谢主歌「阿们」F4/D4、F4 只得 0.29 / 0.34）
+        const shaped = w >= 1.1 && w <= 1.7 && ((h >= 0.85 && h <= 1.3) || (h >= HOLLOW_PAIR_H[0] && h <= 2.2));
+        let parts = splitHeadCluster(raster.bin, box, area, [hollowMask], unit, pitchGrid, onLineY, true, undefined, 1, shaped ? HOLLOW_SHAPED_SCORE : HOLLOW_MASK_SCORE);
         // 叠成「8」字的一对：先认的那个把共用的那条边减掉了，另一个的分数跟着掉，按成对再拆一次（`HOLLOW_PAIR_SCORE`）
-        if (parts.length === 1 && h >= HOLLOW_PAIR_H[0] && h <= HOLLOW_PAIR_H[1] && w <= HOLLOW_PAIR_W) {
+        if (parts.length <= 1 && h >= HOLLOW_PAIR_H[0] && h <= HOLLOW_PAIR_H[1] && w <= HOLLOW_PAIR_W) {
           const p2 = splitHeadCluster(raster.bin, box, area, [hollowMask], unit, pitchGrid, onLineY, true, undefined, 2, HOLLOW_PAIR_SCORE);
           if (p2.length === 2 && Math.abs(p2[0].y - p2[1].y) >= unit.space * 0.8 && Math.abs(p2[0].x - p2[1].x) <= unit.space * 0.3) parts = p2;
         }

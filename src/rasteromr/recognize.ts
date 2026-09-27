@@ -2220,15 +2220,17 @@ export async function recognizeRasterPage(
   //
   // 三度叠置的空心和弦（赞美三一真神第二行 m5 的 F4/A4 附点二分），朝下的干左侧贴着两个头的圈，
   // 一半以上的行有邻墨，`findPrimitives` 的孤立性判它「属于某个符号」、不出竖段；干没挂上，读成全音符。
-  // 这里对已判为二分、头缘两倍线宽内又没有竖段的头，从头心沿头缘的墨柱往上下走（`inkColumn`），
+  // 这里对二分头与实心头，头缘两倍线宽内又没有竖段的，从头心沿头缘的墨柱往上下走（`inkColumn`），
   // 伸出去 2.5~7 格的当干补进去。两端都压在首末线附近的是小节线，不算。
   // 独唱谱时值 90.42 → 90.66%（奇异恩典 +2.7、流血歌伴奏 +2.5、赞美三一真神 +2.4、父恩广大音符 +1.2），无一首掉；
   // 合唱谱扫描档音符 +0.10、小节自检 +1.2，干净档小节自检 +0.65、歌词 +0.09、音符 −0.02（一个音），按接受记。
+  // **实心头同样补**（2026-09-27）：上端连着符尾、下端连着叠头的细干一样过不了孤立性
+  //（所信有根基高音谱表干朝上的八分三度，16 处读成四分）。
   {
     const sp = unit.space;
     const tol = Math.max(unit.lineThick * 2, sp * 0.25);
     for (const s0 of syms) {
-      if (s0.code !== "noteheadHalf") continue;
+      if (s0.code !== "noteheadHalf" && s0.code !== "noteheadBlack") continue;
       const b = s0.box;
       const cy = b.y + b.h / 2;
       const has = [...prims.vSegs, ...stemSegs, ...inkStems].some((v) => {
@@ -3502,6 +3504,11 @@ function midOfStaff(box: { y: number; h: number }, lines: { y: number }[], unit:
  */
 /** 附点窗口往下探多少格：线上的音附点写在上方的间，可和弦里上方那个间被别的音的点占了时写在下方（《恩友歌》G4）。 */
 const DOT_BELOW = 0.35;
+/** 判「同列另一个点有自己的主人」时，主人可以是左右半格内的邻列头：二度错排的和弦两列头挨着、盒不重叠
+ *  （恩友歌 C5/A4/G4 附点四分，右列 A4 的点因左列两个头差一个像素不算「同列」，被当成反复双点剔掉）。 */
+const TWIN_COL = 0.5;
+/** 和弦里上方紧挨着另一个头的，附点窗口下沿放到这么多格（恩友歌 C5/A4/G4 附点四分，G4 的点写在下方的间，头心下 0.55 格）。 */
+const DOT_BELOW_STACKED = 0.75;
 
 /** `onLine`：这一行像素在谱线上（去线后残渣所在）。连通照走，但不计入点的盒、也不算伸出窗口
  *  ——贴着谱线的附点在去线图上常连着一截残渣，盒高超限或伸出窗口就整个丢了（我灵镇静 m3 的附点四分）。 */
@@ -3582,19 +3589,25 @@ function findDots(bin: Binary, syms: RasterSym[], unit: RasterUnit, onLine: (y: 
     }
     return r;
   };
+  /** 窗口下沿：上方一格半内紧挨着另一个和弦头的，点可以写到下方的间（上方的间被邻头的点占了）。 */
+  const below = (b: Rect) => {
+    const cy = b.y + b.h / 2;
+    const stacked = heads.some((h2) => h2.box !== b && h2.box.x < b.x + b.w + sp * TWIN_COL && h2.box.x + h2.box.w > b.x - sp * TWIN_COL && cy - (h2.box.y + h2.box.h / 2) > sp * 0.3 && cy - (h2.box.y + h2.box.h / 2) < sp * 1.2);
+    return stacked ? DOT_BELOW_STACKED : DOT_BELOW;
+  };
   /** 点落在这个头的附点窗口里吗。 */
   const inWindow = (b: Rect, d: Rect) => {
     const cx = d.x + d.w / 2;
     const cy = d.y + d.h / 2;
     const hy = b.y + b.h / 2;
     const r = rightOf(b);
-    return cx > r + sp * 0.05 && cx < r + sp * 1.3 && cy > hy - sp * 0.85 && cy < hy + sp * DOT_BELOW;
+    return cx > r + sp * 0.05 && cx < r + sp * 1.3 && cy > hy - sp * 0.85 && cy < hy + sp * below(b);
   };
   for (const hd of heads) {
     const b = hd.box;
     const cy = b.y + b.h / 2;
     const r = rightOf(b);
-    for (const d of blobsIn(r + sp * 0.05, cy - sp * 0.85, r + sp * 1.3, cy + sp * DOT_BELOW)) {
+    for (const d of blobsIn(r + sp * 0.05, cy - sp * 0.85, r + sp * 1.3, cy + sp * below(b))) {
       if (out.some((o) => overlapFrac(o, d) > 0)) continue;
       if (syms.some((s0) => overlapFrac(d, s0.box) > 0.3)) continue;
       // 反复记号的两点：同一列上下一格处还有一个点。
@@ -3605,7 +3618,7 @@ function findDots(bin: Binary, syms: RasterSym[], unit: RasterUnit, onLine: (y: 
       const dcy = d.y + d.h / 2;
       const twins = blobsIn(dcx - sp * 0.5, dcy - sp * 1.5, dcx + sp * 0.5, dcy + sp * 1.5)
         .filter((o) => Math.abs(o.y + o.h / 2 - dcy) > sp * 0.6)
-        .filter((o) => !heads.some((h2) => h2 !== hd && h2.box.x < b.x + b.w && h2.box.x + h2.box.w > b.x && inWindow(h2.box, o)));
+        .filter((o) => !heads.some((h2) => h2 !== hd && h2.box.x < b.x + b.w + sp * TWIN_COL && h2.box.x + h2.box.w > b.x - sp * TWIN_COL && inWindow(h2.box, o)));
       if (twins.length) continue;
       out.push(d);
     }

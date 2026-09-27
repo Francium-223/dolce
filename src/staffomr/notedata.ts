@@ -786,11 +786,12 @@ export function buildNotes(
  */
 function attachDots(notes: StaffNote[], dots: Sym[], sp: number): void {
   // dx 从和弦里**贴着的最右那个头**量起：二度和弦错开画在干另一侧的头把附点列往右推了一个头宽
-  //（《恩友歌》C5/A4/G4 附点四分，C5 离点 1.8 格）。
+  //（《恩友歌》C5/A4/G4 附点四分，C5 离点 1.8 格）。两列之间容 0.3 格：位图上右列头的左缘离左列头右缘常差两三个像素
+  //（恩友歌第七小节 G4 差 3 像素没算进去，点离它 1.8 格挂不上）。
   const rightOf = (n: StaffNote) => {
     let r = n.sym.box.right;
     for (const m of notes)
-      if (m.staff === n.staff && m.sym.box.left <= n.sym.box.right + 2 && m.sym.box.right >= n.sym.box.left && Math.abs(m.sym.py - n.sym.py) <= sp * 1.5)
+      if (m.staff === n.staff && m.sym.box.left <= n.sym.box.right + Math.max(2, sp * 0.3) && m.sym.box.right >= n.sym.box.left && Math.abs(m.sym.py - n.sym.py) <= sp * 1.5)
         r = Math.max(r, m.sym.box.right);
     return r;
   };

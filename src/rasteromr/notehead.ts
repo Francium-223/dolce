@@ -456,7 +456,24 @@ export function hollowHeadsFromHoles(
       // 没干（或更瘦）的近圆内腔只可能是**全音符**：这类字体的全音符圈厚、内腔斜得竖起来（我一生要赞美你，
       // 头 25px 宽 1.7 格、内腔被谱线豁开并回来 9×11），内腔外扩一圈的盒只有 1 格、够不上全音符宽。
       // 头盒按图上的圈量到外缘，够全音符宽的才往下走。
-      const outer = ringOuter(nl, hole, sp);
+      let outer = ringOuter(nl, hole, sp);
+      // 同一高度左右紧挨着另一个内腔的（两个声部同音的全音符并排贴着，我灵镇静末小节），两个头的圈连成一段，
+      // 外缘量到了邻头那边（1.9 格，超了上限）：截到两个内腔之间的中线
+      if (outer) {
+        const hcy = hole.y + hole.h / 2;
+        for (const o of holes) {
+          if (o === hole || Math.abs(o.y + o.h / 2 - hcy) > sp * 0.3) continue;
+          // 邻孔要长得一样（并排两个全音符的内腔），也是偏竖的近圆
+          if (o.w / hole.w < 0.7 || o.w / hole.w > 1.4 || o.h / hole.h < 0.7 || o.h / hole.h > 1.4 || o.w / o.h >= HOLE_RATIO) continue;
+          if (o.x >= hole.x + hole.w && o.x - (hole.x + hole.w) < sp * 1.2) {
+            const mid = Math.round((hole.x + hole.w + o.x) / 2);
+            if (mid < outer.x + outer.w) outer = { ...outer, w: mid - outer.x };
+          } else if (o.x + o.w <= hole.x && hole.x - (o.x + o.w) < sp * 1.2) {
+            const mid = Math.round((o.x + o.w + hole.x) / 2);
+            if (mid > outer.x) outer = { ...outer, x: mid, w: outer.x + outer.w - mid };
+          }
+        }
+      }
       if (!outer || outer.w / sp < W_WHOLE) continue;
       box = outer;
     }

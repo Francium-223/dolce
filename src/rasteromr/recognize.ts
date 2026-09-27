@@ -1378,6 +1378,7 @@ export async function recognizeRasterPage(
     //
     // 谱面上行首那一段是死的：谱号 + 调号最多占几格，真正的休止在它右边。
     if (nearStaffStart(b, groups, staffLefts, unit)) continue;
+    if (sharpCrossbars(nl, b, unit)) continue;
     merged.add(c.id);
     const code = isEighthRest(nl, b, c.area, unit) ? "rest8th" : "restQuarter";
     syms.push({ box: b, code });
@@ -3446,6 +3447,36 @@ function crossRuns(bin: Binary, x0: number, x1: number, y0: number, y1: number):
 }
 
 /** 列 `x` 上过 `(x,y)` 的竖墨段（允许左右各偏一像素续上）。 */
+/**
+ * 盒里有**两道横贯的粗横笔**：升号的两道斜横。四分休止是折线，横不满盒宽。
+ * 齐来谢主歌、我灵镇静、信心使我得胜（低分辨率或细笔本）的 ♯ 只有 0.8×2.3~2.9 格，落进了四分休止的形状闸。
+ *
+ * 横满盒宽四分之三的行按间隔 0.3 格分道：♯ 恰好两道、各厚 0.23~0.41 格、中心相距 1.0 格上下。
+ * 休止也有横得满的：粗体本（主我敬拜你）是四道细线，以马内利来临歌是两道 0.6 格厚、相距 1.4 格，
+ * 向主唱新歌是两道 1~2 像素——按道数、厚度、间距都挡得住。竖笔判不稳：去谱线后常被切断。
+ */
+function sharpCrossbars(bin: Binary, b: Rect, unit: RasterUnit): boolean {
+  const sp = unit.space;
+  const bars: [number, number][] = [];
+  for (let y = b.y; y < b.y + b.h; y++) {
+    let best = 0;
+    let run = 0;
+    for (let x = b.x; x < b.x + b.w; x++) {
+      run = x >= 0 && x < bin.w && y >= 0 && y < bin.h && bin.data[y * bin.w + x] ? run + 1 : 0;
+      if (run > best) best = run;
+    }
+    if (best < b.w * 0.75) continue;
+    const last = bars[bars.length - 1];
+    if (last && y - last[1] <= sp * 0.3) last[1] = y;
+    else bars.push([y, y]);
+  }
+  if (bars.length !== 2) return false;
+  const thick = bars.map(([a, z]) => (z - a + 1) / sp);
+  if (thick.some((t) => t < 0.2 || t > 0.45)) return false;
+  const gap = ((bars[1][0] + bars[1][1]) - (bars[0][0] + bars[0][1])) / 2 / sp;
+  return gap >= 0.7 && gap <= 1.3;
+}
+
 function vRunAt(bin: Binary, x: number, y: number): [number, number] | null {
   const ink = (xx: number, yy: number) => yy >= 0 && yy < bin.h && xx >= 0 && xx < bin.w && !!bin.data[yy * bin.w + xx];
   const at = (yy: number) => ink(x, yy) || ink(x - 1, yy) || ink(x + 1, yy);

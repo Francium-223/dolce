@@ -481,6 +481,8 @@ export function headFromStemBlock(
     taken.push(more.y);
     extra.push({ x: Math.round(more.x - hw / 2), y: Math.round(more.y - hh / 2), w: hw, h: hh });
   }
+  const second = displacedSecond(bin, box, masks, sp, step, grid, onLine, best, hw);
+  if (second && !taken.some((t) => Math.abs(t - second.y) < sp * 0.3)) extra.push({ x: Math.round(second.x - hw / 2), y: Math.round(second.y - hh / 2), w: hw, h: hh });
   // 符干：头在上端就往下走，在下端就往上走。
   // **要续到符头中心**——`findStems` 的硬判据是「符干与符头纵向相交」，
   // 停在符头边缘上，`extendVSegs` 那 0.35 格续不进去，段就挂不上 `Stem` 标记，
@@ -490,6 +492,43 @@ export function headFromStemBlock(
   const stemY0 = up ? best.y : box.y;
   const stemY1 = up ? box.y + box.h : best.y;
   return { head, extra, stemX, stemY0, stemY1 };
+}
+
+/** 二度错开在干另一侧的头要的得分。我灵镇静实测：真二度 0.42~0.49，镜像过去落空的 ≤0.03。 */
+const SECOND_SCORE_MIN = 0.3;
+
+/**
+ * 干另一侧、上下隔一级的**二度和弦头**：两个声部二度相邻时，两个头分在共用那根干的两侧
+ * （我灵镇静低音谱表 C4/B♭3，C4 在干左、B♭3 在干右）。同干和弦那一档只在头的 x ±0.4 格里找，够不着。
+ * 以干为轴把已摘出的头镜像过去，上下各试一级。
+ */
+function displacedSecond(
+  bin: Binary,
+  box: Rect,
+  masks: HeadMask[],
+  sp: number,
+  step: number,
+  grid: (y: number) => number | null,
+  onLine: (y: number) => boolean,
+  best: { x: number; y: number; s: number },
+  hw: number,
+): { x: number; y: number; s: number } | null {
+  const stemX = stemColumn(bin, box, box.y, box.y + box.h);
+  const off = stemX - best.x;
+  if (Math.abs(off) < hw * 0.25 || Math.abs(off) > hw * 0.8) return null;
+  const mx = 2 * stemX - best.x;
+  let got: { x: number; y: number; s: number } | null = null;
+  for (const dy of [-0.5, 0.5]) {
+    const g = grid(best.y + dy * sp);
+    if (g === null || Math.abs(Math.abs(g - best.y) - sp * 0.5) > sp * 0.2) continue;
+    const m = masks.find((q) => q.onLine === onLine(g)) ?? masks[0];
+    for (let x = Math.round(mx - sp * 0.3); x <= mx + sp * 0.3; x += step) {
+      if (x - hw * 0.4 < box.x || x + hw * 0.4 > box.x + box.w) continue;
+      const s = scoreAt(bin, m, x, g);
+      if (s >= SECOND_SCORE_MIN && (!got || s > got.s)) got = { x, y: g, s };
+    }
+  }
+  return got;
 }
 
 /** 块里第 `y` 行最左到最右的墨的跨度（像素）。光有符干的行只有线宽那么宽，有头的行一整个头宽。 */

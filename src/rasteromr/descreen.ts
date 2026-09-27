@@ -6,7 +6,9 @@
 //
 // **不是每张图都要做**：干净位图（排版软件贴进去的）与普通扫描件的笔画本来就是实心的，
 // 做一遍只会把细节磨掉。所以先量 `halftoneRatio` 再决定，判据见 `HALFTONE_RATIO`。
+// 去网本身走标准形态学（`morph.ts`），参数从本页统计，见 `descreenMorph`。
 import type { Binary } from "../omr/types";
+import { areaClose, areaOpen, close, components, quantile } from "./morph";
 
 /** 积分图：`sum(x0,y0,x1,y1)`（半开区间）。0/1 图逐点求和，整型精确。 */
 class Integral {
@@ -132,56 +134,6 @@ export const PINHOLE_RATIO = 0.012;
  */
 export const HALFTONE_RATIO = 0.25;
 
-/** 实心块的密度门槛（符头/符杠打散成网点之后，局部密度仍在半数以上）。 */
-const FILL_DENSITY = 0.42;
-/** 横/纵向连续的门槛：谱线、符干这类笔画本身是实的，网点底纹不可能连成这样。 */
-const RUN_LONG = 0.72;
-const RUN_SHORT = 0.85;
-
-/**
- * 去网并实化，**就地改 `bin`**。
- *
- * 三条一起用：
- *   1. 局部密度（`k` 窗口）过半的填成实心——散成网点的符头、符杠回到实心块；
- *   2. 横向/纵向连续的留下——谱线、符干、小节线本来就是实的；
- *   3. 其余的墨只在「贴着上面两者」时才留——把阴影底纹那层孤立网点整层抹掉。
- *
- * @param space 线距（像素）。窗口尺寸按它缩放：整页乐谱唯一的天然尺子。
- */
-export function descreen(bin: Binary, space: number): void {
-  const odd = (n: number) => Math.max(3, Math.round(n) | 1);
-  const k = odd(space * 0.6);
-  const k5 = odd(space * 0.33);
-  const it = new Integral(bin);
-  const { w, h, data } = bin;
-  const solid = new Uint8Array(w * h);
-  const struct = new Uint8Array(w * h);
-  const kk = k * k;
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = y * w + x;
-      const fill = it.box(x, y, k, k) >= kk * FILL_DENSITY;
-      if (fill) solid[i] = 1;
-      struct[i] =
-        fill ||
-        it.box(x, y, k, 1) >= k * RUN_LONG ||
-        it.box(x, y, 1, k) >= k * RUN_LONG ||
-        it.box(x, y, k5, 1) >= k5 * RUN_SHORT ||
-        it.box(x, y, 1, k5) >= k5 * RUN_SHORT
-          ? 1
-          : 0;
-    }
-  }
-  // 结构掩膜往外放一圈（`k5` 窗口），把属于结构的墨——斜的符杠端、弧线的梢——连带留下
-  const sit = new Integral({ w, h, data: struct });
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const i = y * w + x;
-      data[i] = solid[i] || (data[i] && sit.box(x, y, k5, k5) > 0) ? 1 : 0;
-    }
-  }
-}
-
 /** 量网点率时谱表上下各带出这么多个线距（歌词/和弦字母不进来，符干与弧线进得来）。 */
 export const HALFTONE_BAND = 2;
 
@@ -233,4 +185,27 @@ function isolated(data: Uint8Array, w: number, x: number, y: number): boolean {
   for (let dy = -1; dy <= 1; dy++)
     for (let dx = -1; dx <= 1; dx++) if ((dx || dy) && data[(y + dy) * w + x + dx]) return false;
   return true;
+}
+
+/** 统计「点」的尺寸时只看这么小的块（像素）：再大是符号本身。 */
+const DOT_SCAN = 60;
+/** 底纹点：面积小于墨块尺寸（`DOT_PCT` 分位）这么多倍的抹掉。 */
+const SPECK_K = 3;
+/** 网点白隙：面积小于白隙尺寸这么多倍的被围白块填上；空心头内腔比它大一个量级（坚固保障白隙 1 像素，内腔 25 像素起）。 */
+const GAP_K = 8;
+const DOT_PCT = 0.9;
+
+/**
+ * **按形态学去网**，就地改 `bin`，参数全从本页谱表带里统计：
+ *   1. 面积开运算：抹掉小于底纹点尺寸 `SPECK_K` 倍的墨块（阴影底纹是孤立小点；网点符头的墨点八连通成片，不受影响）；
+ *   2. 面积闭运算：填上小于白隙尺寸 `GAP_K` 倍的被围白块（网点符头、符杠里的白隙）——空心头的内腔大得多，留下；
+ *   3. 闭运算：结构元半径按白隙边长取，补上碰着外面、面积闭运算够不着的白隙（网点谱线、头的毛边）。
+ */
+export function descreenMorph(bin: Binary, inBand: (y: number) => boolean = () => true): void {
+  const inkDots = components(bin, 1, 8, (n) => n <= DOT_SCAN).filter((b) => inBand((b.y0 + b.y1) / 2)).map((b) => b.px.length);
+  areaOpen(bin, Math.max(2, quantile(inkDots, DOT_PCT) * SPECK_K));
+  const gaps = components(bin, 0, 4, (n) => n <= DOT_SCAN).filter((b) => !b.edge && inBand((b.y0 + b.y1) / 2)).map((b) => b.px.length);
+  const gap = Math.max(1, quantile(gaps, DOT_PCT));
+  areaClose(bin, gap * GAP_K);
+  close(bin, Math.max(1, Math.round(Math.sqrt(gap))));
 }

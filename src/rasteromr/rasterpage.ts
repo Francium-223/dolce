@@ -22,7 +22,7 @@
 // 过半就是翻了，整幅取反。
 import type { Binary } from "../omr/types";
 import { applyTrackWarp, completeStaffLines, trackCurves } from "./dewarp";
-import { descreen, dropSpecks, fillPinholes, halftoneRatio, pinholeRatio, HALFTONE_BAND, HALFTONE_RATIO, PINHOLE_RATIO } from "./descreen";
+import { descreenMorph, dropSpecks, fillPinholes, halftoneRatio, pinholeRatio, HALFTONE_BAND, HALFTONE_RATIO, PINHOLE_RATIO } from "./descreen";
 import { estimateUnit, findStaffLines, groupStaves } from "./staffline";
 
 /** 一页取到的位图，连同它在页面坐标里的位置（识别坐标 ↔ 页面坐标要用）。 */
@@ -199,7 +199,7 @@ function cleanTexture(bin: Binary, allowDescreen: boolean): number | null {
   const inBand = (y: number) =>
     groups.some((g) => y > g.lines[0].y - g.space * HALFTONE_BAND && y < g.lines[4].y + g.space * HALFTONE_BAND);
   const halftone = halftoneRatio(bin, inBand);
-  if (halftone > HALFTONE_RATIO && allowDescreen) descreen(bin, space);
+  if (halftone > HALFTONE_RATIO && allowDescreen) descreenMorph(bin, inBand);
   // 网纹填充（符头、谱号里是细交叉网纹）不走去网，只补针孔（`fillPinholes`）
   else if (pinholeRatio(bin, inBand) > PINHOLE_RATIO) fillPinholes(bin);
   // **网点水印**：浅灰的底纹二值化后是满页的单像素孤点，把歌词行之间的空当填满，

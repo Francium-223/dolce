@@ -110,9 +110,17 @@ export interface RasterPageResult {
   debugGroups?: { top: number; bottom: number; space: number }[];
   debugRest?: Binary;
   carryTime?: { beats: number; beatType: number };
+  /** 这一页最后生效的调号（记号种类与个数）——下一页拿它当 `opts.carryKey`（见 `extendKeyByCarry`）。 */
+  carryKey?: CarryKey;
 }
 
-const empty = (page: SPage, raster: RasterPage | null, unit: RasterUnit | null, carryTime?: { beats: number; beatType: number }): RasterPageResult => ({
+/** 跨页沿用的调号：记号种类与个数。 */
+export interface CarryKey {
+  code: string;
+  n: number;
+}
+
+const empty = (page: SPage, raster: RasterPage | null, unit: RasterUnit | null, carryTime?: { beats: number; beatType: number }, carryKey?: CarryKey): RasterPageResult => ({
   page,
   hasStaff: false,
   unknown: 0,
@@ -137,6 +145,7 @@ const empty = (page: SPage, raster: RasterPage | null, unit: RasterUnit | null, 
   staffLabels: new Map(),
   lyricStats: { rows: 0, hit: 0, parity: 0 },
   carryTime,
+  carryKey,
 });
 
 /**
@@ -619,6 +628,7 @@ export async function recognizeRasterPage(
   index: number,
   opts: {
     carryTime?: { beats: number; beatType: number };
+    carryKey?: CarryKey;
     /**
      * 歌词条的 OCR 结果，**按条的内容指纹寻址**（`stripKey`）。
      *
@@ -650,14 +660,14 @@ export async function recognizeRasterPage(
 ): Promise<RasterPageResult> {
   const raster = await rasterizePage(pdfPage, OPS);
   const blank = buildRasterPage({ index, width: raster?.bin.w ?? 1, height: raster?.bin.h ?? 1, unit: { lineThick: 1, space: 1, height: 4 }, staffLines: [], hSegs: [], vSegs: [] });
-  if (!raster) return empty(blank, null, null, opts.carryTime);
+  if (!raster) return empty(blank, null, null, opts.carryTime, opts.carryKey);
   const unit = estimateUnit(raster.bin);
-  if (!unit) return empty(blank, raster, null, opts.carryTime);
+  if (!unit) return empty(blank, raster, null, opts.carryTime, opts.carryKey);
   // 行投影找谱线；**明显不够的页面**（扫得糊、线细断）再拿逐列游程的轨迹补上
   // ——判据与推平同一道闸，见 `dewarp.ts::completeStaffLines`。
   const rowLines = findStaffLines(raster.bin);
   const { lines, groups } = completeStaffLines(raster.bin, rowLines, groupStaves(rowLines));
-  if (!groups.length) return empty(blank, raster, unit, opts.carryTime);
+  if (!groups.length) return empty(blank, raster, unit, opts.carryTime, opts.carryKey);
   // 谱线左端顺着线再往左追（弯页左段落在横带外，见 `traceLeft`）。一行谱五条线的左端
   // 本该一致，追的时候中间几条常被谱号挡住（齐来称颂第一行追到 153/209/216/193/153），
   // 取**至少两条吻合的最小左端**统一给五条线——下游一律拿五条线左端的最大值当谱行左缘。
@@ -2329,7 +2339,7 @@ export async function recognizeRasterPage(
     braces: findBraces(nl, prims, unit, staffLefts, groups.map((g) => ({ top: g.lines[0].y, bottom: g.lines[4].y }))).map((c) => c.bbox),
     sysBrackets: groupByLeftInk(raster.bin, groups.map((g) => ({ top: g.lines[0].y, bottom: g.lines[4].y, left: Math.max(...g.lines.map((l) => l.left)) })), unit),
   });
-  if (!findStaves(pg)) return empty(pg, raster, unit, opts.carryTime);
+  if (!findStaves(pg)) return empty(pg, raster, unit, opts.carryTime, opts.carryKey);
   // 读音高按该处实测的五线、相邻两线间的相对位置（`Staff.middleStep`）
   for (const stf of pg.staves) {
     if (stf.lineYs.length !== 5) continue;
@@ -2353,6 +2363,7 @@ export async function recognizeRasterPage(
   demoteMidKeys(pg, ctx);
   extendKeyChains(pg, ctx);
   shareKeySignature(ctx);
+  extendKeyByCarry(ctx, opts.carryKey);
   keyFromChords(pg, ctx, harmonies.map((h) => h.text), unit);
   fixFlatReadAsSix(harmonies, ctx);
   makeSystems(pg);
@@ -2704,6 +2715,7 @@ export async function recognizeRasterPage(
     debugGroups: opts.debug ? groups.map((g) => ({ top: g.lines[0].y, bottom: g.lines[4].y, space: g.space })) : undefined,
     debugRest: opts.debug ? blobImage(nl, prims, unit, onGrid) : undefined,
     carryTime: lastTimeSignature(pg, ctx, opts.carryTime),
+    carryKey: lastKey(pg, ctx, opts.carryKey),
   };
 }
 
@@ -3113,6 +3125,31 @@ function fixFlatReadAsSix(harmonies: HarmonyToken[], ctx: Map<Staff, StaffContex
   }
 }
 
+/**
+ * **调号跨页沿用**：续页的调号常印得淡、被去线切碎，只认出头一个（倚靠主永远膀臂第二页 4♭ 两行都只认出 1 个）。
+ * 本页认出的调号与上一页同种、个数更少的，按上一页补足个数（拿本页已认出的最后一个记号重复补——
+ * 下游只按个数算变音，记号位置取的是最右那个的右缘，重复不改它）。
+ * 本页整页没认出调号的不管（`calcAlters` 本就沿用上一行；跨页那一截另说）。
+ */
+function extendKeyByCarry(ctx: Map<Staff, StaffContext>, carry: CarryKey | undefined): void {
+  if (!carry) return;
+  for (const c of ctx.values()) {
+    if (!c.key.length || c.key.length >= carry.n) continue;
+    if (!c.key.every((k) => k.code === carry.code)) continue;
+    const last = c.key[c.key.length - 1];
+    c.key = [...c.key, ...Array.from({ length: carry.n - c.key.length }, () => last)];
+  }
+}
+
+/** 这一页最后一行认出的调号（同种记号才算），没有就沿用上一页的。 */
+function lastKey(pg: SPage, ctx: Map<Staff, StaffContext>, carry: CarryKey | undefined): CarryKey | undefined {
+  for (let i = pg.staves.length - 1; i >= 0; i--) {
+    const k = ctx.get(pg.staves[i])?.key ?? [];
+    if (k.length && k.every((q) => q.code === k[0].code) && (k[0].code === "accidentalFlat" || k[0].code === "accidentalSharp")) return { code: k[0].code, n: k.length };
+  }
+  return carry;
+}
+
 function shareKeySignature(ctx: Map<Staff, StaffContext>): void {
   const all = [...ctx.values()];
   const sigOf = (c: StaffContext) => c.key.map((k) => k.code).join(",");
@@ -3124,7 +3161,10 @@ function shareKeySignature(ctx: Map<Staff, StaffContext>): void {
   // 敬拜万世之王五行里一行认出两个降号、四行只认出头一个（第二个降号被去谱线切碎）
   const longest = all.filter((c) => c.key.length).sort((a, b) => b.key.length - a.key.length)[0];
   const others = all.filter((c) => c.key.length && c !== longest);
-  if (longest && others.length >= 2 && (!best || longest.key.length > best.key.length) && others.every((c) => c.key.every((k, i) => k.code === longest.key[i].code)))
+  // 混着两种记号的不当「最长」：行首调号不会升降混排，那是多认了一个（我灵镇静第三行低音谱表「♭♯」，
+  // 选中它后整条共享因混排作罢，另两行低音谱表的 1♭ 都没补上）
+  const pure = (c: StaffContext) => c.key.every((k) => k.code === c.key[0].code);
+  if (longest && pure(longest) && others.length >= 2 && (!best || longest.key.length > best.key.length) && others.every((c) => c.key.every((k, i) => k.code === longest.key[i].code)))
     best = longest;
   if (!best) return;
   const kind = best.key[0].code;
@@ -3132,9 +3172,13 @@ function shareKeySignature(ctx: Map<Staff, StaffContext>): void {
   // 串里混着**还原号**的也照补：行首谱号后面的调号不会有还原号（取消记号印在转调前的小节线处），
   // 那是粘连的升降号认岔了——万福泉源歌第一行三个降号挤在一起，前两个连成一块读成还原号，
   // 这一行（也就是整首高音声部）只剩一个降号
-  for (const c of all)
+  for (const c of all) {
     if (c.key.length <= best.key.length && c.key.every((k) => k.code === kind || k.code === "accidentalNatural") && c.key.filter((k) => k.code === kind).length < best.key.length)
       c.key = best.key;
+    // 前面几个与共享的那串一致、后面跟着异种记号的：后面那几个是多认的
+    else if (c.key.length > best.key.length && best.key.every((_, i) => c.key[i]?.code === kind) && c.key.slice(best.key.length).every((k) => k.code !== kind))
+      c.key = best.key;
+  }
 }
 
 /** 两个盒的交叠占 `a` 的比例。 */

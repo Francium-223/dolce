@@ -604,6 +604,8 @@ const FLAG_HEAD_BAND = 2.5;
 const FLAG_GAP = 2.8;
 /** 头盒中心离整音级这么多（级）以上算悬着，交模板定夺。 */
 const SNAP_AMBIG = 0.25;
+/** 离最近谱表外线超过这么多格的符头要有加线链才留。扫过 **3.75** / 4.25 / 4.75：93.47 / 93.32 / 93.23%。 */
+const FAR_HEAD = 3.75;
 /** 墨柱补干：从头心算起伸出去的长度（格），同 `notehead.ts::INK_STEM`。 */
 const INK_STEM_REACH = [2.5, 7] as const;
 
@@ -2234,6 +2236,48 @@ export async function recognizeRasterPage(
     }
   }
 
+  // ── 离谱表太远、又没有加线链的符头不要 ───────────────────────────────────
+  //
+  // 大字本的歌词夹在两行谱之间，字的横笔被当成加线、一笔收成符头，读成高音谱表下方的 C3、B♭2
+  //（所信有根基一首多出十几个）。44 首独唱谱 GT 里高音谱表上下、低音谱表上方最多 3 条加线，
+  // 低音谱表下方 4 条；离最近谱表外线超过 `FAR_HEAD` 格的头，要从外线到头之间**每隔一格都有一条横墨**
+  //（横跨头心左右各半格、够 0.9 格长）才留——合唱谱钢琴行真有五六条加线的音，加线链是全的。
+  // 1-bit 扫描件（`gray1`）不做：破碎扫描件一页丢七十九个（音符 +0.1），但挂词锚点连锁变，歌词 −2.6。
+  if (raster.kind !== "gray1") {
+    const sp = unit.space;
+    for (let i = syms.length - 1; i >= 0; i--) {
+      if (!/^notehead/.test(syms[i].code)) continue;
+      const cy = syms[i].box.y + syms[i].box.h / 2;
+      let g0 = groups[0];
+      let d = Infinity;
+      for (const g of groups) {
+        const dd = Math.max(0, g.lines[0].y - cy, cy - g.lines[4].y);
+        if (dd < d) (d = dd), (g0 = g);
+      }
+      if (d <= sp * FAR_HEAD) continue;
+      // 加线链：谱表外线到头之间每隔一格（上下容 0.3 格）一条横墨，头心左右各 0.5 格里够 0.9 格长
+      const b = syms[i].box;
+      const cx = b.x + b.w / 2;
+      const dir = cy < g0.lines[0].y ? -1 : 1;
+      const edgeY = dir < 0 ? g0.lines[0].y : g0.lines[4].y;
+      let chain = true;
+      for (let k = 1; k * sp < d - sp * 0.25; k++) {
+        const ly = edgeY + dir * k * sp;
+        let ok = false;
+        for (let y = Math.round(ly - sp * 0.3); y <= Math.round(ly + sp * 0.3) && !ok; y++) {
+          if (y < 0 || y >= raster.bin.h) continue;
+          let run = 0;
+          for (let x = Math.round(cx - sp * 0.5); x <= Math.round(cx + sp * 0.5); x++) if (x >= 0 && x < raster.bin.w && raster.bin.data[y * raster.bin.w + x]) run++;
+          ok = run >= sp * 0.9;
+        }
+        if (!ok) {
+          chain = false;
+          break;
+        }
+      }
+      if (!chain) syms.splice(i, 1);
+    }
+  }
   const headBoxes = syms.filter((s0) => /notehead/i.test(s0.code)).map((s0) => ({ box: s0.box }));
 
   const pg = buildRasterPage({

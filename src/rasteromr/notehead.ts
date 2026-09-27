@@ -808,6 +808,83 @@ export function hollowHeadsByPitch(
   return out;
 }
 
+// ── 空心头：**沿着已挂了空心头的干**按音高位置配模板 ─────────────────────────
+//
+// 和弦里夹在干中段的空心头（恩友歌 m2 的 D5/B♭4「8」字叠头，下面的 F4 认出来了），内腔被谱线切成两个小三角，
+// 够不上内腔的尺寸；干底端挂着 F4，也不是光杆干。Audiveris 找符头时借竖直种子（符干）在合适的位置评估候选，
+// 这里照做：干上已有空心头的，从那个头往自由端方向、到自由端往回 `ALONG_FREE` 格为止——或者干在头上方断开的，
+// 在断口与头之间（干被叠头的圈切断）——逐个音高位置拿本页空心模板打分，头心横坐标照那个头，
+// 墨占比（跳过谱线行）要像空心头、内腔佐证要够。
+// 独唱谱音符 93.55 → 93.73%、时值 91.45 → 91.62%（流血歌伴奏 +4.1，恩友歌、称谢歌、当我们回到天家各 +0.4~0.6），无一首掉；合唱谱不动。
+
+/** 自由端最后这么多格是干本身，不找头。 */
+const ALONG_FREE = 2.5;
+/** 干的近端离头心不过这么多格，算干断在两者之间（中间夹着没认出的头）。 */
+const ALONG_GAP = 3.5;
+/** 模板分、头盒墨占比（跳过谱线行）、内腔佐证的门槛。内腔那条分得开「两个头相接的中间位置」（恩友歌 0.19，
+ *  两个真头心 0.55 / 0.42）——那里墨占比与真头心一样是 0.5。扫过模板 0.25 / **0.3** / 0.35、墨下限 **0.35** / 0.4、
+ *  内腔 0.3 / **0.35** / 0.45：93.70 / 93.73 / 93.71、93.73 / 93.71、93.70 / 93.73 / 93.64%。 */
+const ALONG_SCORE = 0.3;
+const ALONG_INK = [0.35, 0.8] as const;
+const ALONG_CAVITY = 0.35;
+
+export function hollowHeadsAlongStems(
+  bin: Binary,
+  nl: Binary,
+  rawHoles: Rect[],
+  allMasks: HeadMask[],
+  unit: RasterUnit,
+  stepsIn: (y0: number, y1: number) => PitchStep[],
+  stems: LineSeg[],
+  heads: { box: Rect; code: string }[],
+): { box: Rect; code: SmuflName; weak?: boolean }[] {
+  const sp = unit.space;
+  const { best: best0, clash, inkIn, cavity } = pitchScorer(bin, nl, rawHoles, allMasks, unit, stems);
+  // 本页一张空心模板都凑不出时（空心头太少），只按墨判
+  const best = (st: PitchStep, xa: number, xb: number) => (allMasks.length ? best0(st, xa, xb) : { x: Math.round((xa + xb) / 2), s: 1 });
+  const tol = Math.max(unit.lineThick * 2, sp * 0.25);
+  const out: { box: Rect; code: SmuflName; weak?: boolean }[] = [];
+  const taken = heads.map((h) => h.box);
+  const cyOf = (h: { box: Rect }) => h.box.y + h.box.h / 2;
+  const ranges: { ref: { box: Rect }; y0: number; y1: number }[] = [];
+  for (const v of stems) {
+    const vx = (v.x0 + v.x1) / 2;
+    const top = Math.min(v.y0, v.y1);
+    const bot = Math.max(v.y0, v.y1);
+    if (bot - top < sp * 1.5) continue;
+    for (const h of heads) {
+      if (h.code !== "noteheadHalf" || (Math.abs(h.box.x + h.box.w - vx) > tol && Math.abs(h.box.x - vx) > tol)) continue;
+      const hy = cyOf(h);
+      if (hy >= top - sp * 0.5 && hy <= bot + sp * 0.5) {
+        // 头挂在干的一端：往另一端（自由端）找，到自由端往回 ALONG_FREE 格为止
+        if (bot - top < sp * (ALONG_FREE + 1)) continue;
+        if (Math.abs(bot - hy) <= Math.abs(top - hy)) ranges.push({ ref: h, y0: top + sp * ALONG_FREE, y1: hy - sp * 0.75 });
+        else ranges.push({ ref: h, y0: hy + sp * 0.75, y1: bot - sp * ALONG_FREE });
+      } else if (hy > bot && hy - bot <= sp * ALONG_GAP) {
+        // 干断在头上方：中间夹着没认出的和弦头（干被叠头的圈切断）
+        ranges.push({ ref: h, y0: bot - sp * 0.3, y1: hy - sp * 0.75 });
+      } else if (hy < top && top - hy <= sp * ALONG_GAP) {
+        ranges.push({ ref: h, y0: hy + sp * 0.75, y1: top + sp * 0.3 });
+      }
+    }
+  }
+  for (const { ref, y0, y1 } of ranges) {
+    if (y1 <= y0) continue;
+    const cx = ref.box.x + ref.box.w / 2;
+    for (const st of stepsIn(y0, y1)) {
+      const b = best(st, cx - sp * 0.15, cx + sp * 0.15);
+      if (!b) continue;
+      const ink = inkIn(b.x, st.y, ref.box.w);
+      if (b.s < ALONG_SCORE || ink < ALONG_INK[0] || ink > ALONG_INK[1] || cavity(b.x, st.y) < ALONG_CAVITY) continue;
+      const box: Rect = { x: Math.round(b.x - ref.box.w / 2), y: Math.round(st.y - ref.box.h / 2), w: ref.box.w, h: ref.box.h };
+      if (clash(box, taken)) continue;
+      out.push({ box, code: "noteheadHalf", weak: true });
+      taken.push(box);
+    }
+  }
+  return out;
+}
+
 // ── 空心头：**沿加线按音高位置配模板** ──────────────────────────────────────
 //
 // 谱表外骑着加线的斜缝空心头（赞美三一真神末三小节：C4、C4/A3、C4/G3、D4/C4 二度错排），

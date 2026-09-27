@@ -19,7 +19,7 @@ import type { SPage, Staff, Sym, Tag } from "../staffomr/model";
 import { overlapY } from "../staffomr/model";
 import { buildRasterPage, makeSymObj, makeTextObj, type RasterSym } from "./adapt";
 import { binSig, blobImage, extendVSegs, findBlobs, findBraces, findPrimitives, groupByLeftInk, ledgerGrid, joinVSegs, removeStaffLines, verticalStrokes, type BeamQuad, type LineSeg, type RasterPrims } from "./prims";
-import { findRasterHeads, hollowHeadsByPitch, headsOnBareStems, probeBareStems, hollowHeadsFromCavities, hollowHeadsFromHoles, hollowHeadsOnLedgers, inkColumn, judgeHeadBox, mergeHoles, type PitchStep } from "./notehead";
+import { findRasterHeads, hollowHeadsByPitch, headsOnBareStems, probeBareStems, hollowHeadsFromCavities, hollowHeadsAlongStems, hollowHeadsFromHoles, hollowHeadsOnLedgers, inkColumn, judgeHeadBox, mergeHoles, type PitchStep } from "./notehead";
 import { bootstrapClefs, matchTemplate, RasterGlyphLookup, type BootStaff } from "./rasterglyphs";
 import { sigDistance } from "../omr/glyphdict";
 import { completeStaffBars, cutJianpuStrip, eraseInBand, findJianpuBands, jianpuKey, type JianpuStrip } from "./jianpuband";
@@ -2197,6 +2197,16 @@ export async function recognizeRasterPage(
   // 在上下两个候选位置各拿本页自举的空心模板打分（骑线/在间分开），取高的，头盒挪过去。
   // **只对空心头**：实心头也做，独唱谱音符 −0.19（悬着的实心头多是被符杠、干根拉偏的，模板窗口里压着同样的东西）；
   // 空心头 +0.12。
+  // ── 沿着已挂了空心头的干补和弦里漏掉的空心头（`notehead.ts::hollowHeadsAlongStems`）──
+  // 模板按**此刻**认出的空心头重建（含弱头、两个就够）：早先那份样本不够时一张都没有（恩友歌第一页），
+  // 一张也凑不出就只按墨占比与内腔佐证判。
+  {
+    const alongMasks = buildHollowMasks(raster.bin, syms, unit, lineYs, 2);
+    for (const f of hollowHeadsAlongStems(raster.bin, nl, rawHoles, alongMasks, unit, makePitchSteps(groups), [...prims.vSegs, ...inkStems], syms)) {
+      syms.push(f);
+      ledger.claim(f.box, "along:noteheadHalf");
+    }
+  }
   if (hollowMasks.length) {
     const sp = unit.space;
     for (const s0 of syms) {

@@ -2108,7 +2108,7 @@ export async function recognizeRasterPage(
   // 《善牧恩慈歌》线距 11px，附点只有 3px。两首的附点二分、附点四分一个都没认出来。
   // 附点的位置是死的：符头右边一格之内、同一个间（线上的音写在上方那个间）。
   // 在去谱线图上找那个窗口里**孤立、近圆的小墨团**，找到就补一个附点，时值交给 `attachDots`。
-  for (const d of findDots(nl, syms, unit)) {
+  for (const d of findDots(nl, syms, unit, (y) => gridYs.some((ly) => Math.abs(ly - y) <= unit.lineThick))) {
     syms.push({ box: d, code: "augmentationDot" });
     ledger.claim(d, "dot:augmentationDot");
   }
@@ -3459,7 +3459,9 @@ function midOfStaff(box: { y: number; h: number }, lines: { y: number }[], unit:
 /** 附点窗口往下探多少格：线上的音附点写在上方的间，可和弦里上方那个间被别的音的点占了时写在下方（《恩友歌》G4）。 */
 const DOT_BELOW = 0.35;
 
-function findDots(bin: Binary, syms: RasterSym[], unit: RasterUnit): Rect[] {
+/** `onLine`：这一行像素在谱线上（去线后残渣所在）。连通照走，但不计入点的盒、也不算伸出窗口
+ *  ——贴着谱线的附点在去线图上常连着一截残渣，盒高超限或伸出窗口就整个丢了（我灵镇静 m3 的附点四分）。 */
+function findDots(bin: Binary, syms: RasterSym[], unit: RasterUnit, onLine: (y: number) => boolean = () => false): Rect[] {
   const sp = unit.space;
   const out: Rect[] = [];
   const heads = syms.filter((s0) => /^notehead/.test(s0.code));
@@ -3476,24 +3478,31 @@ function findDots(bin: Binary, syms: RasterSym[], unit: RasterUnit): Rect[] {
     for (let y = y0; y < y1; y++)
       for (let x = x0; x < x1; x++) {
         if (seen[(y - y0) * W + (x - x0)] || !bin.data[y * bin.w + x]) continue;
-        let minX = x, maxX = x, minY = y, maxY = y, area = 0, edge = false;
+        // 两套盒：`a` 全部像素、`b` 不算谱线行的像素（见 `onLine`）。先按 `a` 判，不过再按 `b`
+        const a = { minX: Infinity, maxX: -Infinity, minY: Infinity, maxY: -Infinity, area: 0, edge: false };
+        const b = { ...a };
+        const grow = (q: typeof a, px: number, py: number) => {
+          q.area++;
+          q.minX = Math.min(q.minX, px);
+          q.maxX = Math.max(q.maxX, px);
+          q.minY = Math.min(q.minY, py);
+          q.maxY = Math.max(q.maxY, py);
+        };
         seen[(y - y0) * W + (x - x0)] = 1;
         stack.push(x, y);
         while (stack.length) {
           const py = stack.pop()!;
           const px = stack.pop()!;
-          area++;
-          if (px < minX) minX = px;
-          if (px > maxX) maxX = px;
-          if (py < minY) minY = py;
-          if (py > maxY) maxY = py;
+          grow(a, px, py);
+          if (!onLine(py)) grow(b, px, py);
           for (let dy = -1; dy <= 1; dy++)
             for (let dx = -1; dx <= 1; dx++) {
               const nx = px + dx;
               const ny = py + dy;
               if (nx < 0 || ny < 0 || nx >= bin.w || ny >= bin.h || !bin.data[ny * bin.w + nx]) continue;
               if (nx < x0 || ny < y0 || nx >= x1 || ny >= y1) {
-                edge = true;
+                a.edge = true;
+                if (!onLine(ny)) b.edge = true;
                 continue;
               }
               const j = (ny - y0) * W + (nx - x0);
@@ -3502,13 +3511,19 @@ function findDots(bin: Binary, syms: RasterSym[], unit: RasterUnit): Rect[] {
               stack.push(nx, ny);
             }
         }
-        const w = maxX - minX + 1;
-        const h = maxY - minY + 1;
-        if (DB) console.error("  blob", minX, minY, w, h, area, "edge", edge);
-        if (edge) continue;
-        if (w < Math.max(2, sp * 0.15) || h < Math.max(2, sp * 0.15) || w > sp * 0.6 || h > sp * 0.6) continue;
-        if (w / h < 0.6 || w / h > 1.7 || area < w * h * 0.5) continue;
-        found.push({ x: minX, y: minY, w, h });
+        // 去线那一套要够大（0.3 格）：符尾尖、干根贴着谱线的碎渣去掉线行只剩三四个像素，像个小点
+        const dotOk = (q: typeof a, min: number) => {
+          if (!q.area || q.edge) return false;
+          const w = q.maxX - q.minX + 1;
+          const h = q.maxY - q.minY + 1;
+          if (w < Math.max(2, sp * min) || h < Math.max(2, sp * min) || w > sp * 0.6 || h > sp * 0.6) return false;
+          return w / h >= 0.6 && w / h <= 1.7 && q.area >= w * h * 0.5;
+        };
+        const q = dotOk(a, 0.15) ? a : dotOk(b, 0.3) ? b : null;
+        if (!q) continue;
+        const w = q.maxX - q.minX + 1;
+        const h = q.maxY - q.minY + 1;
+        found.push({ x: q.minX, y: q.minY, w, h });
       }
     return found;
   };
@@ -3531,17 +3546,12 @@ function findDots(bin: Binary, syms: RasterSym[], unit: RasterUnit): Rect[] {
     const r = rightOf(b);
     return cx > r + sp * 0.05 && cx < r + sp * 1.3 && cy > hy - sp * 0.85 && cy < hy + sp * DOT_BELOW;
   };
-  const DBR = process.env.DBGR?.split(",").map(Number);
-  let DB = false;
   for (const hd of heads) {
     const b = hd.box;
     const cy = b.y + b.h / 2;
     const r = rightOf(b);
-    DB = !!DBR && b.x < DBR[0] + DBR[2] && b.x + b.w > DBR[0] && b.y < DBR[1] + DBR[3] && b.y + b.h > DBR[1];
-    if (DB) console.error("DOTHEAD", hd.code, JSON.stringify(b), "r", r, "sp", sp);
     for (const d of blobsIn(r + sp * 0.05, cy - sp * 0.85, r + sp * 1.3, cy + sp * DOT_BELOW)) {
       if (out.some((o) => overlapFrac(o, d) > 0)) continue;
-      if (DB) console.error("  cand", JSON.stringify(d), "covered", syms.filter((s0) => overlapFrac(d, s0.box) > 0.3).map((s0) => s0.code).join(","));
       if (syms.some((s0) => overlapFrac(d, s0.box) > 0.3)) continue;
       // 反复记号的两点：同一列上下一格处还有一个点。
       // 但**和弦的附点**也是这样上下一格排着：另一个点若落在同列**另一个头**的附点窗口里，

@@ -219,7 +219,11 @@ function bootstrapFlags(bin: Binary, pg: SPage, beams: BeamQuad[], unit: RasterU
     // 干尖**落在谱线上**的也往里找（最多半格）：干冒过钩的起点、顶到线上（万福泉源歌低分辨率本，
     // 钩从干尖下半格才长出来，尖端窗口只罩到一角，八分和弦整批读成四分）
     const onLineTip = lineYs.some((ly) => Math.abs(ly - far) <= unit.lineThick * 1.5 + 1);
-    const reach = unit.lineThick > sp * FLAG_REACH_LW ? Math.min(sp * 0.5, unit.lineThick * 3) : onLineTip ? sp * 0.5 : 0;
+    // 细线页干尖没顶在线上的，也往里找半格（干冒过钩的起点 7 像素：颂赞与尊贵整页单尾八分读成四分），
+    // 但窗口不能碰到头（离头心留 0.6 格）：短干上往里挪，窗口罩到干旁边的头本身（晨曦破晓 m6）
+    const reach = unit.lineThick > sp * FLAG_REACH_LW
+      ? Math.min(sp * 0.5, unit.lineThick * 3)
+      : onLineTip ? sp * 0.5 : Math.max(0, Math.min(sp * 0.5, Math.abs(hy - far) - sp * (0.6 + FLAG_TIP_Y)));
     while (frac(offset, offset + FLAG_TIP_Y) < FLAG_TIP && offset * sp < reach) offset += 1 / sp;
     if (frac(offset, offset + FLAG_TIP_Y) < FLAG_TIP || frac(offset, offset + FLAG_Y) < FLAG_INK) continue;
     if (frac(offset, offset + FLAG_TIP_Y, -1) >= FLAG_LEFT) continue;

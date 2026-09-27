@@ -369,6 +369,15 @@ const CHORD_SCORE_STACKED = 0.35;
 const STACKED_CORE = 0.9;
 /** 贴串放宽只给够高的块（两个头加一截干）：扫描件上 1.3~2 格的小块也凑得出「两行满头宽」（望十架多收假头）。 */
 const STACKED_H = 3;
+/** 头正长在块端（`edgeAt`）那一档：模板分门槛、头心离「块边往里半个头高」的容差（格）、另一端干尖的行宽上限（头宽的倍数）。
+ *  病例：这套字形的八分符尾从干底弯回来贴着头（主我敬拜你、颂赞与尊贵），头下方不白，模板只打到 0.34~0.39。 */
+const EDGE_SCORE = 0.3;
+const EDGE_TOL = 0.25;
+const EDGE_TIP = 0.6;
+/** 头那一行的墨宽下限（贴串那档满头宽的倍数）：主我敬拜你的头窄，16px 对 1.25 格头宽 18px。 */
+const EDGE_ROW = 0.9;
+// 块高下限同 `STACKED_H`：不限时歌词字「盡」（2.0×2.4 格，下面一横宽、上面一竖窄，0.31 分）被收成头（齐来称颂）；
+// 限宽（≤1.6 格）挡不住它又挡掉耶和华、恩友歌与扫描件上 1.6~3 格高的真头，干长（从头往干尖的竖墨）也分不开（都 1.1~1.4 格）。
 
 /**
  * 从「**符头 + 符干（+ 符尾）并成一块**」的块里把符头摘出来。
@@ -432,6 +441,16 @@ export function headFromStemBlock(
     }
     return false;
   };
+  /** 头正长在块的一端（头心离块边半个头高、那一行墨满一个头宽），另一端只剩干尖：门槛放到 `EDGE_SCORE`。 */
+  let bestEdge: { x: number; y: number; s: number } | null = null;
+  const hh0 = sp * 0.95;
+  const edgeAt = (y: number): boolean => {
+    const top = Math.abs(y - (box.y + hh0 / 2)) <= sp * EDGE_TOL;
+    const bot = Math.abs(y - (box.y + box.h - hh0 / 2)) <= sp * EDGE_TOL;
+    if (!top && !bot) return false;
+    const tip = top ? box.y + box.h - 1 - sp * 0.3 : box.y + sp * 0.3;
+    return rowSpan(bin, box, y) >= hwFull * EDGE_ROW && rowSpan(bin, box, tip) <= hwFull * EDGE_TIP;
+  };
   const step = Math.max(1, Math.round(sp * 0.15));
   for (const [ya, yb] of bands)
     for (let x = box.x; x <= box.x + box.w; x += step) {
@@ -445,9 +464,11 @@ export function headFromStemBlock(
         const s = scoreAt(bin, m, x, y);
         if (s >= (m.pooled ? STEM_SCORE_MIN_POOLED : STEM_SCORE_MIN) && (!best || s > best.s)) best = { x, y, s };
         else if (s >= CHORD_SCORE_STACKED && (!bestStacked || s > bestStacked.s) && stackedAt(x, y)) bestStacked = { x, y, s };
+        else if (s >= EDGE_SCORE && (!bestEdge || s > bestEdge.s) && edgeAt(y)) bestEdge = { x, y, s };
       }
     }
   if (!best && !long && h >= STACKED_H) best = bestStacked;
+  if (!best && !long && h >= STACKED_H) best = bestEdge;
   if (!best) return twoStemHead(bin, box, masks, sp, step, grid, onLine);
   if (long) {
     // 头不一定在端上：两个声部共用一根竖线（上声部的干往上、下声部的往下），头都在中段。
@@ -545,27 +566,9 @@ function twoStemHead(
   const hh = Math.round(sp * 0.95);
   const mid = bandTop(bin, masks, box, sp, step, grid, onLine, [box.y + sp * END_BAND, box.y + box.h - sp * END_BAND], () => true, (y) => rowSpan(bin, box, y) >= hw * 0.7);
   if (!mid) return null;
-  const ink = (x: number, y: number) => x >= box.x && x < box.x + box.w && y >= box.y && y < box.y + box.h && bin.data[y * bin.w + x] === 1;
-  /** 从 y0 起往 dir 方向，块里最长的一段竖墨（行数；干略斜，逐行可左右挪一列；断口 ≤2 行）。 */
-  const reach = (y0: number, dir: number): number => {
-    let most = 0;
-    for (let x0 = box.x; x0 < box.x + box.w; x0++) {
-      if (!ink(x0, Math.round(y0))) continue;
-      let last = 0;
-      for (let x = x0, y = Math.round(y0), n = 0, miss = 0; miss <= 2 && y >= box.y && y < box.y + box.h; y += dir, n++) {
-        if (ink(x, y)) miss = 0;
-        else if (ink(x - 1, y)) (x--, (miss = 0));
-        else if (ink(x + 1, y)) (x++, (miss = 0));
-        else { miss++; continue; }
-        last = n + 1;
-      }
-      most = Math.max(most, last);
-    }
-    return most;
-  };
   const top = mid.y - hh / 2;
   const bot = mid.y + hh / 2;
-  if (reach(top, -1) < sp * TWO_STEM_REACH || reach(bot, 1) < sp * TWO_STEM_REACH) return null;
+  if (inkReach(bin, box, top, -1) < sp * TWO_STEM_REACH || inkReach(bin, box, bot, 1) < sp * TWO_STEM_REACH) return null;
   return {
     head: { x: Math.round(mid.x - hw / 2), y: Math.round(top), w: hw, h: hh },
     extra: [],
@@ -573,6 +576,28 @@ function twoStemHead(
     stemY0: box.y,
     stemY1: mid.y,
   };
+}
+
+/** 从 y0 那一行起往 dir 方向，块里最长的一段竖墨（行数；干略斜，逐行可左右挪一列；断口 ≤2 行）。 */
+function inkReach(bin: Binary, box: Rect, y0: number, dir: number): number {
+  const ink = (x: number, y: number) => x >= box.x && x < box.x + box.w && y >= box.y && y < box.y + box.h && bin.data[y * bin.w + x] === 1;
+  let most = 0;
+  for (let x0 = box.x; x0 < box.x + box.w; x0++) {
+    if (!ink(x0, Math.round(y0))) continue;
+    let last = 0;
+    for (let x = x0, y = Math.round(y0), n = 0, miss = 0; miss <= 2 && y >= box.y && y < box.y + box.h; y += dir, n++) {
+      if (ink(x, y)) miss = 0;
+      else if (ink(x - 1, y)) (x--, (miss = 0));
+      else if (ink(x + 1, y)) (x++, (miss = 0));
+      else {
+        miss++;
+        continue;
+      }
+      last = n + 1;
+    }
+    most = Math.max(most, last);
+  }
+  return most;
 }
 
 /** 二度错开在干另一侧的头要的得分。我灵镇静实测：真二度 0.42~0.49，镜像过去落空的 ≤0.03。 */

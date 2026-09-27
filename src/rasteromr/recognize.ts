@@ -216,7 +216,10 @@ function bootstrapFlags(bin: Binary, pg: SPage, beams: BeamQuad[], unit: RasterU
     // 整窗墨占比也按连接点量，不在这之前按尖端先筛一道：干伸出符尾半格的，按尖端量窗口只罩到钩尾一角
     //（《向主唱新歌》下声部的八分 B3 读成四分，后面的休止整排错拍）。
     let offset = 0;
-    const reach = unit.lineThick > sp * FLAG_REACH_LW ? Math.min(sp * 0.5, unit.lineThick * 3) : 0;
+    // 干尖**落在谱线上**的也往里找（最多半格）：干冒过钩的起点、顶到线上（万福泉源歌低分辨率本，
+    // 钩从干尖下半格才长出来，尖端窗口只罩到一角，八分和弦整批读成四分）
+    const onLineTip = lineYs.some((ly) => Math.abs(ly - far) <= unit.lineThick * 1.5 + 1);
+    const reach = unit.lineThick > sp * FLAG_REACH_LW ? Math.min(sp * 0.5, unit.lineThick * 3) : onLineTip ? sp * 0.5 : 0;
     while (frac(offset, offset + FLAG_TIP_Y) < FLAG_TIP && offset * sp < reach) offset += 1 / sp;
     if (frac(offset, offset + FLAG_TIP_Y) < FLAG_TIP || frac(offset, offset + FLAG_Y) < FLAG_INK) continue;
     if (frac(offset, offset + FLAG_TIP_Y, -1) >= FLAG_LEFT) continue;

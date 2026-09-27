@@ -1165,3 +1165,91 @@ export function headsOnBareStems(
   }
   return out;
 }
+
+/** 斜缝至少这么长（线距的倍数，取外接盒的长边）。 */
+const SLIT_LEN = 0.45;
+/** 斜缝至少这么大（线距平方的倍数）。 */
+const SLIT_AREA = 0.06;
+/** 刨掉斜缝之后，头的内切椭圆里墨密度不超过这么多。 */
+const SLIT_DENS = 0.88;
+/** 斜缝重心离盒心最多这么远（盒宽、盒高的倍数）。 */
+const SLIT_OFF = 0.2;
+
+/**
+ * **实心头盒里藏着空心头的内腔**：在去谱线**之前**的图上，盒里被墨围住的最大一块白够长、够大，
+ * 而且刨掉它之后内切椭圆里的墨并不满——就是空心头。
+ *
+ * 为什么要第二条：网点印的实心头（万口欢唱、信心使我得胜、当我们回到天家）墨里满是白点，
+ * 按 4 连通也能连成一条 0.4~0.5 格的长链，长度、面积、「内部像素」都与骑线空心头的斜缝重叠；
+ * 可网点链之外的墨是满的（刨掉后密度 0.94~1.0），空心头除了那道缝，圈的外缘与另半截缝（被谱线切开）
+ * 还留着白（0.76~0.83）。
+ */
+export function hollowSlit(bin: Binary, b: Rect, sp: number): boolean {
+  const W = b.w + 2;
+  const H = b.h + 2;
+  const ink = (x: number, y: number) => {
+    const X = b.x - 1 + x;
+    const Y = b.y - 1 + y;
+    return X >= 0 && Y >= 0 && X < bin.w && Y < bin.h && !!bin.data[Y * bin.w + X];
+  };
+  // 先从盒外一圈灌白：碰得到盒边的白都不是内腔
+  const seen = new Uint8Array(W * H);
+  const st: number[] = [];
+  const seed = (x: number, y: number) => {
+    const i = y * W + x;
+    if (!seen[i] && !ink(x, y)) {
+      seen[i] = 1;
+      st.push(i);
+    }
+  };
+  const flood = (): [number, number, number, number] => {
+    let n = 0;
+    let sx = 0;
+    let sy = 0;
+    let x0 = W, x1 = -1, y0 = H, y1 = -1;
+    while (st.length) {
+      const i = st.pop()!;
+      const x = i % W;
+      const y = (i / W) | 0;
+      n++;
+      sx += x;
+      sy += y;
+      x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+      if (x > 0) seed(x - 1, y);
+      if (x < W - 1) seed(x + 1, y);
+      if (y > 0) seed(x, y - 1);
+      if (y < H - 1) seed(x, y + 1);
+    }
+    return [n, Math.max(x1 - x0 + 1, y1 - y0 + 1), sx / Math.max(1, n), sy / Math.max(1, n)];
+  };
+  for (let x = 0; x < W; x++) { seed(x, 0); seed(x, H - 1); }
+  for (let y = 0; y < H; y++) { seed(0, y); seed(W - 1, y); }
+  flood();
+  let best = 0;
+  let bestLen = 0;
+  let cx = 0;
+  let cy = 0;
+  for (let y = 1; y < H - 1; y++)
+    for (let x = 1; x < W - 1; x++) {
+      if (seen[y * W + x] || ink(x, y)) continue;
+      seed(x, y);
+      const [n, len, mx, my] = flood();
+      if (n > best) { best = n; bestLen = len; cx = mx; cy = my; }
+    }
+  if (bestLen < sp * SLIT_LEN || best < sp * sp * SLIT_AREA) return false;
+  // 内腔在头的正中（重心离盒心不过盒宽高的 `SLIT_OFF`）：升号中间那个方孔、字里的「口」都偏在一边
+  if (Math.abs(cx - W / 2) > b.w * SLIT_OFF || Math.abs(cy - H / 2) > b.h * SLIT_OFF) return false;
+  let inE = 0;
+  let inkE = 0;
+  const rx = b.w / 2;
+  const ry = b.h / 2;
+  for (let y = 0; y < b.h; y++)
+    for (let x = 0; x < b.w; x++) {
+      const u = (x + 0.5 - rx) / rx;
+      const v = (y + 0.5 - ry) / ry;
+      if (u * u + v * v > 1) continue;
+      inE++;
+      if (ink(x + 1, y + 1)) inkE++;
+    }
+  return inkE / Math.max(1, inE - best) <= SLIT_DENS;
+}

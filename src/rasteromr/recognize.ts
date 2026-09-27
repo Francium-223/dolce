@@ -19,7 +19,7 @@ import type { SPage, Staff, Sym, Tag } from "../staffomr/model";
 import { overlapY } from "../staffomr/model";
 import { buildRasterPage, makeSymObj, makeTextObj, type RasterSym } from "./adapt";
 import { binSig, blobImage, extendVSegs, findBlobs, findBraces, findPrimitives, groupByLeftInk, ledgerGrid, joinVSegs, removeStaffLines, verticalStrokes, type BeamQuad, type LineSeg, type RasterPrims } from "./prims";
-import { findRasterHeads, hollowHeadsByPitch, headsOnBareStems, probeBareStems, hollowHeadsFromCavities, hollowHeadsAlongStems, hollowHeadsFromHoles, hollowHeadsOnLedgers, inkColumn, judgeHeadBox, mergeHoles, type PitchStep } from "./notehead";
+import { findRasterHeads, hollowHeadsByPitch, headsOnBareStems, probeBareStems, hollowHeadsFromCavities, hollowHeadsAlongStems, hollowHeadsFromHoles, hollowHeadsOnLedgers, hollowSlit, inkColumn, judgeHeadBox, mergeHoles, type PitchStep } from "./notehead";
 import { bootstrapClefs, matchTemplate, RasterGlyphLookup, type BootStaff } from "./rasterglyphs";
 import { sigDistance } from "../omr/glyphdict";
 import { completeStaffBars, cutJianpuStrip, eraseInBand, findJianpuBands, jianpuKey, type JianpuStrip } from "./jianpuband";
@@ -2270,6 +2270,28 @@ export async function recognizeRasterPage(
         if (!best || sc > best.s) best = { y, s: sc };
       }
       if (best) s0.box = { ...s0.box, y: Math.round(s0.box.y + best.y - cy) };
+    }
+  }
+
+  // ── **实心头里藏着一道斜缝的其实是空心头** ───────────────────────────────
+  //
+  // 这套字体的二分头圈粗、内腔只是一道斜缝；骑线时谱线从缝中间横过，去谱线后缝被线残段填上，
+  // 填充率冲过实心那一档（主使我喜乐、主我敬拜你、耶和华是我的牧者一批「二分读成四分」）。
+  // 放在最后、各路剔除之后才判：早判的话，拍号「4」的三角孔、叠头拆出来的半个头都被改成空心，
+  // 下游那几道「只剔实心头」的闸（拍号盖字典、升号认回）就放过了它们（欢然颂主多出四个音）。
+  // 只改挂着干的（头缘两倍线宽内有竖段；放到 0.4 格耶和华是我的牧者 −0.6，改成空心后挂到了别的干上）；判据见 `notehead.ts::hollowSlit`。
+  {
+    const sp = unit.space;
+    const tol = Math.max(unit.lineThick * 2, sp * 0.25);
+    for (const s0 of syms) {
+      if (s0.code !== "noteheadBlack") continue;
+      const b = s0.box;
+      const cy = b.y + b.h / 2;
+      const stemmed = [...prims.vSegs, ...stemSegs, ...inkStems].some((v) => {
+        const vx = (v.x0 + v.x1) / 2;
+        return (Math.abs(vx - b.x) <= tol || Math.abs(vx - b.x - b.w) <= tol) && Math.min(v.y0, v.y1) <= cy + sp && Math.max(v.y0, v.y1) >= cy - sp;
+      });
+      if (stemmed && hollowSlit(raster.bin, b, sp)) s0.code = "noteheadHalf";
     }
   }
 

@@ -407,6 +407,11 @@ const KEY_ACCID_TEMPLATE_DIST = 100;
 
 /** 空心头按模板再搜的得分门槛。见「空心头按模板再搜」那一段。 */
 const HOLLOW_MASK_SCORE = 0.38;
+/** 叠成「8」字的两个空心头（一块一个半头宽以内、两个头高）只拆出一个时，按成对再拆的门槛与形状（格）。
+ *  万口欢唱低音 G3/E♭3 全音符：先认的下头 0.384，减掉它的墨后上头只剩 0.326。扫 0.3 / 0.25 / 0.2 读数相同。 */
+const HOLLOW_PAIR_SCORE = 0.3;
+const HOLLOW_PAIR_H = [1.6, 2.5] as const;
+const HOLLOW_PAIR_W = 2.2;
 /** 整格谱间白（见 `cellLike`）的外框里白至少占多少。 */
 const CELL_WHITE = 0.9;
 /** 开口内腔（`openCavities`）：射线窗外扩多少格、内腔至少多少格²、中心离谱表上下至多几格。 */
@@ -2064,7 +2069,12 @@ export async function recognizeRasterPage(
           }
           continue;
         }
-        const parts = splitHeadCluster(raster.bin, box, area, [hollowMask], unit, pitchGrid, onLineY, true, undefined, 1, HOLLOW_MASK_SCORE);
+        let parts = splitHeadCluster(raster.bin, box, area, [hollowMask], unit, pitchGrid, onLineY, true, undefined, 1, HOLLOW_MASK_SCORE);
+        // 叠成「8」字的一对：先认的那个把共用的那条边减掉了，另一个的分数跟着掉，按成对再拆一次（`HOLLOW_PAIR_SCORE`）
+        if (parts.length === 1 && h >= HOLLOW_PAIR_H[0] && h <= HOLLOW_PAIR_H[1] && w <= HOLLOW_PAIR_W) {
+          const p2 = splitHeadCluster(raster.bin, box, area, [hollowMask], unit, pitchGrid, onLineY, true, undefined, 2, HOLLOW_PAIR_SCORE);
+          if (p2.length === 2 && Math.abs(p2[0].y - p2[1].y) >= unit.space * 0.8 && Math.abs(p2[0].x - p2[1].x) <= unit.space * 0.3) parts = p2;
+        }
         if (!parts.length) continue;
         for (const id of group) used.add(id), merged.add(id);
         for (const pb of parts) {

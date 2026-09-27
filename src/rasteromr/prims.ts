@@ -689,6 +689,26 @@ export function findPrimitives(
     const line = centerLine(bMaskC, w, c, true);
     beams.push({ ...line, box: c.bbox });
   }
+  // **网点灰的杠被纹理横着切成上下两条**（当我们回到天家 m12：一条杠读成高 3、高 4 两条），被当成两层，
+  // 附点八分读成十六分。x 范围基本重合、上下间隙不过一个线宽、合起来不过一根杠厚（0.8 格）的并成一条
+  // 独唱谱时值 92.21 → 92.31%（当我们回到天家 +3.2），合唱谱扫描档音符 +0.11、小节自检 +0.27
+  for (let i = 0; i < beams.length; i++)
+    for (let j = beams.length - 1; j > i; j--) {
+      const a = beams[i].box;
+      const b = beams[j].box;
+      const ov = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
+      if (ov < Math.max(a.w, b.w) * 0.8) continue;
+      const gap = Math.max(a.y, b.y) - Math.min(a.y + a.h, b.y + b.h);
+      const y0 = Math.min(a.y, b.y);
+      const y1 = Math.max(a.y + a.h, b.y + b.h);
+      if (gap > Math.max(1, unit.lineThick) || y1 - y0 > unit.space * 0.8) continue;
+      const x0 = Math.min(a.x, b.x);
+      const box = { x: x0, y: y0, w: Math.max(a.x + a.w, b.x + b.w) - x0, h: y1 - y0 };
+      const A = beams[i];
+      const B = beams[j];
+      beams[i] = { ...A, y0: (A.y0 + B.y0) / 2, y1: (A.y1 + B.y1) / 2, lw: y1 - y0, maxLw: y1 - y0, box };
+      beams.splice(j, 1);
+    }
   beams.push(...partialBeams(bin, beams, unit, vSegs));
   return { hSegs, vSegs, beams };
 }

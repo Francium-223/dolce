@@ -441,6 +441,11 @@ const KEY_OVERLAP = 0.5;
 const LATIN_CHAIN = 3;
 /** 上下贴着的两个头（`isStackedPair`）拆分时每个头的得分门槛。 */
 const PAIR_SCORE_MIN = 0.4;
+/** 同音两声部只挂上一根干时，头另一侧的竖墨至少这么多格才算另一根干（`splitUnisons`）。 */
+const UNISON_REACH = 2.0;
+/** 两个头盒中心上下差不到这么多格、左右差不到 `DUP_HEAD_DX` 格，就是同一个头被两路各认了一次。 */
+const DUP_HEAD_DY = 0.3;
+const DUP_HEAD_DX = 0.5;
 /** 上下贴着的两个实心头填满外框的九成以上（所信有根基 F4/D♭4 0.904），拆块的「太实是黑块」上限 0.9 对它放到这个数。 */
 const PAIR_FILL_MAX = 0.96;
 
@@ -2428,6 +2433,26 @@ export async function recognizeRasterPage(
       if (!chain) syms.splice(i, 1);
     }
   }
+  // ── 同一个头被两路各认一次：只留先认的那个 ─────────────────────────────────
+  //
+  // 按内腔找的空心头（`stacked`）不认领块，拆块、碎块并字典、判头各路在同一块上会再认一遍
+  //（天父世界歌伴奏 m2 G4/D4 二分、高举主大能 m8 C4 全音符，两个头盒差 0~4 像素），
+  // 各出一个音。**两声部同音**是另一回事：图上只有一个头，出两个音在建音符时按两根干做（`splitUnisons`），
+  // 这里去的是符号层的重复，不碍那一步。
+  {
+    const cx = (b: Rect) => b.x + b.w / 2;
+    const cy = (b: Rect) => b.y + b.h / 2;
+    const kept: RasterSym[] = [];
+    for (let i = 0; i < syms.length; i++) {
+      const s0 = syms[i];
+      if (!/^notehead/.test(s0.code)) continue;
+      if (kept.some((k) => Math.abs(cy(k.box) - cy(s0.box)) < unit.space * DUP_HEAD_DY && Math.abs(cx(k.box) - cx(s0.box)) < unit.space * DUP_HEAD_DX)) {
+        syms.splice(i--, 1);
+        continue;
+      }
+      kept.push(s0);
+    }
+  }
   const headBoxes = syms.filter((s0) => /notehead/i.test(s0.code)).map((s0) => ({ box: s0.box }));
 
   const pg = buildRasterPage({
@@ -2567,7 +2592,7 @@ export async function recognizeRasterPage(
   }
   const notes = buildNotes(pg, ctx, beams, stems, hollowish);
   attachAccidentalsByPitch(pg, ctx, notes);
-  splitUnisons(notes, stems);
+  splitUnisons(notes, stems, beams, raster.bin, unit.space);
   findTuplets(pg, beams, stems, notes);
 
   // ── 演奏法与力度 ─────────────────────────────────────────────────────────
@@ -3393,8 +3418,12 @@ function sharpsByStrokes(bin: Binary, lineYs: number[], clef: Rect, sp: number):
  * 女高女低（男高男低）唱同一个音时就这么记，一个头算两个音。
  * 认成一个音的话，多声部 GT 每个同音处都少一个（《赞美一神》十处）。
  * 克隆出来的那个挂朝下的干，不带歌词与和弦（那两样挂接在后面，挂给原来那个）。
+ *
+ * **只挂上一根干的也要验另一侧**：「头 + 干 + 尾」块那一路一个头只取一根干，另一根没进竖段表
+ *（万古磐石歌低音谱表 m6/m8 两个 F3 八分，干一上一下各带尾）。朝上干的头左缘往下、朝下干的头右缘往上
+ * 有 `UNISON_REACH` 格以上的竖墨，而反方向没有墨（贴着头的小节线上下都有），就是另一个声部的干。
  */
-function splitUnisons(notes: StaffNote[], stems: StemInfo[]): void {
+function splitUnisons(notes: StaffNote[], stems: StemInfo[], beams: BeamShape[], bin: Binary, sp: number): void {
   // 朝上的干在头的**右缘**、朝下的在**左缘**。和弦共用一根干时，干常被中间的头
   // 切成两段，下面那段对上面那个头来说也「朝下」，但它还在右缘，不算。
   const up = new Set<Sym>();
@@ -3407,9 +3436,93 @@ function splitUnisons(notes: StaffNote[], stems: StemInfo[]): void {
       if (!st.up && cx < s.box.left + w * 0.4) down.add(s);
     }
   }
+  /** 从 y0 起往 dir 方向，x 在 [x0, x1] 内最长的一段竖墨（像素行数；断口 ≤2 行，逐行可左右挪一列）。
+   *  干是直的：整段左右漂出 0.15 格以上的不算（贴着头的歌词字一撇，有一位神 m7「有」）。 */
+  const reach = (x0: number, x1: number, y0: number, dir: number) => {
+    const drift = Math.max(2, sp * 0.15);
+    const ink = (x: number, y: number) => x >= 0 && x < bin.w && y >= 0 && y < bin.h && bin.data[y * bin.w + x] === 1;
+    let most = 0;
+    for (let xs = Math.round(x0); xs <= Math.round(x1); xs++) {
+      let last = 0;
+      for (let x = xs, y = Math.round(y0), k = 0, miss = 0; miss <= 2 && y >= 0 && y < bin.h; y += dir, k++) {
+        if (ink(x, y)) miss = 0;
+        else if (x > x0 && ink(x - 1, y)) (x--, (miss = 0));
+        else if (x < x1 && ink(x + 1, y)) (x++, (miss = 0));
+        else {
+          miss++;
+          continue;
+        }
+        if (Math.abs(x - xs) > drift) break;
+        last = k + 1;
+      }
+      most = Math.max(most, last);
+    }
+    return most;
+  };
+  /** [y0, y1] 行里、从 [x0, x1] 那几列横向连出去的墨有一个头宽（0.6~1.8 格）的行数：沿途挂着没认出来的头。
+   *  谱线、加线、符杠比头宽得多，不算。 */
+  const headRows = (x0: number, x1: number, y0: number, y1: number) => {
+    let rows = 0;
+    for (let y = Math.round(Math.min(y0, y1)); y <= Math.max(y0, y1); y++) {
+      if (y < 0 || y >= bin.h) continue;
+      let widest = 0;
+      for (let x = Math.round(x0); x <= Math.round(x1); x++) {
+        if (x < 0 || x >= bin.w || !bin.data[y * bin.w + x]) continue;
+        let l = x;
+        let r = x;
+        while (l > 0 && bin.data[y * bin.w + l - 1]) l--;
+        while (r < bin.w - 1 && bin.data[y * bin.w + r + 1]) r++;
+        widest = Math.max(widest, r - l + 1);
+      }
+      if (widest >= sp * 0.6 && widest <= sp * 1.8) rows++;
+    }
+    return rows;
+  };
+  const heads = notes.filter((n) => !n.rest).map((n) => n.sym);
+  /** 头另一侧那段竖墨上不能再有别的头（那是和弦里另一个头的干）。 */
+  const clear = (s: Sym, x0: number, x1: number, y0: number, y1: number) =>
+    !heads.some((o) => o !== s && o.box.right > x0 && o.box.left < x1 && o.box.bottom > Math.min(y0, y1) && o.box.top < Math.max(y0, y1));
+  for (const n of notes) {
+    if (n.rest || n.grace || up.has(n.sym) === down.has(n.sym)) continue;
+    const b = n.sym.box;
+    const w = b.right - b.left;
+    if (up.has(n.sym)) {
+      const [x0, x1] = [b.left - 1, b.left + w * 0.3];
+      if (reach(x0, x1, b.bottom, 1) >= sp * UNISON_REACH && reach(x0, x1, b.top, -1) < sp * 0.5 && clear(n.sym, x0, x1, b.bottom + 1, b.bottom + sp * UNISON_REACH) && headRows(x0, x1, b.bottom + 2, b.bottom + sp * UNISON_REACH) < sp * 0.3) down.add(n.sym);
+    } else {
+      const [x0, x1] = [b.right - w * 0.3, b.right + 1];
+      if (reach(x0, x1, b.top, -1) >= sp * UNISON_REACH && reach(x0, x1, b.bottom, 1) < sp * 0.5 && clear(n.sym, x0, x1, b.top - sp * UNISON_REACH, b.top - 1) && headRows(x0, x1, b.top - sp * UNISON_REACH, b.top - 2) < sp * 0.3) up.add(n.sym);
+    }
+  }
+  /** 朝下那根「干」其实是头下方歌词字的一笔：头下 1.2 格内先是一段细墨、接着连续几行 0.9~2.4 格宽的横墨（字的横笔）。
+   *  真干沿途只有细干本身与比 3 格宽得多的谱线（有一位神 m6/m7/m10 的 A3 贴着「有」字）。
+   *  要先见细墨：头盒只罩住上半截时，往下先扫到的是头自己（以马内利来临歌 m15 D4）。落在已认符杠上的行不算。 */
+  const intoText = (s: Sym) => {
+    const b = s.box;
+    let rows = 0;
+    let run = 0;
+    let thin = 0;
+    for (let y = Math.round(b.bottom + 1); y <= b.bottom + sp * 1.2 && y < bin.h; y++) {
+      let widest = 0;
+      for (let x = Math.round(b.left - 1); x <= b.left + (b.right - b.left) * 0.3; x++) {
+        if (x < 0 || x >= bin.w || !bin.data[y * bin.w + x]) continue;
+        let l = x;
+        let r = x;
+        while (l > 0 && bin.data[y * bin.w + l - 1]) l--;
+        while (r < bin.w - 1 && bin.data[y * bin.w + r + 1]) r++;
+        widest = Math.max(widest, r - l + 1);
+      }
+      if (widest > 0 && widest <= sp * 0.3) thin++;
+      // 短干接着的符杠斜着走，逐行切也是一两格宽（耶和华是我的牧者第二页 m7 D3）
+      const onBeam = beams.some((q) => q.box.left <= b.right && q.box.right >= b.left && y >= q.box.top - 1 && y <= q.box.bottom + 1);
+      run = !onBeam && thin >= 2 && widest >= sp * 0.9 && widest <= sp * 2.4 ? run + 1 : 0;
+      rows = Math.max(rows, run);
+    }
+    return rows >= 3;
+  };
   for (let i = notes.length - 1; i >= 0; i--) {
     const n = notes[i];
-    if (n.rest || !up.has(n.sym) || !down.has(n.sym)) continue;
+    if (n.rest || !up.has(n.sym) || !down.has(n.sym) || intoText(n.sym)) continue;
     n.stemUp = true;
     notes.splice(i + 1, 0, { ...n, stemUp: false, chordExtra: true, lyrics: undefined, chord: undefined });
   }

@@ -15,7 +15,7 @@ import { findBarlines, findNoteheads, findStaves, findStems, findTails, isLeadNo
 import { accidentalAlter, isAccidental, isClef, timeSigDigit, type SmuflName } from "../staffomr/glyphs";
 import { buildNotes, calcAlters, checkBars, findClefKeyTime, keyFifths, lastTimeSignature, type BeamShape, type StaffContext, type StaffNote, type StemInfo, type BarCheck } from "../staffomr/notedata";
 import { attachDynamicTexts, attachNotations, attachWedges, findNotations, findTuplets } from "../staffomr/notations";
-import type { SPage, Staff, Sym, Tag } from "../staffomr/model";
+import type { Seg, SPage, Staff, Sym, Tag } from "../staffomr/model";
 import { overlapY } from "../staffomr/model";
 import { buildRasterPage, makeSymObj, makeTextObj, type RasterSym } from "./adapt";
 import { binSig, blobImage, extendVSegs, findBlobs, findBraces, findPrimitives, groupByLeftInk, ledgerGrid, joinVSegs, removeStaffLines, verticalStrokes, type BeamQuad, type LineSeg, type RasterPrims } from "./prims";
@@ -620,6 +620,57 @@ function toBeamShapes(beams: BeamQuad[]): BeamShape[] {
     const box: Box = { left: b.box.x, right: b.box.x + b.box.w, top: b.box.y, bottom: b.box.y + b.box.h };
     return { box, x0: b.x0, y0: b.y0, x1: b.x1, y1: b.y1, level: 0 };
   });
+}
+
+/** 杠端续到干：干在杠端外这个范围（格）里。 */
+const BEAM_SNAP = [0.2, 1.0] as const;
+/** 杠端续到干：干的一端离杠延长线不过这么多格；杠端与干之间沿杠走向有墨的列占比下限。 */
+const BEAM_SNAP_END = 0.75;
+const BEAM_SNAP_INK = 0.8;
+
+/**
+ * **杠端没够着干的，续到干上**：斜的网点杠靠干那一截薄、又有网孔，检出的杠盒比真杠短半格
+ *（当我们回到天家 m2：杠从 x=712 起，干在 704），`beamConnect` 的容差只有 0.2 格，那根干就接不上杠、八分读成四分。
+ * 杠端外 `BEAM_SNAP` 格内有根干、干的一端正落在杠的延长线上、中间沿杠走向（杠厚上下各放一像素）的列大多有墨，就把杠端挪到干上。
+ */
+function snapBeamEnds(beams: BeamShape[], stems: Seg[], bin: Binary, sp: number): void {
+  const yAt = (b: BeamShape, x: number) => (b.x1 === b.x0 ? b.y0 : b.y0 + ((b.y1 - b.y0) * (x - b.x0)) / (b.x1 - b.x0));
+  for (const b of beams) {
+    const half = (b.box.bottom - b.box.top) / 2 + 1;
+    const inkCol = (x: number): boolean => {
+      const cy = yAt(b, x);
+      for (let y = Math.round(cy - half); y <= Math.round(cy + half); y++) if (y >= 0 && y < bin.h && bin.data[y * bin.w + x]) return true;
+      return false;
+    };
+    for (const side of [0, 1] as const) {
+      const end = side === 0 ? b.x0 : b.x1;
+      let got: Seg | null = null;
+      for (const st of stems) {
+        const d = side === 0 ? end - st.cx : st.cx - end;
+        if (d < sp * BEAM_SNAP[0] || d > sp * BEAM_SNAP[1]) continue;
+        const y = yAt(b, st.cx);
+        if (Math.min(Math.abs(st.top - y), Math.abs(st.bottom - y)) > sp * BEAM_SNAP_END) continue;
+        if (!got || Math.abs(st.cx - end) < Math.abs(got.cx - end)) got = st;
+      }
+      if (!got) continue;
+      const xa = Math.round(Math.min(got.cx, end)) + 1;
+      const xb = Math.round(Math.max(got.cx, end)) - 1;
+      let n = 0;
+      let k = 0;
+      for (let x = xa; x <= xb; x++, n++) if (inkCol(x)) k++;
+      if (n && k < n * BEAM_SNAP_INK) continue;
+      const y = yAt(b, got.cx);
+      if (side === 0) {
+        b.x0 = got.cx;
+        b.y0 = y;
+        b.box.left = Math.min(b.box.left, got.cx);
+      } else {
+        b.x1 = got.cx;
+        b.y1 = y;
+        b.box.right = Math.max(b.box.right, got.cx);
+      }
+    }
+  }
 }
 
 /** 符尾围出的「空心头」离干端不超过这么多格（见「符尾围出来的空心头不要」）。 */
@@ -2471,6 +2522,7 @@ export async function recognizeRasterPage(
     return noteHeads.some((h) => h.box.left < b.box.x + b.box.w && h.box.right > b.box.x && Math.abs((h.box.top + h.box.bottom) / 2 - cy) <= unit.space * 0.6);
   };
   const beams = toBeamShapes(prims.beams.filter((b) => !thinOnLine(b)));
+  snapBeamEnds(beams, pg.segs.filter((sg) => sg.isV && sg.hasTag("Stem")), raster.bin, unit.space);
   const stems: StemInfo[] = [];
   // **认成实心、其实中间是空的头**：圈细、内腔被没抹掉的谱线切成几小块的空心头（耶和华、高举主大能、你的信实广大），
   // 过不了空心头的形状闸，被收成实心。头的中心椭圆（半径取盒的三成，跳过谱线那几行）里白占 HOLLOW_FILL 以上、

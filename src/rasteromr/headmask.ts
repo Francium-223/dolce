@@ -365,6 +365,10 @@ const CHORD_MAX = 3;
 const CHORD_SCORE_MIN = 0.45;
 /** 上下贴成一串的三度和弦头的得分闸（见用处）。 */
 const CHORD_SCORE_STACKED = 0.35;
+/** 端上贴串那一档放宽时，头心要实（空心叠头被收成一个实心头：父恩广大 E3/C3 二分、善牧的全音符）。 */
+const STACKED_CORE = 0.9;
+/** 贴串放宽只给够高的块（两个头加一截干）：扫描件上 1.3~2 格的小块也凑得出「两行满头宽」（望十架多收假头）。 */
+const STACKED_H = 3;
 
 /**
  * 从「**符头 + 符干（+ 符尾）并成一块**」的块里把符头摘出来。
@@ -405,6 +409,29 @@ export function headFromStemBlock(
     [box.y + box.h - sp * END_BAND, box.y + box.h + sp * 0.2],
   ];
   let best: { x: number; y: number; s: number } | null = null;
+  /** 端上的头与相邻三度的头上下贴成一串（两行墨都满一个头宽）：门槛照同干和弦那档（`CHORD_SCORE_STACKED`）。 */
+  let bestStacked: { x: number; y: number; s: number } | null = null;
+  const hwFull = Math.round(sp * 1.25) * 0.95;
+  /** 头心 0.6×0.3 格那一小块的墨占比：空心叠头（二分、全音符）那里是内腔。 */
+  const coreInk = (cx: number, cy: number): number => {
+    let n = 0;
+    let k = 0;
+    for (let y = Math.round(cy - sp * 0.15); y <= Math.round(cy + sp * 0.15); y++)
+      for (let x = Math.round(cx - sp * 0.3); x <= Math.round(cx + sp * 0.3); x++) {
+        if (x < 0 || y < 0 || x >= bin.w || y >= bin.h) continue;
+        n++;
+        k += bin.data[y * bin.w + x];
+      }
+    return n ? k / n : 0;
+  };
+  const stackedAt = (x: number, y: number): boolean => {
+    if (coreInk(x, y) < STACKED_CORE || rowSpan(bin, box, y) < hwFull) return false;
+    for (const dy of [-1, 1]) {
+      const g = grid(y + dy * sp);
+      if (g !== null && Math.abs(g - y) >= sp * 0.8 && Math.abs(g - y) <= sp * 1.2 && rowSpan(bin, box, g) >= hwFull) return true;
+    }
+    return false;
+  };
   const step = Math.max(1, Math.round(sp * 0.15));
   for (const [ya, yb] of bands)
     for (let x = box.x; x <= box.x + box.w; x += step) {
@@ -417,9 +444,11 @@ export function headFromStemBlock(
         const m = masks.find((k) => k.onLine === onLine(y)) ?? masks[0];
         const s = scoreAt(bin, m, x, y);
         if (s >= (m.pooled ? STEM_SCORE_MIN_POOLED : STEM_SCORE_MIN) && (!best || s > best.s)) best = { x, y, s };
+        else if (s >= CHORD_SCORE_STACKED && (!bestStacked || s > bestStacked.s) && stackedAt(x, y)) bestStacked = { x, y, s };
       }
     }
-  if (!best) return null;
+  if (!best && !long && h >= STACKED_H) best = bestStacked;
+  if (!best) return twoStemHead(bin, box, masks, sp, step, grid, onLine);
   if (long) {
     // 头不一定在端上：两个声部共用一根竖线（上声部的干往上、下声部的往下），头都在中段。
     // 整根干上找两个：得分最高的一个，再在隔开 1.5 格以外找第二个；那一行的墨都要够一个头宽。
@@ -427,7 +456,7 @@ export function headFromStemBlock(
     const one = bandTop(bin, masks, box, sp, step, grid, onLine, [box.y, box.y + box.h], () => true, (y) => rowSpan(bin, box, y) >= hwL * 0.7);
     if (!one) return null;
     const two = bandTop(bin, masks, box, sp, step, grid, onLine, [box.y, box.y + box.h], (y) => Math.abs(y - one.y) >= sp * 1.5, (y) => rowSpan(bin, box, y) >= hwL * 0.7);
-    if (!two || two.s < LONG_SCORE_MIN) return null;
+    if (!two || two.s < LONG_SCORE_MIN) return twoStemHead(bin, box, masks, sp, step, grid, onLine);
     // **三音和弦**：两头之外，同一根干上还夹着一个（《向主唱新歌》低音 G3/D3/G2 一根带尾的干，
     // 只摘得出两个）。离已有的头都隔开 0.9 格以上，得分同第二个头那一档
     const got = [one, two];
@@ -492,6 +521,58 @@ export function headFromStemBlock(
   const stemY0 = up ? best.y : box.y;
   const stemY1 = up ? box.y + box.h : best.y;
   return { head, extra, stemX, stemY0, stemY1 };
+}
+
+/** 一头两干：头上下各伸出去的竖墨至少这么多格。 */
+const TWO_STEM_REACH = 1.5;
+
+/**
+ * **一头两干**：上下两个声部同音共用一个头，干一上一下、各带符尾（我灵镇静第一页末两行），
+ * 头在块的中段，两端的带里找不到。在两端带之间找一个头（门槛同单头那一档、那一行墨满一个头宽），
+ * 头上方与下方都要各有一段 `TWO_STEM_REACH` 格以上的竖墨。只出一个头（GT 同音两声部多只记一个），
+ * 干取朝上那根（符尾挂在它顶上）。
+ */
+function twoStemHead(
+  bin: Binary,
+  box: Rect,
+  masks: HeadMask[],
+  sp: number,
+  step: number,
+  grid: (y: number) => number | null,
+  onLine: (y: number) => boolean,
+): { head: Rect; extra: Rect[]; stemX: number; stemY0: number; stemY1: number } | null {
+  const hw = Math.round(sp * 1.25);
+  const hh = Math.round(sp * 0.95);
+  const mid = bandTop(bin, masks, box, sp, step, grid, onLine, [box.y + sp * END_BAND, box.y + box.h - sp * END_BAND], () => true, (y) => rowSpan(bin, box, y) >= hw * 0.7);
+  if (!mid) return null;
+  const ink = (x: number, y: number) => x >= box.x && x < box.x + box.w && y >= box.y && y < box.y + box.h && bin.data[y * bin.w + x] === 1;
+  /** 从 y0 起往 dir 方向，块里最长的一段竖墨（行数；干略斜，逐行可左右挪一列；断口 ≤2 行）。 */
+  const reach = (y0: number, dir: number): number => {
+    let most = 0;
+    for (let x0 = box.x; x0 < box.x + box.w; x0++) {
+      if (!ink(x0, Math.round(y0))) continue;
+      let last = 0;
+      for (let x = x0, y = Math.round(y0), n = 0, miss = 0; miss <= 2 && y >= box.y && y < box.y + box.h; y += dir, n++) {
+        if (ink(x, y)) miss = 0;
+        else if (ink(x - 1, y)) (x--, (miss = 0));
+        else if (ink(x + 1, y)) (x++, (miss = 0));
+        else { miss++; continue; }
+        last = n + 1;
+      }
+      most = Math.max(most, last);
+    }
+    return most;
+  };
+  const top = mid.y - hh / 2;
+  const bot = mid.y + hh / 2;
+  if (reach(top, -1) < sp * TWO_STEM_REACH || reach(bot, 1) < sp * TWO_STEM_REACH) return null;
+  return {
+    head: { x: Math.round(mid.x - hw / 2), y: Math.round(top), w: hw, h: hh },
+    extra: [],
+    stemX: stemColumn(bin, box, box.y, top),
+    stemY0: box.y,
+    stemY1: mid.y,
+  };
 }
 
 /** 二度错开在干另一侧的头要的得分。我灵镇静实测：真二度 0.42~0.49，镜像过去落空的 ≤0.03。 */

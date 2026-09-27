@@ -184,7 +184,7 @@ function bootstrapFlags(bin: Binary, pg: SPage, beams: BeamQuad[], unit: RasterU
     const dTop = Math.min(...ys.map((y) => Math.abs(st.top - y)));
     const dBot = Math.min(...ys.map((y) => Math.abs(st.bottom - y)));
     // 两端都贴着符头：这是两个头之间被切出来的一截符干（加线、谱线把符干切断），没有自由端
-    if (Math.max(dTop, dBot) < sp * 0.75) continue;
+    if (Math.max(dTop, dBot) < sp * FLAG_BOTH_ENDS) continue;
     const far = dTop > dBot ? st.top : st.bottom;
     const hy = far === st.top ? Math.min(...ys) : Math.max(...ys);
     // 符杠横在这个窗口里的，不看（理由见上）
@@ -518,6 +518,10 @@ const FLAG_REACH_LW = 0.15;
 const HOOK_PROM = 0.15;
 /** 符尾窗口与和弦字母条交叠超过这一成就不认。 */
 const FLAG_AVOID = 0.2;
+/** 符干两端离干上的头心都不过这么多格：是两个头之间被切出来的一截干，没有自由端，不找符尾。
+ *  0.75 → 1.0：我灵镇静低音谱表 C4/A3 和弦的干被加线切成两截，上一截下端离 A3 头心 0.94 格，
+ *  A3 头的右半边被当成了八分符尾。 */
+const FLAG_BOTH_ENDS = 0.95;
 
 /**
  * **几个音共用的那条长加线，要按符头切成短段补进去。**

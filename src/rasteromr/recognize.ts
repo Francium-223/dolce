@@ -2241,16 +2241,6 @@ export async function recognizeRasterPage(
   // 在上下两个候选位置各拿本页自举的空心模板打分（骑线/在间分开），取高的，头盒挪过去。
   // **只对空心头**：实心头也做，独唱谱音符 −0.19（悬着的实心头多是被符杠、干根拉偏的，模板窗口里压着同样的东西）；
   // 空心头 +0.12。
-  // ── 沿着已挂了空心头的干补和弦里漏掉的空心头（`notehead.ts::hollowHeadsAlongStems`）──
-  // 模板按**此刻**认出的空心头重建（含弱头、两个就够）：早先那份样本不够时一张都没有（恩友歌第一页），
-  // 一张也凑不出就只按墨占比与内腔佐证判。
-  {
-    const alongMasks = buildHollowMasks(raster.bin, syms, unit, lineYs, 2);
-    for (const f of hollowHeadsAlongStems(raster.bin, nl, rawHoles, alongMasks, unit, makePitchSteps(groups), [...prims.vSegs, ...inkStems], syms)) {
-      syms.push(f);
-      ledger.claim(f.box, "along:noteheadHalf");
-    }
-  }
   if (hollowMasks.length) {
     const sp = unit.space;
     for (const s0 of syms) {
@@ -2330,6 +2320,17 @@ export async function recognizeRasterPage(
     }
   }
 
+  // ── 沿着已挂了空心头的干补和弦里漏掉的空心头（`notehead.ts::hollowHeadsAlongStems`）──
+  // 放在墨柱补干之后：叠头的圈把干切碎、竖段表里没有的干，要等上面补进 `inkStems` 才有（我灵镇静 m10）。
+  // 模板按**此刻**认出的空心头重建（含弱头、两个就够）：早先那份样本不够时一张都没有（恩友歌第一页），
+  // 一张也凑不出就只按墨占比与内腔佐证判。
+  {
+    const alongMasks = buildHollowMasks(raster.bin, syms, unit, lineYs, 2);
+    for (const f of hollowHeadsAlongStems(raster.bin, nl, rawHoles, alongMasks, unit, makePitchSteps(groups), [...prims.vSegs, ...stemSegs, ...inkStems], syms)) {
+      syms.push(f);
+      ledger.claim(f.box, "along:noteheadHalf");
+    }
+  }
   // ── 离谱表太远、又没有加线链的符头不要 ───────────────────────────────────
   //
   // 大字本的歌词夹在两行谱之间，字的横笔被当成加线、一笔收成符头，读成高音谱表下方的 C3、B♭2

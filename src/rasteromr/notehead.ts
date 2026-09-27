@@ -838,12 +838,18 @@ export function hollowHeadsByPitch(
 const ALONG_FREE = 2.5;
 /** 干的近端离头心不过这么多格，算干断在两者之间（中间夹着没认出的头）。 */
 const ALONG_GAP = 3.5;
+/** 头离干的近端也有这么多格，算悬在干中段。 */
+const ALONG_MID = 1.5;
 /** 模板分、头盒墨占比（跳过谱线行）、内腔佐证的门槛。内腔那条分得开「两个头相接的中间位置」（恩友歌 0.19，
  *  两个真头心 0.55 / 0.42）——那里墨占比与真头心一样是 0.5。扫过模板 0.25 / **0.3** / 0.35、墨下限 **0.35** / 0.4、
  *  内腔 0.3 / **0.35** / 0.45：93.70 / 93.73 / 93.71、93.73 / 93.71、93.70 / 93.73 / 93.64%。 */
 const ALONG_SCORE = 0.3;
 const ALONG_INK = [0.35, 0.8] as const;
 const ALONG_CAVITY = 0.35;
+/** 悬在干中段的头往近端找时，离干端这么多格以内那一级的模板分门槛（我灵镇静 m10 的 F4 0.26：
+ *  上下缘正压两条谱线，模板窗口里的谱线行拉低了分）。 */
+const ALONG_END_TOL = 0.3;
+const ALONG_END_SCORE = 0.2;
 
 export function hollowHeadsAlongStems(
   bin: Binary,
@@ -863,7 +869,7 @@ export function hollowHeadsAlongStems(
   const out: { box: Rect; code: SmuflName; weak?: boolean }[] = [];
   const taken = heads.map((h) => h.box);
   const cyOf = (h: { box: Rect }) => h.box.y + h.box.h / 2;
-  const ranges: { ref: { box: Rect }; y0: number; y1: number }[] = [];
+  const ranges: { ref: { box: Rect }; y0: number; y1: number; end?: number }[] = [];
   for (const v of stems) {
     const vx = (v.x0 + v.x1) / 2;
     const top = Math.min(v.y0, v.y1);
@@ -875,8 +881,14 @@ export function hollowHeadsAlongStems(
       if (hy >= top - sp * 0.5 && hy <= bot + sp * 0.5) {
         // 头挂在干的一端：往另一端（自由端）找，到自由端往回 ALONG_FREE 格为止
         if (bot - top < sp * (ALONG_FREE + 1)) continue;
-        if (Math.abs(bot - hy) <= Math.abs(top - hy)) ranges.push({ ref: h, y0: top + sp * ALONG_FREE, y1: hy - sp * 0.75 });
+        const nearBot = Math.abs(bot - hy) <= Math.abs(top - hy);
+        if (nearBot) ranges.push({ ref: h, y0: top + sp * ALONG_FREE, y1: hy - sp * 0.75 });
         else ranges.push({ ref: h, y0: hy + sp * 0.75, y1: bot - sp * ALONG_FREE });
+        // 头悬在干中段（离近端也有 ALONG_MID 格以上）：近端挂着的是没认出的和弦头（我灵镇静 m10，
+        // F4 上下缘正压两条谱线、内腔够不上，上面的 C5 认出来却在干中段）——近端那头也找
+        const near = nearBot ? bot : top;
+        if (Math.abs(near - hy) >= sp * ALONG_MID)
+          ranges.push(nearBot ? { ref: h, y0: hy + sp * 0.75, y1: bot + sp * 0.3, end: bot } : { ref: h, y0: top - sp * 0.3, y1: hy - sp * 0.75, end: top });
       } else if (hy > bot && hy - bot <= sp * ALONG_GAP) {
         // 干断在头上方：中间夹着没认出的和弦头（干被叠头的圈切断）
         ranges.push({ ref: h, y0: bot - sp * 0.3, y1: hy - sp * 0.75 });
@@ -885,14 +897,16 @@ export function hollowHeadsAlongStems(
       }
     }
   }
-  for (const { ref, y0, y1 } of ranges) {
+  for (const { ref, y0, y1, end } of ranges) {
     if (y1 <= y0) continue;
     const cx = ref.box.x + ref.box.w / 2;
     for (const st of stepsIn(y0, y1)) {
+      // 干端那一级：干必挂着头，模板分放宽；干端以外的位置照常
+      const atEnd = end !== undefined && Math.abs(st.y - end) <= sp * ALONG_END_TOL;
       const b = best(st, cx - sp * 0.15, cx + sp * 0.15);
       if (!b) continue;
       const ink = inkIn(b.x, st.y, ref.box.w);
-      if (b.s < ALONG_SCORE || ink < ALONG_INK[0] || ink > ALONG_INK[1] || cavity(b.x, st.y) < ALONG_CAVITY) continue;
+      if (b.s < (atEnd ? ALONG_END_SCORE : ALONG_SCORE) || ink < ALONG_INK[0] || ink > ALONG_INK[1] || cavity(b.x, st.y) < ALONG_CAVITY) continue;
       const box: Rect = { x: Math.round(b.x - ref.box.w / 2), y: Math.round(st.y - ref.box.h / 2), w: ref.box.w, h: ref.box.h };
       if (clash(box, taken)) continue;
       out.push({ box, code: "noteheadHalf", weak: true });

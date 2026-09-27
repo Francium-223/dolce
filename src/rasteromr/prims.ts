@@ -1092,6 +1092,23 @@ export function blobImage(bin: Binary, prims: RasterPrims, unit: RasterUnit, onG
     // 的竖段，一抹连带把上半截也带走，整页四分休止只剩几个。
     // 取平均厚的两倍封顶：真符干、真小节线两者差不多，鼓包的那些才卡得住。
     const pad = Math.min(s.maxLw, Math.max(2, s.lw * PAD_LW)) / 2 + 1;
+    // **连成一长条的加线按列抹**：一串同高的加线音（父恩广大低音谱表的 C4）的加线被连成一条（8 格长），
+    // 头只占一小半、`headOn` 判否，整条照抹就把每个头都拦腰切成两片，头全丢了。
+    // 逐列看：线外一侧 0.6 格内贴着墨（头）的列留着，其余照抹。独唱谱音符 93.93 → 94.13%（父恩广大 +2.4）。
+    if (horiz && onGrid && len > unit.space * 3 && onGrid((s.y0 + s.y1) / 2)) {
+      const reach = Math.max(2, Math.round(unit.space * 0.6));
+      const x0 = Math.max(0, Math.round(Math.min(s.x0, s.x1)));
+      const x1 = Math.min(w - 1, Math.round(Math.max(s.x0, s.x1)));
+      for (let x = x0; x <= x1; x++) {
+        const cy = s.y0 + ((s.y1 - s.y0) * (x - s.x0)) / (s.x1 - s.x0 || 1);
+        const ya = Math.round(cy - pad);
+        const yb = Math.round(cy + pad);
+        let head = false;
+        for (let d = 1; d <= reach && !head; d++) head = (ya - d >= 0 && bin.data[(ya - d) * w + x] !== 0) || (yb + d < h && bin.data[(yb + d) * w + x] !== 0);
+        if (!head) clear(x, ya, x, yb);
+      }
+      continue;
+    }
     // 段是直的（`adapt.ts` 会把它们摆正），照包围盒抹即可
     clear(Math.min(s.x0, s.x1) - pad, Math.min(s.y0, s.y1) - pad, Math.max(s.x0, s.x1) + pad, Math.max(s.y0, s.y1) + pad);
   }

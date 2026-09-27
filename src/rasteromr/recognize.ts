@@ -3866,9 +3866,13 @@ function findDots(bin: Binary, syms: RasterSym[], unit: RasterUnit, onLine: (y: 
     // 取块的窗口上下各多放 0.3 格，再只留中心落在原窗口里的：窗口沿正切在点的边上时，
     // 一两个毛刺像素伸出窗口就整块作废（齐来称颂低音谱表 C♯4/A3 附点二分，两个点都这么丢了）
     const bl = below(b);
-    for (const d of blobsIn(r + sp * 0.05, cy - sp * (0.85 + DOT_PAD), r + sp * 1.3, cy + sp * (bl + DOT_PAD)).filter((q) => {
+    // 左边也放：头盒偏宽（带进了圈外的毛边）时右缘罩住点的左边一两列，点伸出窗口就作废（齐来称颂 m18/m19 附点二分）
+    // 靠这一放才收进来的（左缘在原窗口左边）要够大（两边都 0.3 格）：谱线在头右边的残渣原来被窗口切掉（我灵镇静 m21 多出一个点）
+    for (const d of blobsIn(r - sp * DOT_PAD, cy - sp * (0.85 + DOT_PAD), r + sp * 1.3, cy + sp * (bl + DOT_PAD)).filter((q) => {
+      const qx = q.x + q.w / 2;
       const qy = q.y + q.h / 2;
-      return qy > cy - sp * 0.85 && qy < cy + sp * bl;
+      if (q.x < r + sp * 0.05 && (q.w < sp * 0.3 || q.h < sp * 0.3)) return false;
+      return qx > r + sp * 0.05 && qy > cy - sp * 0.85 && qy < cy + sp * bl;
     })) {
       if (out.some((o) => overlapFrac(o, d) > 0)) continue;
       if (syms.some((s0) => overlapFrac(d, s0.box) > 0.3)) continue;

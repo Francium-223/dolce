@@ -803,7 +803,8 @@ function attachDots(notes: StaffNote[], dots: Sym[], sp: number): void {
     let bd = Infinity;
     for (const n of notes) {
       const r = rights.get(n)!;
-      if (d.px <= r) continue;
+      // 点的**中心**要在右缘之右（不用 `px`：位图路 `px` 是盒左缘，头盒带进圈外毛边时右缘罩住点的左边两列——齐来称颂 m18/m19）
+      if (d.px <= r && (d.box.left + d.box.right) / 2 <= r) continue;
       const dx = d.px - r;
       if (dx > sp * 1.5) continue;
       // 线上音符的附点写在上方那个间里，差半格；再放一点余量

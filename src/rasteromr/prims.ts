@@ -689,7 +689,7 @@ export function findPrimitives(
     const line = centerLine(bMaskC, w, c, true);
     beams.push({ ...line, box: c.bbox });
   }
-  beams.push(...partialBeams(bin, beams, unit));
+  beams.push(...partialBeams(bin, beams, unit, vSegs));
   return { hSegs, vSegs, beams };
 }
 
@@ -705,7 +705,7 @@ export function findPrimitives(
 /** 半截符杠的高度范围（格）。 */
 const PARTIAL_BEAM_H = [0.3, 0.8] as const;
 
-function partialBeams(bin: Binary, beams: BeamQuad[], unit: RasterUnit): BeamQuad[] {
+function partialBeams(bin: Binary, beams: BeamQuad[], unit: RasterUnit, vSegs: LineSeg[] = []): BeamQuad[] {
   const sp = unit.space;
   const out: BeamQuad[] = [];
   const ink = (x: number, y: number) => y >= 0 && y < bin.h && x >= 0 && x < bin.w && !!bin.data[y * bin.w + x];
@@ -713,9 +713,20 @@ function partialBeams(bin: Binary, beams: BeamQuad[], unit: RasterUnit): BeamQua
   for (const b of beams) {
     const lw = Math.max(2, b.lw);
     const yAt = (x: number) => b.y0 + ((b.y1 - b.y0) * (x - b.x0)) / Math.max(1, b.x1 - b.x0);
+    // 起点：杠的两端；**杠中段的每根干左右两侧**也算（附点八分 + 十六分夹在一组中间时，
+    // 十六分的半截杠挂在中段那根干旁边，平安夜歌伴奏整曲九处）
+    const starts: [number, number][] = [[b.box.x, 1], [b.box.x + b.box.w - 1, -1]];
+    for (const v of vSegs) {
+        const vx = Math.round((v.x0 + v.x1) / 2);
+        if (vx <= b.box.x + sp * 0.5 || vx >= b.box.x + b.box.w - 1 - sp * 0.5) continue;
+        const by = yAt(vx);
+        // 干的上一截常贴着半截杠、没进竖段表（平安夜：竖段从杠下 1 格才开始），离杠 1.5 格内都算
+        if (Math.min(v.y0, v.y1) > by + sp * 1.5 || Math.max(v.y0, v.y1) < by - sp * 1.5) continue;
+        const half = Math.ceil(v.maxLw / 2) + 1;
+        starts.push([vx - half, -1], [vx + half, 1]);
+      }
     for (const side of [-1, 1])
-      for (const end of [b.box.x, b.box.x + b.box.w - 1]) {
-        const dir = end === b.box.x ? 1 : -1;
+      for (const [end, dir] of starts) {
         const cols: { x: number; y0: number; y1: number }[] = [];
         for (let k = 0; k < sp * 1.6; k++) {
           const x = end + dir * k;

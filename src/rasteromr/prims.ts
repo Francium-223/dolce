@@ -646,13 +646,46 @@ export function findPrimitives(
   // 半径取两个线宽：符干就这么粗，再大会把相邻两组的符杠连成一条。
   const bMaskC = close1d(bMask, w, h, Math.round(unit.lineThick * 2), true);
   const beams: BeamQuad[] = [];
+  /** 这一列附近有没有一根竖段搭着这块（x 在 ±tol 内、纵向与块相交），有就返回它的 x。 */
+  const stemNear = (x: number, b: Rect, tol: number): number | null => {
+    for (const v of vSegs) {
+      const vx = (v.x0 + v.x1) / 2;
+      if (Math.abs(vx - x) <= tol && Math.min(v.y0, v.y1) <= b.y + b.h + 2 && Math.max(v.y0, v.y1) >= b.y - 2) return vx;
+    }
+    return null;
+  };
+  /** 两根干之间逐列量块的墨厚（这一列在块盒里最长的竖游程），取中位数。 */
+  const midThick = (b: Rect, xa: number, xb: number): number => {
+    const ts: number[] = [];
+    for (let x = Math.ceil(xa); x <= Math.floor(xb); x++) {
+      let best = 0;
+      for (let y = b.y; y < b.y + b.h; y++) if (bMaskC[y * w + x]) best = Math.max(best, vr[y * w + x]);
+      ts.push(best);
+    }
+    ts.sort((p, q) => p - q);
+    return ts.length ? ts[ts.length >> 1] : 0;
+  };
   for (const c of comps(bMaskC, w, h, Math.round(unit.space * unit.space * 0.2))) {
-    if (c.bbox.w < unit.space * 1.5) continue; // 太短的不是符杠（照矢量路 findBeams 的 0.8 格，位图放宽到 1.5）
-    if (c.bbox.h > unit.space * 3) continue; // 太高：是实心块、方框
-    // **要够扁**。光靠上面两条拦不住符头：实心符头约 1.3×1.0 个线距，
-    // 纵向游程（18px）落在符杠区间里、横向游程也过线，宽度还差一点点就够。
-    // 符杠是 3:1 往上的长条，符头是 1.3:1 的椭圆，长宽比一刀分得开。
-    if (c.bbox.w < c.bbox.h * 2.5) continue;
+    // **两端各连着一根干、中间够厚的短杠**：两个八分挨得近（我一生要赞美你 m18，两根干只隔 1.2 格），杠短、又斜，
+    // 过不了宽度与长宽比那两道，反被收成一个实心头。两根干之间逐列量厚，中位数要像杠（`SHORT_BEAM_THICK`）
+    const tol = Math.max(2, unit.lineThick * 2);
+    let shortBeam = false;
+    if (c.bbox.w >= unit.space * SHORT_BEAM_W && c.bbox.w < unit.space * 1.5 && c.bbox.h <= unit.space * 1.2) {
+      const xa = stemNear(c.bbox.x, c.bbox, tol);
+      const xb = stemNear(c.bbox.x + c.bbox.w - 1, c.bbox, tol);
+      if (xa !== null && xb !== null && xb - xa >= unit.space * 0.7) {
+        const t = midThick(c.bbox, xa + tol, xb - tol) / unit.space;
+        shortBeam = t >= SHORT_BEAM_THICK[0] && t <= SHORT_BEAM_THICK[1];
+      }
+    }
+    if (!shortBeam) {
+      if (c.bbox.w < unit.space * 1.5) continue; // 太短的不是符杠（照矢量路 findBeams 的 0.8 格，位图放宽到 1.5）
+      if (c.bbox.h > unit.space * 3) continue; // 太高：是实心块、方框
+      // **要够扁**。光靠上面两条拦不住符头：实心符头约 1.3×1.0 个线距，
+      // 纵向游程（18px）落在符杠区间里、横向游程也过线，宽度还差一点点就够。
+      // 符杠是 3:1 往上的长条，符头是 1.3:1 的椭圆，长宽比一刀分得开。
+      if (c.bbox.w < c.bbox.h * 2.5) continue;
+    }
     const line = centerLine(bMaskC, w, c, true);
     beams.push({ ...line, box: c.bbox });
   }
@@ -819,6 +852,10 @@ function localLineCenters(bin: Binary, runs: Uint16Array, cy: number, unit: Rast
 /** 没成组的横线只抹竖游程不过这么多个线宽的列：谱线、加线约一个线宽，符杠约 0.5 格厚——
  *  粗线页上只有线宽的两倍（主使我喜乐线宽 4、杠厚 8 像素）。 */
 const THIN_ONLY_RUN = 1.6;
+/** 两端各连着干的短杠：宽度下限（格）。 */
+const SHORT_BEAM_W = 0.9;
+/** 同上：两根干之间逐列墨厚的中位数（格）。杠约半格厚；比这薄的是连线、谱线残段，比这厚的是挨着两根干的实心头。 */
+const SHORT_BEAM_THICK = [0.4, 0.6] as const;
 /** `thinOnly`：这几条线只抹竖游程不过 `THIN_ONLY_RUN` 个线宽的列（见 `recognize.ts` 调用处）。 */
 export function removeStaffLines(bin: Binary, lineYs: number[], unit: RasterUnit, thinOnly: Set<number> = new Set()): Binary {
   const { w, h, data } = bin;

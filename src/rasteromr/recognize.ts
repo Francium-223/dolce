@@ -2046,8 +2046,16 @@ export async function recognizeRasterPage(
             const r = b.bbox;
             const ov = Math.min(box.x + box.w, r.x + r.w) - Math.max(box.x, r.x);
             const gap = r.y > box.y ? r.y - (box.y + box.h) : box.y - (r.y + r.h);
-            if (ov < Math.min(box.w, r.w) * 0.3 && !(gap < 0 && Math.abs(r.x - (box.x + box.w)) <= unit.lineThick * 2 + 1)) continue;
-            if (gap > unit.lineThick * 2 + 1) continue;
+            // **左右两半**：叠成「8」字的全音符去谱线后劈成左右两块，中间隔着内腔的白（我灵镇静 m8 A4/F4，各 0.74×2.2 格、隔 0.34 格）
+            const vov = Math.min(box.y + box.h, r.y + r.h) - Math.max(box.y, r.y);
+            const hgap = r.x > box.x ? r.x - (box.x + box.w) : box.x - (r.x + r.w);
+            const halves = group.length === 1 && box.w <= unit.space * 0.9 && r.w <= unit.space * 0.9 && vov >= Math.max(box.h, r.h) * 0.8 && hgap > 0 && hgap <= unit.space * 0.5;
+            if (!halves) {
+              // 侧边紧贴的只并头的碎片：附点（高不到 0.6 格）贴在全音符右边，并进来盒就宽出尺寸闸（万口欢唱末尾附点全音符叠头）
+              const side = gap < 0 && Math.abs(r.x - (box.x + box.w)) <= unit.lineThick * 2 + 1 && r.h >= unit.space * 0.6;
+              if (ov < Math.min(box.w, r.w) * 0.3 && !side) continue;
+              if (gap > unit.lineThick * 2 + 1) continue;
+            }
             const x0 = Math.min(box.x, r.x);
             const y0 = Math.min(box.y, r.y);
             box = { x: x0, y: y0, w: Math.max(box.x + box.w, r.x + r.w) - x0, h: Math.max(box.y + box.h, r.y + r.h) - y0 };
@@ -2060,6 +2068,17 @@ export async function recognizeRasterPage(
         const h = box.h / unit.space;
         if (w < 0.8 || w > 2.2 || h < 0.6 || h > 3.2) continue; // 粗体全音符宽到 1.96 格（《赞美一神》）
         if (syms.some((s0) => overlapFrac(box, s0.box) > 0.3)) continue;
+        {
+          const whole = wholesByShape(raster.bin, nl, box, unit, pitchGrid);
+          if (whole.length) {
+            for (const id of group) used.add(id), merged.add(id);
+            for (const wb of whole) {
+              syms.push({ box: wb, code: "noteheadWhole" });
+              ledger.claim(wb, "wholeshape:noteheadWhole");
+            }
+            continue;
+          }
+        }
         // 块里要有内腔（空心头的先验）。没有封闭的孔就找**开口的内腔**：那种头模板也配不上
         // （万福泉源歌连已认出的头都只打到 0.2 分），改按内腔中心直接定头（`hollowHeadsFromCavities`）
         if (!holes.some((o) => o.x >= box.x && o.x + o.w <= box.x + box.w && o.y >= box.y - 1 && o.y + o.h <= box.y + box.h + 1)) {
@@ -3447,6 +3466,80 @@ function crossRuns(bin: Binary, x0: number, x1: number, y0: number, y1: number):
 }
 
 /** 列 `x` 上过 `(x,y)` 的竖墨段（允许左右各偏一像素续上）。 */
+/**
+ * 去谱线后劈成**左右两半**的全音符（单个或三度叠成「8」字的一对）：按全音符自己的形状判——
+ * 左右镜像对称、每个头上下对称、两侧笔画粗而中间（内腔 + 上下细边）墨少。头数按高度（约一格一个）。
+ * 不只左右两半并成的块，整块的也按这套判（附点全音符叠头、「阿们」叠头，内腔被谱线切碎、模板配不上）。
+ * 我灵镇静 m8 的 A4/F4、m25 的 A3/F3：内腔是两道竖缝（宽高比 0.5），内腔那一路与模板都认不出。
+ */
+function wholesByShape(bin: Binary, nl: Binary, box: Rect, unit: RasterUnit, grid: (y: number) => number | null): Rect[] {
+  const sp = unit.space;
+  const w = box.w / sp;
+  const h = box.h / sp;
+  if (w < 1.3 || w > 2.2) return [];
+  const n = h >= 0.75 && h <= 1.35 ? 1 : h >= 1.6 && h <= 2.6 ? 2 : 0;
+  if (!n) return [];
+  const ink = (b: Binary, x: number, y: number) => x >= 0 && x < b.w && y >= 0 && y < b.h && b.data[y * b.w + x] === 1;
+  // 左右镜像
+  let both = 0;
+  let any = 0;
+  for (let y = box.y; y < box.y + box.h; y++)
+    for (let x = box.x; x < box.x + box.w; x++) {
+      const a = ink(bin, x, y);
+      const m = ink(bin, box.x + box.w - 1 - (x - box.x), y);
+      if (a || m) any++;
+      if (a && m) both++;
+    }
+  const lr = any ? both / any : 0;
+  // 每个头上下对称
+  let ud = 1;
+  const hh = box.h / n;
+  for (let k = 0; k < n; k++) {
+    const y0 = box.y + Math.round(k * hh);
+    const y1 = box.y + Math.round((k + 1) * hh);
+    let b2 = 0;
+    let a2 = 0;
+    for (let y = y0; y < y1; y++)
+      for (let x = box.x; x < box.x + box.w; x++) {
+        const a = ink(bin, x, y);
+        const m = ink(bin, x, y1 - 1 - (y - y0));
+        if (a || m) a2++;
+        if (a && m) b2++;
+      }
+    ud = Math.min(ud, a2 ? b2 / a2 : 0);
+  }
+  // 两侧粗、中间空（去谱线的图上量，谱线不算墨）
+  const colFrac = (x0: number, x1: number) => {
+    let c = 0;
+    let t = 0;
+    for (let x = Math.round(x0); x < Math.round(x1); x++)
+      for (let y = box.y; y < box.y + box.h; y++) {
+        t++;
+        if (ink(nl, x, y)) c++;
+      }
+    return t ? c / t : 0;
+  };
+  const side = (colFrac(box.x, box.x + box.w * 0.3) + colFrac(box.x + box.w * 0.7, box.x + box.w)) / 2;
+  const mid = colFrac(box.x + box.w * 0.4, box.x + box.w * 0.6);
+  if (lr < WHOLE_LR || ud < WHOLE_UD || side < WHOLE_SIDE || mid > side * WHOLE_MID) return [];
+  const out: Rect[] = [];
+  for (let k = 0; k < n; k++) {
+    const cy = grid(box.y + (k + 0.5) * hh);
+    if (cy === null) return [];
+    out.push({ x: box.x, y: Math.round(cy - hh / 2), w: box.w, h: Math.round(hh) });
+  }
+  if (n === 2 && Math.abs(out[1].y - out[0].y - sp) > sp * 0.25) return [];
+  return out;
+}
+/** 左右镜像的墨交并比：真全音符 0.69~0.88，被并成一对的歌词字 ≤0.60。 */
+const WHOLE_LR = 0.65;
+/** 每个头上下镜像：真全音符 0.50~0.88（附点叠头按高度等分，切分线不正落在两头之间）。 */
+const WHOLE_UD = 0.45;
+/** 两侧三成宽的墨占比下限：全音符圈粗，真头 0.61~0.77；被收进来的字与杂块 ≤0.55。 */
+const WHOLE_SIDE = 0.58;
+/** 中间两成宽的墨不超过两侧的这么多倍：内腔竖直的 0~0.1，斜着的（万口欢唱末尾）细边斜穿中线到 0.52；字 0.6 以上。 */
+const WHOLE_MID = 0.55;
+
 /**
  * 盒里有**两道横贯的粗横笔**：升号的两道斜横。四分休止是折线，横不满盒宽。
  * 齐来谢主歌、我灵镇静、信心使我得胜（低分辨率或细笔本）的 ♯ 只有 0.8×2.3~2.9 格，落进了四分休止的形状闸。

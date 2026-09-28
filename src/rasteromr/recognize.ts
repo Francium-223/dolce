@@ -2556,7 +2556,48 @@ export async function recognizeRasterPage(
     if (!onGrid(cy) && !gridYs.some((ly) => Math.abs(ly - cy) <= unit.lineThick + 1)) return false;
     return noteHeads.some((h) => h.box.left < b.box.x + b.box.w && h.box.right > b.box.x && Math.abs((h.box.top + h.box.bottom) / 2 - cy) <= unit.space * 0.6);
   };
-  const beams = toBeamShapes(prims.beams.filter((b) => !thinOnLine(b)));
+  // **歌词字的一横不是杠**：朝上的短干顶到上方歌词行，字里一道粗横笔过了符杠的闸（来敬拜荣耀王 m16 A3 读成八分）。
+  // 杠所在那团墨（去线图上局部灌）碰不到任何符干与符头、又是一个字的大小，就不交给下游
+  const stemSegs0 = pg.segsWithTag("Stem");
+  const textStroke = (b: BeamQuad) => {
+    const sp = unit.space;
+    const wx0 = Math.max(0, Math.round(b.box.x - sp * 3));
+    const wy0 = Math.max(0, Math.round(b.box.y - sp * 3));
+    const wx1 = Math.min(nl.w - 1, Math.round(b.box.x + b.box.w + sp * 3));
+    const wy1 = Math.min(nl.h - 1, Math.round(b.box.y + b.box.h + sp * 3));
+    const W = wx1 - wx0 + 1;
+    const seen = new Uint8Array(W * (wy1 - wy0 + 1));
+    const st: number[] = [];
+    for (let y = Math.round(b.box.y); y < b.box.y + b.box.h; y++)
+      for (let x = Math.round(b.box.x); x < b.box.x + b.box.w; x++)
+        if (x >= wx0 && x <= wx1 && y >= wy0 && y <= wy1 && nl.data[y * nl.w + x] && !seen[(y - wy0) * W + x - wx0]) {
+          seen[(y - wy0) * W + x - wx0] = 1;
+          st.push(x, y);
+        }
+    let [x0, y0, x1, y1] = [Infinity, Infinity, -Infinity, -Infinity];
+    while (st.length) {
+      const y = st.pop()!;
+      const x = st.pop()!;
+      x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+      // 出窗口的就不是一个字大小
+      if (x === wx0 || x === wx1 || y === wy0 || y === wy1) return false;
+      for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]]) {
+        const X = x + dx;
+        const Y = y + dy;
+        if (X < wx0 || X > wx1 || Y < wy0 || Y > wy1 || !nl.data[Y * nl.w + X] || seen[(Y - wy0) * W + X - wx0]) continue;
+        seen[(Y - wy0) * W + X - wx0] = 1;
+        st.push(X, Y);
+      }
+    }
+    if (!isFinite(x0)) return false;
+    const w = (x1 - x0 + 1) / sp;
+    const h = (y1 - y0 + 1) / sp;
+    if (h < 1.5 || h > 3 || w > 3) return false;
+    const inside = (x: number, y: number) => x >= x0 - 1 && x <= x1 + 1 && y >= y0 - 1 && y <= y1 + 1;
+    if (noteHeads.some((s0) => inside((s0.box.left + s0.box.right) / 2, (s0.box.top + s0.box.bottom) / 2))) return false;
+    return !stemSegs0.some((s0) => inside(s0.cx, s0.top) || inside(s0.cx, s0.bottom));
+  };
+  const beams = toBeamShapes(prims.beams.filter((b) => !thinOnLine(b) && !textStroke(b)));
   snapBeamEnds(beams, pg.segs.filter((sg) => sg.isV && sg.hasTag("Stem")), raster.bin, unit.space);
   const stems: StemInfo[] = [];
   // **认成实心、其实中间是空的头**：圈细、内腔被没抹掉的谱线切成几小块的空心头（耶和华、高举主大能、你的信实广大），

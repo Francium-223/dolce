@@ -294,10 +294,28 @@ function bootstrapFlags(bin: Binary, pg: SPage, beams: BeamQuad[], unit: RasterU
   // **两个八分的「符尾」连到一起**：左边那根干的符尾弯下来正落在右邻同朝向那根干的尖上（我一生要赞美你 m14 F4–D4），
   // 右边那根尖上自己的窗口是空的——照抄左邻那道。干尖要落在那道符尾盒里、离盒右缘不过 0.3 格
   const flagged = out.slice();
+  /** 干尖往头那边一格内，有一行在干左边 0.25 格内就有墨（谱线行不算）。 */
+  const touchesLeft = (b: { cx: number; far: number; up: boolean }) => {
+    const x = Math.round(b.cx);
+    const y0 = Math.round(b.up ? b.far : b.far - sp * 1.2), y1 = Math.round(b.up ? b.far + sp * 1.2 : b.far);
+    for (let y = Math.max(0, y0); y <= Math.min(bin.h - 1, y1); y++) {
+      if (lineYs.some((ly) => Math.abs(ly - y) <= unit.lineThick)) continue;
+      let xx = x;
+      while (xx > x - sp * 0.3 && xx >= 0 && bin.data[y * bin.w + xx]) xx--; // 干自己
+      const edge = xx;
+      while (xx >= 0 && edge - xx <= sp * 0.25 && !bin.data[y * bin.w + xx]) xx--;
+      if (xx >= 0 && edge - xx <= sp * 0.25) return true;
+    }
+    return false;
+  };
   for (const b of bare) {
     const f = flagged.find((q) => {
       const qUp = q.code.endsWith("Up");
-      return qUp === b.up && b.cx > q.box.x + sp * 0.5 && b.cx <= q.box.x + q.box.w + sp * 0.3 && b.far >= q.box.y - 2 && b.far <= q.box.y + q.box.h + 2;
+      if (!(qUp === b.up && b.cx > q.box.x + sp * 0.5 && b.cx <= q.box.x + q.box.w + sp * 0.3 && b.far >= q.box.y - 2 && b.far <= q.box.y + q.box.h + 2)) return false;
+      // 还得真连上：干尖落在那道尾的末端一侧（万古磐石 m2 弯下来接在谱线上），或尾墨贴着这根干（我一生 m14）。
+      // 只看盒子的话，左邻八分的符尾盒伸到了右边那个四分的干上也照抄（有一位神 m3 A4 读成八分：干尖与左邻齐平、空着 0.8 格）
+      const fromStart = (qUp ? b.far - q.box.y : q.box.y + q.box.h - b.far) / q.box.h;
+      return fromStart >= 0.3 || touchesLeft(b);
     });
     if (f) out.push({ box: { ...f.box, x: Math.round(b.cx) }, code: f.code });
   }

@@ -889,6 +889,10 @@ export async function recognizeRasterPage(
     const lines = new Map<number, { strip: HarmonyStrip; chords: HarmonyToken[] }[]>();
     const lineTexts = new Map<number, HarmonyToken[]>();
     for (const strip of harmonyStrips) {
+      // 条的上沿够到上一行谱第五线下一格半以内的，是上一行挂下来的符杠与头（当我们回到天家第三系统低音谱表下的
+      // 两组连杠 A2 读成两个「D」、头被当和弦字母认领走）。和弦字母离上一行谱远得多
+      const prev = groups[strip.staff - 1];
+      if (prev && strip.box.y < prev.lines[4].y + unit.space * 1.5) continue;
       const chars = opts.harmonyOcr?.get(harmonyKey(strip));
       if (!chars?.length) continue; // 缓存没命中：这条没跑过 OCR，宁可不认领
       const { chords, texts } = readHarmonyStrip(strip, chars);

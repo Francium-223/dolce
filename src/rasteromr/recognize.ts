@@ -2781,7 +2781,13 @@ export async function recognizeRasterPage(
           });
         });
       };
-      for (let i = notes.length - 1; i >= 0; i--) if (inRow(notes[i])) notes.splice(i, 1);
+      for (let i = notes.length - 1; i >= 0; i--) {
+        if (!inRow(notes[i])) continue;
+        // 删的是和弦主音：下一个成员接任，否则它挂着 chordExtra 并到前一个音（休止）上（是谁 m1 E4，主音是「是」字上收出的头）
+        const next = notes[i + 1];
+        if (!notes[i].chordExtra && next?.chordExtra && next.staff === notes[i].staff) next.chordExtra = undefined;
+        notes.splice(i, 1);
+      }
     }
     lyricLines.push(...buildLyricLines(pg, objs));
     foldBilingualLyrics(pg, lyricLines);

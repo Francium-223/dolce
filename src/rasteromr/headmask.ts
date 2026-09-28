@@ -374,6 +374,8 @@ const STACKED_H = 3;
 /** 头正长在块端（`edgeAt`）那一档：模板分门槛、头心离「块边往里半个头高」的容差（格）、另一端干尖的行宽上限（头宽的倍数）。
  *  病例：这套字形的八分符尾从干底弯回来贴着头（主我敬拜你、颂赞与尊贵），头下方不白，模板只打到 0.34~0.39。 */
 const EDGE_SCORE = 0.3;
+/** 矮块头端贴着加线那一档的模板分门槛（歌词字「盡」0.31）。 */
+const EDGE_SCORE_LEDGER = 0.35;
 const EDGE_TOL = 0.25;
 const EDGE_TIP = 0.6;
 /** 头那一行的墨宽下限（贴串那档满头宽的倍数）：主我敬拜你的头窄，16px 对 1.25 格头宽 18px。 */
@@ -472,6 +474,10 @@ export function headFromStemBlock(
     }
   if (!best && !long && h >= STACKED_H) best = bestStacked;
   if (!best && !long && h >= STACKED_H) best = bestEdge;
+  // 矮块（不到 STACKED_H）只在头那一端贴着一条**加线**时收：宽过 1.6 格、薄、正落在线位上
+  //（欢然颂主 m4 男高 D4，短干 + 头 + 下面那条加线连成 2.1×2.4 格一块，0.37 分）。
+  // 歌词字「盡」那一横不会恰好落在线位上
+  if (!best && !long && bestEdge && bestEdge.s >= EDGE_SCORE_LEDGER && ledgerEnd(bin, box, bestEdge.y, sp, onLine)) best = bestEdge;
   if (!best) return twoStemHead(bin, box, masks, sp, step, grid, onLine);
   if (long) {
     // 头不一定在端上：两个声部共用一根竖线（上声部的干往上、下声部的往下），头都在中段。
@@ -655,6 +661,20 @@ function displacedSecond(
 }
 
 /** 块里第 `y` 行最左到最右的墨的跨度（像素）。光有符干的行只有线宽那么宽，有头的行一整个头宽。 */
+/** 头所在那一端的块边上有一条加线：离块边 0.2 格内、宽过 1.6 格、不厚过 0.3 格、离谱线整数个线距。 */
+function ledgerEnd(bin: Binary, box: Rect, headY: number, sp: number, onLine: (y: number) => boolean): boolean {
+  const atTop = headY - box.y < box.y + box.h - headY;
+  const rows: number[] = [];
+  for (let k = 0; k <= Math.round(sp * 0.2); k++) {
+    const y = atTop ? box.y + k : box.y + box.h - 1 - k;
+    if (rowSpan(bin, box, y) >= sp * 1.6) rows.push(y);
+  }
+  if (!rows.length || rows.length > Math.max(2, sp * 0.3)) return false;
+  const cy = rows.reduce((a, b) => a + b, 0) / rows.length;
+  // 加线在谱表外 k 个线距处：往谱表那边挪 k 格落在谱线上
+  return [1, 2, 3, 4].some((k) => onLine(cy + k * sp) || onLine(cy - k * sp));
+}
+
 function rowSpan(bin: Binary, box: Rect, y: number): number {
   const yy = Math.round(y);
   if (yy < 0 || yy >= bin.h) return 0;

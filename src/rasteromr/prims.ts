@@ -185,6 +185,7 @@ function centerLine(mask: Uint8Array, w: number, c: Component, horizontal: boole
 
 /** `narrowPart` 取出的窄段至少多长（格）。 */
 const NARROW_STEM = 3;
+const INK_RUN_STEM = 2.5;
 
 /** `isolated` 按 `maxLw` 开的邻墨窗里（中心列两侧）有没有一列从第五线到第一线都有墨（≥95% 行）。 */
 function barColumnNear(bin: Binary, x: number, maxLw: number, bands: [number, number][]): boolean {
@@ -241,6 +242,42 @@ function narrowPart(mask: Uint8Array, w: number, c: Component, lw: number, unit:
   }
   const x = sx / n;
   return { x0: x, y0: best[0], x1: x, y1: best[1] - 1, lw: maxW, maxLw: maxW };
+}
+
+/**
+ * 竖段按**原图墨迹**收拢：闭运算会跨过空白把干接到别的笔画上——两端补出来的空白行裁掉
+ * （主使我喜乐 m8 干顶上方的和弦字母「A」），断口外离谱表 2 格以外的那截墨也裁掉
+ * （m13 干尖接进下方歌词「乐」，字头被当成符尾）。谱表附近的断口照旧接着：扫描件的干本来会断
+ * （一律按断口裁，合唱谱扫描档破碎漏 4 音）。
+ */
+function inkRun(bin: Binary, s: LineSeg | null, unit: RasterUnit, staffBands: [number, number][]): LineSeg | null {
+  if (!s) return null;
+  const { w, data } = bin;
+  const x = Math.round(s.x0);
+  const half = Math.ceil(s.maxLw / 2);
+  const runs: [number, number][] = [];
+  let start = -1;
+  for (let y = Math.round(s.y0); y <= Math.round(s.y1) + 1; y++) {
+    let ink = false;
+    if (y <= s.y1) for (let xx = Math.max(0, x - half); xx <= Math.min(w - 1, x + half) && !ink; xx++) ink = data[y * w + xx] === 1;
+    if (ink && start < 0) start = y;
+    if (!ink && start >= 0) {
+      runs.push([start, y - 1]);
+      start = -1;
+    }
+  }
+  if (!runs.length) return null;
+  const far = ([a, b]: [number, number]) =>
+    staffBands.every(([t, bot]) => b < t - unit.space * 2 || a > bot + unit.space * 2);
+  let k = 0;
+  for (let i = 1; i < runs.length; i++) if (runs[i][1] - runs[i][0] > runs[k][1] - runs[k][0]) k = i;
+  let lo = k, hi = k;
+  while (lo > 0 && !far(runs[lo - 1])) lo--;
+  while (hi + 1 < runs.length && !far(runs[hi + 1])) hi++;
+  const y0 = runs[lo][0], y1 = runs[hi][1];
+  // 裁前已够 NARROW_STEM；剩下夹在符杠与头之间的短干约 2.8 格（主使我喜乐 m8）
+  if (y1 - y0 + 1 < unit.space * INK_RUN_STEM) return null;
+  return { ...s, y0, y1 };
 }
 
 /**
@@ -616,7 +653,7 @@ export function findPrimitives(
       if (core && !atStaffLeft(core.x0) && !staffLefts.some((l) => core.x0 >= l - unit.space && core.x0 <= l + unit.space * 4)) vSegs.push(core);
       else if (!core) {
         // 竖向闭运算跨过符杠，把上方和弦字母的斜笔接到了符干上（主使我喜乐 m8 那个「A」下的 A4）：取窄的那一段
-        const narrow = narrowPart(vMask, w, c, thinV, unit);
+        const narrow = inkRun(bin, narrowPart(vMask, w, c, thinV, unit), unit, staffBands);
         if (narrow && !atStaffLeft(narrow.x0) && isolated(bin, narrow, true)) vSegs.push(narrow);
       }
       continue;

@@ -1104,7 +1104,10 @@ export async function recognizeRasterPage(
   const takenBoxes = [...heads.map((h) => h.box), ...harmonyMasks];
   // 带宽照 `HOLLOW_BAND`（±3 格）。扫过 ±1.5 / ±2 / ±3 格，三档一样
   // ——这一路的过检不在带边上。
-  const stacked: RasterSym[] = hollowHeadsFromHoles(nl, holes, unit, prims.vSegs, inBand, takenBoxes);
+  const barSegs = prims.vSegs.filter((q) =>
+    staffGeoms.some((g) => Math.abs(Math.min(q.y0, q.y1) - g.top) < unit.space * 0.4 && Math.abs(Math.max(q.y0, q.y1) - g.bottom) < unit.space * 0.4),
+  );
+  const stacked: RasterSym[] = hollowHeadsFromHoles(nl, holes, unit, prims.vSegs, inBand, takenBoxes, barSegs);
   // 并成一个高内腔的叠置空心和弦：按音高位置逐一配模板（`notehead.ts::hollowHeadsByPitch`），
   // 模板拿本页已认出的空心头（骑线 / 在间各一张）
   const lineYs = lines.map((l) => l.y);

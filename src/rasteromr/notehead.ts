@@ -436,6 +436,7 @@ export function hollowHeadsFromHoles(
   stems: LineSeg[],
   inStaffBand: (y: number) => boolean,
   taken: Rect[],
+  bars: LineSeg[] = [],
 ): { box: Rect; code: SmuflName; weak?: boolean }[] {
   const sp = unit.space;
   const ring = Math.max(2, Math.round(sp * RING));
@@ -451,6 +452,21 @@ export function hollowHeadsFromHoles(
     //（《来敬拜荣耀王》C♯5、B4 两个二分头，内腔 12×11px、1.09）。
     const round = hole.w / hole.h < HOLE_RATIO;
     if (round && hole.w / hole.h < HOLE_RATIO_WHOLE) continue;
+    // 一侧紧贴一根小节线形的竖段（两端压在谱表首末线上，`bars`）、另一侧一格内还有个同高的洞：
+    // 是小节线、谱线与旁边的圈围出的空当，真内腔是旁边那个（有一位神 m11 小节线后那个二分头被去线切成两半，
+    // 空当读成了错位的头）。旁边没洞的不剔：和谱表一样高的干也在 `bars` 里，真内腔贴着它（独唱谱音符 −0.05）
+    const hcy = hole.y + hole.h / 2;
+    const walled = bars.some((s0) => {
+      const half = s0.maxLw / 2, cx = (s0.x0 + s0.x1) / 2;
+      if (Math.min(s0.y0, s0.y1) > hole.y || Math.max(s0.y0, s0.y1) < hole.y + hole.h) return false;
+      const onLeft = Math.abs(cx + half - hole.x) <= 1.5, onRight = Math.abs(hole.x + hole.w - (cx - half)) <= 1.5;
+      if (!onLeft && !onRight) return false;
+      return holes.some((o) => {
+        if (o === hole || Math.abs(o.y + o.h / 2 - hcy) > sp * 0.3) return false;
+        return onLeft ? o.x > hole.x && o.x <= hole.x + hole.w + sp : o.x + o.w < hole.x + hole.w && o.x + o.w >= hole.x - sp;
+      });
+    });
+    if (walled) continue;
     let box: Rect = { x: hole.x - ring, y: hole.y - ring, w: hole.w + ring * 2, h: hole.h + ring * 2 };
     if (round && (hole.w / hole.h < HOLE_RATIO_ROUND || (!stemOf(box, stems, unit) && !stemThrough(box, stems, unit)))) {
       // 没干（或更瘦）的近圆内腔只可能是**全音符**：这类字体的全音符圈厚、内腔斜得竖起来（我一生要赞美你，

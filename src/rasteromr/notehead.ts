@@ -1164,36 +1164,124 @@ export function headsOnBareStems(
   };
   const out: { box: Rect; code: SmuflName; ids: number[]; weak: true }[] = [];
   const used = new Set<number>();
-  for (const p of probes) {
-    const { box } = p;
+  /** 一块墨按尺寸判成一个 / 两个头（y 与空实）；判不成返回 null。 */
+  /** 头心上下 0.25 格内（谱线行不算）墨最宽的那一行有多宽（盒的横向范围内）。 */
+  const widest = (box: Rect, y: number): number => {
+    let most = 0;
+    for (let yy = Math.round(y - sp * 0.25); yy <= Math.round(y + sp * 0.25); yy++) {
+      if (yy < 0 || yy >= bin.h || onLine(yy)) continue;
+      let x0 = -1;
+      let x1 = -1;
+      for (let x = box.x; x < box.x + box.w; x++)
+        if (bin.data[yy * bin.w + x]) {
+          if (x0 < 0) x0 = x;
+          x1 = x;
+        }
+      if (x0 >= 0) most = Math.max(most, x1 - x0 + 1);
+    }
+    return most;
+  };
+  const judge = (box: Rect, area: number, strict = false): { ys: number[]; code: SmuflName; cx: number } | null => {
     const w = box.w / sp;
     const h = box.h / sp;
-    const fill = p.area / (box.w * box.h);
-    if (w < BARE_W[0] || w > BARE_W[1] || fill < BARE_FILL[0]) continue;
-    if (p.ids.some((id) => used.has(id))) continue;
+    const fill = area / (box.w * box.h);
+    if (w < BARE_W[0] || w > BARE_W[1] || fill < BARE_FILL[0]) return null;
     let ys: number[];
     if (h >= BARE_H1[0] && h <= BARE_H1[1]) {
       const c = snap(box.y + box.h / 2);
-      if (c === null) continue;
+      if (c === null) return null;
       ys = [c];
     } else if (h >= BARE_H2[0] && h <= BARE_H2[1]) {
       // 两个头各高 box.h − 1 格（中心隔一格）
       const hh = Math.max(sp * 0.8, box.h - sp);
       const a = snap(box.y + hh / 2);
       const b = snap(box.y + box.h - hh / 2);
-      if (a === null || b === null || Math.abs(Math.abs(b - a) - sp) > sp * 0.3) continue;
+      if (a === null || b === null || Math.abs(Math.abs(b - a) - sp) > sp * 0.3) return null;
       ys = [a, b];
-    } else continue;
+    } else return null;
+    // 削过的块：每个头心那一带都要有一个头宽的墨（五度的两个头被窗口截成一截，吸到中间两个线位上，齐来谢主歌 m3）
+    if (strict && ys.some((y) => widest(box, y) < sp * 0.8)) return null;
     const cx = box.x + box.w / 2;
     const cores = ys.map((y) => core(cx, y));
-    let code: SmuflName;
-    if (fill <= BARE_FILL[1] && cores.every((c) => c <= BARE_CORE)) code = "noteheadHalf";
-    else if (ys.length === 1 && cores[0] >= BARE_SOLID) code = "noteheadBlack";
-    else continue;
+    if (fill <= BARE_FILL[1] && cores.every((c) => c <= BARE_CORE)) return { ys, code: "noteheadHalf", cx };
+    if (ys.length === 1 && cores[0] >= BARE_SOLID) return { ys, code: "noteheadBlack", cx };
+    return null;
+  };
+  for (const p of probes) {
+    if (p.ids.some((id) => used.has(id))) continue;
+    // 收拢来的墨判不成头、又比一个头高的：多半连着干本身（干没抹掉、头与干连成一块），或另一个声部朝反方向伸出去的干，
+    // 只取端头窗口里扣掉干、加线之后的那一截再判一次（万福泉源歌 m21 E♭4/C4「8」字叠头、耶和华是我的牧者 m11
+    // 两根干共用的 A3 空心头）。先判原块：两个头高的叠头照原块判得对，削过反倒切坏（我灵镇静 m15、m23）
+    let got = judge(p.box, p.area);
+    if (!got && p.box.h / sp > BARE_H1[1]) {
+      const cut = endInk(bin, p, sp, onLine);
+      if (cut) got = judge(cut.box, cut.area, true);
+      // 只收空心头：实心的那几种前后别的路认得出，这里截出来的位置反倒偏（晨曦破晓 m8 低音 A3）
+      if (got?.code !== "noteheadHalf") got = null;
+    }
+    if (!got) continue;
     for (const id of p.ids) used.add(id);
-    for (const y of ys) out.push({ box: { x: Math.round(cx - size.w / 2), y: Math.round(y - size.h / 2), w: size.w, h: size.h }, code, ids: p.ids, weak: true });
+    for (const y of got.ys) out.push({ box: { x: Math.round(got.cx - size.w / 2), y: Math.round(y - size.h / 2), w: size.w, h: size.h }, code: got.code, ids: p.ids, weak: true });
   }
   return out;
+}
+
+/**
+ * 光杆干端头窗口里（与 `probeBareStems` 同一个窗口）的墨，扣掉干本身那几列、谱线行与加线行（横向一格半以上的薄行），
+ * 再把上下两头只剩一根竖笔（不到 0.4 格宽）的行削掉——另一个声部朝反方向伸出去的干。返回那一截的盒与墨量。
+ */
+function endInk(bin: Binary, p: BareStemProbe, sp: number, onLine: (y: number) => boolean): { box: Rect; area: number } | null {
+  const s = p.stem;
+  const sx = (s.x0 + s.x1) / 2;
+  const e = p.end === "top" ? Math.min(s.y0, s.y1) : Math.max(s.y0, s.y1);
+  const ya = Math.max(0, Math.round(p.end === "top" ? e - sp * 0.9 : e - sp * 2.0));
+  const yb = Math.min(bin.h - 1, Math.round(p.end === "top" ? e + sp * 2.0 : e + sp * 0.9));
+  const xa = Math.max(0, Math.round(p.end === "bottom" ? sx - sp * 1.8 : sx - sp * 0.3));
+  const xb = Math.min(bin.w - 1, Math.round(p.end === "bottom" ? sx + sp * 0.3 : sx + sp * 1.8));
+  const lw = Math.max(1, s.lw);
+  const rows: { y: number; x0: number; x1: number; n: number; span: number }[] = [];
+  for (let y = ya; y <= yb; y++) {
+    if (onLine(y)) continue;
+    // 这一行在窗口外左右各一格也算上的墨宽：加线比头宽，只在窗口里数分不开
+    let span = 0;
+    for (let x = Math.max(0, xa - Math.round(sp)); x <= Math.min(bin.w - 1, xb + Math.round(sp)); x++) span += bin.data[y * bin.w + x];
+    let n = 0;
+    let x0 = Infinity;
+    let x1 = -Infinity;
+    for (let x = xa; x <= xb; x++) {
+      if (Math.abs(x - sx) <= lw || !bin.data[y * bin.w + x]) continue;
+      n++;
+      x0 = Math.min(x0, x);
+      x1 = Math.max(x1, x);
+    }
+    rows.push({ y, x0, x1, n, span });
+  }
+  // 加线行：连窗口外一共横贯 1.8 格以上、上下三行外就没这么宽了（薄）；两侧紧挨着头那几行的（加线穿过头）留着
+  const wide = (i: number) => rows[i].span >= sp * 1.8;
+  const thin = (i: number) => wide(i) && [-3, 3].every((k) => rows[i + k] === undefined || rows[i + k].span < sp * 1.8);
+  // 加线的边行墨常不齐（宽不到 1.8 格），挨着加线两行内的也算加线
+  const led = rows.filter((_, i) => thin(i)).map((r) => r.y);
+  const onLed = (r: { y: number }) => led.some((y) => Math.abs(y - r.y) <= 2);
+  const keep = rows.filter((r) => r.n >= sp * 0.4 && !(onLed(r) && !rows.some((q) => Math.abs(q.y - r.y) <= 4 && !onLed(q) && q.n >= sp * 0.4)));
+  if (!keep.length) return null;
+  const y0 = keep[0].y;
+  const y1 = keep[keep.length - 1].y;
+  // 窗口干那一侧的边外还有头那么宽的墨：头比窗口还长（和弦五度的两个头，齐来谢主歌 m3），窗口截出来的尺寸不作数
+  for (let k = 1; k <= 2; k++) {
+    const y = p.end === "bottom" ? ya - k : yb + k;
+    if (y < 0 || y >= bin.h || onLine(y)) continue;
+    let n = 0;
+    for (let x = xa; x <= xb; x++) if (Math.abs(x - sx) > lw && bin.data[y * bin.w + x]) n++;
+    if (n >= sp * 0.4) return null;
+  }
+  // 横向范围不算加线行（加线穿过头时比头宽）
+  const body = keep.filter((r) => !onLed(r));
+  const x0 = Math.min(...(body.length ? body : keep).map((r) => r.x0));
+  const x1 = Math.max(...(body.length ? body : keep).map((r) => r.x1));
+  // 墨量同样不算加线行（谱线行本来就没数）
+  let area = 0;
+  for (const r of rows) if (r.y >= y0 && r.y <= y1 && !onLed(r)) area += r.n;
+  return { box: { x: x0, y: y0, w: x1 - x0 + 1, h: y1 - y0 + 1 }, area };
 }
 
 /** 斜缝至少这么长（线距的倍数，取外接盒的长边）。 */

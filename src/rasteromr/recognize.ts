@@ -1264,6 +1264,26 @@ export async function recognizeRasterPage(
     const fake = (q: { box: Rect; code: string }) => (q.code === "noteheadHalf" && arch(q.box)) || (q.code === "noteheadWhole" && byBeam(q.box));
     for (const h of heads) if (!dropHead.has(h.comp.id) && fake(h)) dropHead.add(h.comp.id);
     for (let i = stacked.length - 1; i >= 0; i--) if (fake(stacked[i])) stacked.splice(i, 1);
+    // **两根同向的干一左一右夹着的扁块是短杠**：两个十六分之间一格半长的杠没检出成杠原语，连着谱线被收成头
+    //（有一位神 m2）。真头只在一侧有干；两侧的干还往同一头伸，就是杠
+    const shortBeam = (b: Rect) => {
+      if (b.h > unit.space * 0.8) return false;
+      const tol = unit.space * 0.25;
+      const dirAt = (x: number): number => {
+        for (const v of prims.vSegs) {
+          const vx = (v.x0 + v.x1) / 2;
+          if (Math.abs(vx - x) > tol) continue;
+          const y0 = Math.min(v.y0, v.y1);
+          const y1 = Math.max(v.y0, v.y1);
+          if (y0 >= b.y - tol && y0 <= b.y + b.h + tol && y1 - (b.y + b.h) >= unit.space * 1.5) return 1;
+          if (y1 >= b.y - tol && y1 <= b.y + b.h + tol && b.y - y0 >= unit.space * 1.5) return -1;
+        }
+        return 0;
+      };
+      const l = dirAt(b.x);
+      return l !== 0 && l === dirAt(b.x + b.w);
+    };
+    for (const h of heads) if (h.code === "noteheadBlack" && !dropHead.has(h.comp.id) && shortBeam(h.box)) dropHead.add(h.comp.id);
     const blackBoxes = [...heads.map((h) => h.box), ...split.map((q) => q.box)];
     for (let i = split.length - 1; i >= 0; i--) if (beamStump(split[i].box, blackBoxes)) split.splice(i, 1);
     // 光杆干端头那一路收的实心头：干端正对着网纹粗杠时，杠身被收成头（耶和华是我的牧者 m11）

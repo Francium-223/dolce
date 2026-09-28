@@ -172,6 +172,8 @@ function bootstrapFlags(bin: Binary, pg: SPage, beams: BeamQuad[], unit: RasterU
   // 给它安一个会把二分读成八分。
   const heads = pg.symbols.filter((s) => s.hasTag("Note") && s.code === "noteheadBlack");
   const lineYs = pg.staves.flatMap((stf) => stf.lineYs);
+  /** 干尖右边没长出符尾的干（下面看它是不是接着左邻那道符尾）。 */
+  const bare: { cx: number; far: number; up: boolean }[] = [];
   for (const st of pg.segsWithTag("Stem")) {
     const on = heads.filter(
       (s) => (Math.abs(s.box.left - st.cx) < sp / 3 || Math.abs(s.box.right - st.cx) < sp / 3) && s.box.top < st.bottom && st.top < s.box.bottom,
@@ -225,7 +227,10 @@ function bootstrapFlags(bin: Binary, pg: SPage, beams: BeamQuad[], unit: RasterU
       ? Math.min(sp * 0.5, unit.lineThick * 3)
       : onLineTip ? sp * 0.5 : Math.max(0, Math.min(sp * 0.5, Math.abs(hy - far) - sp * (0.6 + FLAG_TIP_Y)));
     while (frac(offset, offset + FLAG_TIP_Y) < FLAG_TIP && offset * sp < reach) offset += 1 / sp;
-    if (frac(offset, offset + FLAG_TIP_Y) < FLAG_TIP || frac(offset, offset + FLAG_Y) < FLAG_INK) continue;
+    if (frac(offset, offset + FLAG_TIP_Y) < FLAG_TIP || frac(offset, offset + FLAG_Y) < FLAG_INK) {
+      bare.push({ cx: st.cx, far, up: far < hy });
+      continue;
+    }
     if (frac(offset, offset + FLAG_TIP_Y, -1) >= FLAG_LEFT) continue;
     const up = far < hy;
     // **第二个钩**：十六分的两道钩沿符干错开约一格。只认出第一道的话
@@ -285,6 +290,16 @@ function bootstrapFlags(bin: Binary, pg: SPage, beams: BeamQuad[], unit: RasterU
     //（《主我敬拜你》三处，八分附点、附点二分都读成了带尾的八分）
     if (avoid.some((m) => overlapFrac(fbox, m) > FLAG_AVOID)) continue;
     out.push({ box: fbox, code });
+  }
+  // **两个八分的「符尾」连到一起**：左边那根干的符尾弯下来正落在右邻同朝向那根干的尖上（我一生要赞美你 m14 F4–D4），
+  // 右边那根尖上自己的窗口是空的——照抄左邻那道。干尖要落在那道符尾盒里、离盒右缘不过 0.3 格
+  const flagged = out.slice();
+  for (const b of bare) {
+    const f = flagged.find((q) => {
+      const qUp = q.code.endsWith("Up");
+      return qUp === b.up && b.cx > q.box.x + sp * 0.5 && b.cx <= q.box.x + q.box.w + sp * 0.3 && b.far >= q.box.y - 2 && b.far <= q.box.y + q.box.h + 2;
+    });
+    if (f) out.push({ box: { ...f.box, x: Math.round(b.cx) }, code: f.code });
   }
   return out;
 }

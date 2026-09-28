@@ -492,6 +492,8 @@ const KEY_SELF_DIST = 120;
 const BEAM_STUMP_H = 0.65;
 /** 杠端那一截的高度上限（格）：主使我喜乐 m16 杠起头连着干尖、压着第五线，0.69 格。杠中段照旧 `BEAM_STUMP_H`。 */
 const BEAM_END_STUMP_H = 0.8;
+/** 并块拆分、碎块合并那几路出的杠端假头高度上限（格）：有一位神 m10 杠起头连着第五线，0.95 格。 */
+const BEAM_END_MERGED_H = 1.0;
 /** 结构还原号：两根竖笔的间距（格）。 */
 const NAT_GAP = [0.35, 0.8] as const;
 /** 按角色限定认拍号数字（见拍号那一段）：分子只在 2~9 里挑，分母只在 2、4、8 里挑。
@@ -1080,6 +1082,8 @@ export async function recognizeRasterPage(
       // 另一端那个也得够一个头高：杠两头都剩一截的（主使我喜乐 m16）不算
       return !others.some((o) => o !== b && o.h >= unit.space * 0.8 && far.x >= o.x - 2 && far.x <= o.x + o.w + 2 && far.y >= o.y - q.lw && far.y <= o.y + o.h + q.lw);
     });
+  /** 并块拆分、碎块合并那几路出的黑头，正接在杠端又压着杠的中线：杠起头那一截（有一位神 m10、当我们回到天家 m3）。高到一格也算 */
+  const beamStump = (b: Rect, others: Rect[]) => b.h <= unit.space * BEAM_END_MERGED_H && atBeamEnd(b, others) && onBeamLine(b, unit.space);
   // 几何闸那一路同样要剔杠头：善牧恩慈歌放大后，符杠左端提剩的一截 0.86×0.6 格，
   // 刚好卡过实心头的尺寸下限，出了个 F5。只剔**矮**的（不到 0.65 格）：贴着符杠、又被去线
   // 削扁的真头中心也会落在杠的中线上（宁静的伯利恒三个 1.1×0.72 格的，门槛 0.75 时被剔掉）。
@@ -1248,6 +1252,8 @@ export async function recognizeRasterPage(
     const fake = (q: { box: Rect; code: string }) => (q.code === "noteheadHalf" && arch(q.box)) || (q.code === "noteheadWhole" && byBeam(q.box));
     for (const h of heads) if (!dropHead.has(h.comp.id) && fake(h)) dropHead.add(h.comp.id);
     for (let i = stacked.length - 1; i >= 0; i--) if (fake(stacked[i])) stacked.splice(i, 1);
+    const blackBoxes = [...heads.map((h) => h.box), ...split.map((q) => q.box)];
+    for (let i = split.length - 1; i >= 0; i--) if (beamStump(split[i].box, blackBoxes)) split.splice(i, 1);
   }
   const syms: RasterSym[] = [
     ...heads.filter((h) => !dropHead.has(h.comp.id)).map((h) => ({ box: h.box, code: h.code })),
@@ -1389,6 +1395,7 @@ export async function recognizeRasterPage(
     if (!code) continue;
     // 位置闸与字典那一路一样：并出来的扁块也要贴着第二、三线
     if (isBarRest(code) && (!nearRestLine(box, staffLines, unit) || besideStem(box))) continue;
+    if (code === "noteheadBlack" && beamStump(box, syms.filter((s0) => /^notehead/.test(s0.code)).map((s0) => s0.box))) continue;
     for (const id of group) merged.add(id);
     syms.push({ box, code });
     ledger.claim(box, `merge:${code}`);

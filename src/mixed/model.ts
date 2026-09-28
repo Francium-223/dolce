@@ -2533,24 +2533,7 @@ export class SysStaff {
 
     // 自动铺排（原谱没坐标）再看几样 musicpp 不看的上沿：符头（朝下符干的高音）、上方记号、上方延音线、
     // 跨行的上方弧。五线谱档的和弦也靠这个 minY 定高（`painter.ts::placeAboveStaff`）
-    if (sys.score.autoLayout) {
-      const sub = this.partStaff.subIndex;
-      for (let m = first; m < first + cnt; m++) {
-        for (const ch of pt.measures[m]?.chords ?? []) {
-          if (ch.rest || ch.notes[0]?.staff !== sub) continue;
-          let top = Infinity;
-          for (const nt of ch.notes) top = Math.min(top, nt.cy() - 6);
-          if (fLt(ch.noteType, new Fraction(4)) && ch.stemUp) top = Math.min(top, ch.tailY(true));
-          if (ch.hasNotation(true)) top -= 20;
-          miny = Math.min(miny, top);
-        }
-      }
-      const arcs = [
-        ...pt.tied.map((t) => tiedEnds(sys, eng, t, Notation.Normal)),
-        ...pt.slurs.map((sl) => slurEnds(sys, eng, sl, Notation.Normal)),
-      ];
-      for (const e of arcs) if (e?.above) miny = Math.min(miny, arcExtent(e)[0] - 2);
-    }
+    if (sys.score.autoLayout) miny = Math.min(miny, this.autoExtent(sys)[0]);
 
     this.minY = miny;
 
@@ -2611,7 +2594,60 @@ export class SysStaff {
     this.harmonyY = -yval + dy;
   }
 
-  /** SysStaff::getYBound（model.cpp:2745）。返回 [top, bot]（top 为上方延伸量，向上为正）。 */
+  /** 自动铺排（原谱没坐标）时本谱表在这一行的内容上下沿 [top, bottom]（cy 口径，向下为正）：符头（含加线）、符干端、
+   *  上下方记号、画出来的弧（`slurEnds`/`tiedEnds` + `arcExtent`，跨行的按本行那一截）、连音数字。
+   *  musicpp 的 `getYBound` 只看朝上/朝下符干端和最低的符头，朝下符干的高音、上方弧与连音数字都不算，
+   *  行距就按它排、高音压到上一行谱上（issue 9）。 */
+  autoExtent(sys: Sys): [number, number] {
+    const eng = sys.score.options;
+    const pt = this.part();
+    const sub = this.partStaff.subIndex;
+    const four = new Fraction(4);
+    let top = 0;
+    let bot = 40;
+    for (const mif of sys.measures) {
+      for (const ch of pt.measures[mif.index]?.chords ?? []) {
+        if (ch.rest || ch.notes[0]?.staff !== sub) continue;
+        let hi = Infinity;
+        let lo = -Infinity;
+        for (const nt of ch.notes) {
+          hi = Math.min(hi, nt.cy() - 6);
+          lo = Math.max(lo, nt.cy() + 6);
+        }
+        if (fLt(ch.noteType, four)) {
+          if (ch.stemUp) hi = Math.min(hi, ch.tailY(true));
+          else lo = Math.max(lo, ch.tailY(false));
+        }
+        if (ch.hasNotation(true)) hi -= 20;
+        if (ch.hasNotation(false)) lo += 20;
+        top = Math.min(top, hi);
+        bot = Math.max(bot, lo);
+      }
+    }
+    const arcs = [
+      ...pt.tied.filter((t) => t.startNote?.staff === sub).map((t) => tiedEnds(sys, eng, t, Notation.Normal)),
+      ...pt.slurs.filter((sl) => sl.startNote?.staff === sub).map((sl) => slurEnds(sys, eng, sl, Notation.Normal)),
+    ];
+    for (const e of arcs) {
+      if (!e) continue;
+      const [a, b] = arcExtent(e);
+      if (e.above) top = Math.min(top, a - 2);
+      else bot = Math.max(bot, b + 2);
+    }
+    const fsScale = eng.musicFont.size / 40;
+    for (const t of pt.tuplets) {
+      if (t.startNote?.staff !== sub || !sys.contains(t.startTick) || !sys.contains(t.endTick)) continue;
+      const [ly, ry] = t.staffEnds();
+      const g0 = Tuplet.makeNumber(t.timeModification.denominator)[0] ?? "";
+      const half = (smuflTop(eng.meta, g0) - smuflBottom(eng.meta, g0)) * fsScale / 2 + 2;
+      if (t.above) top = Math.min(top, (ly + ry) / 2 - half);
+      else bot = Math.max(bot, (ly + ry) / 2 + half);
+    }
+    return [top, bot];
+  }
+
+  /** SysStaff::getYBound（model.cpp:2745）。返回 [top, bot]（top 为上方延伸量，向上为正）。
+   *  自动铺排再并上 `autoExtent`。 */
   getYBound(sys: Sys): [number, number] {
     let minY = -60;
     let maxY = -Infinity;
@@ -2686,6 +2722,11 @@ export class SysStaff {
       }
     }
     if (maxY === -Infinity) maxY = 0;
+    if (sys.score.autoLayout) {
+      const [top, bot] = this.autoExtent(sys);
+      maxY = Math.max(maxY, -top);
+      minY = Math.min(minY, -bot);
+    }
     return [maxY, minY];
   }
 }

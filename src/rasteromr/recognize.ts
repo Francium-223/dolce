@@ -1191,12 +1191,37 @@ export async function recognizeRasterPage(
       stacked.push(hd);
     }
   }
-  // 弧与谱线围出的空当当成了空心头的内腔（`notehead.ts::archCavity`），剔掉，墨留给弧那一步
+  // 弧与谱线围出的空当当成了空心头的内腔（`notehead.ts::archCavity`），剔掉，墨留给弧那一步；
   {
     const onStaffLine = (y: number) => gridYs.some((ly) => Math.abs(ly - y) <= unit.lineThick / 2);
     const arch = (b: Rect) => archCavity(raster.bin, b, onStaffLine);
-    for (const h of heads) if (h.code === "noteheadHalf" && !dropHead.has(h.comp.id) && arch(h.box)) dropHead.add(h.comp.id);
-    for (let i = stacked.length - 1; i >= 0; i--) if (stacked[i].code === "noteheadHalf" && arch(stacked[i].box)) stacked.splice(i, 1);
+    // 全音符**贴着符杠、又有干穿过**的也不是：两层十六分杠、干与头围出的白被收成全音符（万福泉源歌 m13）。
+    // 全音符不带干，不会与杠挨着（上下 0.2 格、横向盖住半个头以上），盒里也不会有往外伸出一格的竖段。
+    // 两条都要：粗圈的全音符自己就会被当成一截杠（我一生要赞美你，只看杠 −4.0）
+    const tol = unit.space * 0.2;
+    const byBeam = (b: Rect) =>
+      prims.beams.some((q) => {
+        const ov = Math.min(b.x + b.w, q.box.x + q.box.w) - Math.max(b.x, q.box.x);
+        return ov >= b.w * 0.5 && q.box.y < b.y + b.h + tol && q.box.y + q.box.h > b.y - tol;
+      }) &&
+      stemInBox(b);
+    /** 盒里有没有一列墨（去线图上）从盒里一直往上或往下伸出一格以上：干常与头、杠连成一块，竖段表里没有 */
+    const stemInBox = (b: Rect): boolean => {
+      const ink = (x: number, y: number) => y >= 0 && y < nl.h && !!nl.data[y * nl.w + x];
+      const my = Math.round(b.y + b.h / 2);
+      for (let x = Math.max(0, b.x); x < Math.min(nl.w, b.x + b.w); x++) {
+        let t = my;
+        let d = my;
+        if (!ink(x, my)) continue;
+        while (ink(x, t - 1)) t--;
+        while (ink(x, d + 1)) d++;
+        if (b.y - t >= unit.space || d - (b.y + b.h) >= unit.space) return true;
+      }
+      return false;
+    };
+    const fake = (q: { box: Rect; code: string }) => (q.code === "noteheadHalf" && arch(q.box)) || (q.code === "noteheadWhole" && byBeam(q.box));
+    for (const h of heads) if (!dropHead.has(h.comp.id) && fake(h)) dropHead.add(h.comp.id);
+    for (let i = stacked.length - 1; i >= 0; i--) if (fake(stacked[i])) stacked.splice(i, 1);
   }
   const syms: RasterSym[] = [
     ...heads.filter((h) => !dropHead.has(h.comp.id)).map((h) => ({ box: h.box, code: h.code })),

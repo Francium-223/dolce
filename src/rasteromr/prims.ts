@@ -811,11 +811,14 @@ function partialBeams(bin: Binary, beams: BeamQuad[], unit: RasterUnit, vSegs: L
     for (const side of [-1, 1])
       for (const [end, dir] of starts) {
         const cols: { x: number; y0: number; y1: number }[] = [];
+        // 已收了几列后容断几列：杠里的白洞（网点扫描）让个别列读不出（当我们回到天家 m11 只收到 7 列）
+        let skip = 0;
+        const skipTol = sp * 0.25;
         for (let k = 0; k < sp * 1.6; k++) {
           const x = end + dir * k;
           let y = Math.round(yAt(x));
           if (!ink(x, y)) {
-            if (cols.length) break;
+            if (cols.length && ++skip > skipTol) break;
             continue;
           }
           // 跨过杠本身，顺带量这一列的杠厚（平均线宽对斜杠估得偏薄：当我们回到天家 5.96px，实际 8~10）
@@ -842,7 +845,7 @@ function partialBeams(bin: Binary, beams: BeamQuad[], unit: RasterUnit, vSegs: L
           if (!fits(r)) r = runLen(holeTol);
           const ok = g >= 1 && g <= sp * 0.6 && fits(r);
           if (!ok) {
-            if (cols.length || k > sp * 0.4) break;
+            if (cols.length ? ++skip > skipTol : k > sp * 0.4) break;
             continue;
           }
           cols.push({ x, y0: Math.min(s0, s0 + side * (r - 1)), y1: Math.max(s0, s0 + side * (r - 1)) });

@@ -2065,6 +2065,10 @@ export async function recognizeRasterPage(
         if (joined.length && !syms.some((s0) => overlapFrac(box, s0.box) > 0.5)) r = headFromStemBlock(raster.bin, box, area, masks, unit, pitchGrid, onLineY, nl);
       }
       if (!r) continue;
+      // **两根通高竖笔的是升号**：谱表外的升号（两道粗斜横笔）也摘得出一个「头 + 干 + 尾」
+      //（当我们回到天家 m15 低音 E4 前的升号收成 E4 八分）。头 + 干的块只有一根通高的竖笔。
+      // 不摘就是了，块留给后面临时记号那几路
+      if (!joined.length && b.w <= unit.space * 1.05 && b.h <= unit.space * 3.4 && tallStrokes(raster.bin, b) === 2) continue;
       for (const id of joined) merged.add(id);
       // 已有符头压着的不重复出（长干两头的那一档：万古磐石歌的 B♭3/B♭2 别的路已认出，再出一遍成了四个音）
       const dup = (hb: Rect) => [...syms, ...stemHeads].some((s0) => /^notehead/.test(s0.code) && overlapFrac(hb, s0.box) > 0.3);

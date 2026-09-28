@@ -494,7 +494,7 @@ function beamConnect(b: BeamShape, st: StemInfo, sp: number): BeamHit {
  * 而**时值要看这根符干上最高的那一层**。musicpp 的办法是先按「共享符干且 x 区间重叠」
  * 归组，组内按「在组左端 x 处的 y」排序，逐条隔开四分之一格就升一层。
  */
-export function calcBeamLevels(beams: BeamShape[], stems: StemInfo[], sp: number): void {
+export function calcBeamLevels(beams: BeamShape[], stems: StemInfo[], sp: number, heads: { left: number; right: number; top: number; bottom: number }[] = []): void {
   const conn = new Map<BeamShape, { st: StemInfo; hit: BeamHit }[]>();
   const kept: BeamShape[] = [];
   for (const b of beams) {
@@ -530,6 +530,34 @@ export function calcBeamLevels(beams: BeamShape[], stems: StemInfo[], sp: number
       if (!conn.get(bj)!.some((h) => si.has(h.st))) continue;
       grp.push(bj);
       done.add(bj);
+    }
+    // **连杠两端都要有音**（用户：beam 要求两端都有音符）：只接上一根干的一组，离那根干远的一端 0.8 格内没有别的符头，
+    // 就不是符杠——干尖碰着的歌词字横笔（欢然颂主 m3「圣」、齐来崇拜 m6）、贴着头的连音线（晨曦破晓 m6）。
+    // 另一端有头、只是干没接上的真符杠照留（奇异恩典 m10、数算主恩 m9）
+    const hitsOf = grp.flatMap((g) => conn.get(g)!);
+    const only = new Set(hitsOf.map((h) => h.st));
+    // 干落在杠端（begin / end）的也照留：另一端的音可能整个没认出来（主我敬拜你 m6 左邻是字典认的整块音符）
+    if (only.size < 2 && hitsOf.every((h) => h.hit === "middle")) {
+      const st = hitsOf[0].st;
+      const gx0 = Math.min(...grp.map((g) => g.x0));
+      const gx1 = Math.max(...grp.map((g) => g.x1));
+      const gy0 = Math.min(...grp.map((g) => g.box.top));
+      const gy1 = Math.max(...grp.map((g) => g.box.bottom));
+      const far = Math.abs(gx0 - st.seg.cx) > Math.abs(gx1 - st.seg.cx) ? gx0 : gx1;
+      const mine = new Set(st.notes.map((n) => n.box));
+      // 另一端的头与这根干上的头在杠的同一侧（干朝同一个方向），别把下一行谱表的头算进来
+      const above = st.notes.reduce((a, n) => a + (n.box.top + n.box.bottom) / 2, 0) / st.notes.length < (gy0 + gy1) / 2;
+      const headAtFar = heads.some((h) => {
+        if (mine.has(h as never) || h.right < far - sp * 0.8 || h.left > far + sp * 0.8) return false;
+        const cy = (h.top + h.bottom) / 2;
+        return above ? cy < gy0 && cy > gy0 - sp * 4.5 : cy > gy1 && cy < gy1 + sp * 4.5;
+      });
+      // 干离杠的近端不到半格的也算落在杠端（`beamConnect` 的端点容差只有五分之一格，短杠的端常宽出一截：主使我喜乐 m16）
+      const nearEnd = Math.min(Math.abs(gx0 - st.seg.cx), Math.abs(gx1 - st.seg.cx)) < sp * 0.5;
+      if (!headAtFar && !nearEnd) {
+        for (const { st: s0 } of hitsOf) s0.beams = s0.beams.filter((q) => !grp.includes(q));
+        continue;
+      }
     }
     // 定层：以组头的左端 x 为基准，按「离符头那一端有多远」从近到远排。
     // musicpp 是按符干朝向决定升序还是降序；本仓改用**到符头端的距离**——
@@ -682,7 +710,7 @@ export function buildNotes(
   const sp = pg.normalStaffSpace || pg.space;
   const stems = buildStems(pg, sp);
   stemsOut?.push(...stems);
-  calcBeamLevels(beams, stems, sp);
+  calcBeamLevels(beams, stems, sp, pg.symbols.filter((q) => q.code.startsWith("notehead")).map((q) => q.box));
   // 符头 → 它那根符干
   const stemOf = new Map<Sym, StemInfo>();
   for (const st of stems) for (const n of st.notes) if (!stemOf.has(n)) stemOf.set(n, st);

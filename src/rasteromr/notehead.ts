@@ -461,8 +461,18 @@ export function hollowHeadsFromHoles(
       if (Math.min(s0.y0, s0.y1) > hole.y || Math.max(s0.y0, s0.y1) < hole.y + hole.h) return false;
       const onLeft = Math.abs(cx + half - hole.x) <= 1.5, onRight = Math.abs(hole.x + hole.w - (cx - half)) <= 1.5;
       if (!onLeft && !onRight) return false;
+      // 旁边那个洞要够得上内腔的尺寸：头与谱线之间的小三角白不算
       return holes.some((o) => {
         if (o === hole || Math.abs(o.y + o.h / 2 - hcy) > sp * 0.3) return false;
+        if (o.w < sp * HOLE_W[0] || o.h < sp * HOLE_H[0]) return false;
+        // 旁边那个洞的另一侧也贴着一根小节线形竖段的，是小节线与谱线围出的一格空当（赞美三一真神 m15，
+        // 小节线与共干 G3 二分之间），不是真内腔
+        const far = bars.some((s1) => {
+          if (s1 === s0) return false;
+          const h1 = s1.maxLw / 2, x1 = (s1.x0 + s1.x1) / 2;
+          return onLeft ? Math.abs(o.x + o.w - (x1 - h1)) <= 1.5 : Math.abs(x1 + h1 - o.x) <= 1.5;
+        });
+        if (far) return false;
         return onLeft ? o.x > hole.x && o.x <= hole.x + hole.w + sp : o.x + o.w < hole.x + hole.w && o.x + o.w >= hole.x - sp;
       });
     });

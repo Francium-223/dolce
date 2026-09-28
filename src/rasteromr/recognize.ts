@@ -1439,6 +1439,9 @@ export async function recognizeRasterPage(
     // 谱面上行首那一段是死的：谱号 + 调号最多占几格，真正的休止在它右边。
     if (nearStaffStart(b, groups, staffLefts, unit)) continue;
     if (sharpCrossbars(nl, b, unit)) continue;
+    // 已认的符头盖住大半的块不是休止：按内腔找的空心头不认领块，斜腔的「8」字叠头
+    // 去线后正是这副个头（《你的信实广大》末小节）
+    if (syms.reduce((a, s0) => a + (s0.code.startsWith("notehead") ? overlapFrac(b, s0.box) : 0), 0) > 0.6) continue;
     merged.add(c.id);
     const code = isEighthRest(nl, b, c.area, unit) ? "rest8th" : "restQuarter";
     syms.push({ box: b, code });

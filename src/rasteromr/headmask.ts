@@ -363,6 +363,8 @@ const STEM_SCORE_MIN_POOLED = 0.34;
 /** 同一根符干上再找和弦头：从端上那个头往里找多远（格）、最多几个头、得分闸。 */
 /** 干尖附近的同干和弦候选：去线图上头盒墨占比下限（再空是符尾根部）。 */
 const TIP_FLAG_FILL = 0.6;
+/** 离干尖多少格以内的同干和弦候选要验墨占（主使我喜乐 m4 那团符尾根部离干尖 1.6 格）。 */
+const TIP_FLAG_REACH = 2;
 const CHORD_REACH = 2.5;
 const CHORD_MAX = 3;
 const CHORD_SCORE_MIN = 0.45;
@@ -519,11 +521,11 @@ export function headFromStemBlock(
   // 上面的 B♭4、下面的 F3 整批漏掉）。只找「贴着第一个头的 x、纵向隔开至少 0.8 格」的，
   // 得分闸更严——这里已经不是端点，符尾、弧线蹭过的地方也在范围里。
   const atTop = best.y - box.y < box.h + box.y - best.y;
-  /** 离干尖 1.5 格内、去线图上盒里的墨不到六成：是干尖符尾根部那一团，不是同干和弦的头
+  /** 离干尖 2 格内、去线图上盒里的墨不到六成：是干尖符尾根部那一团，不是同干和弦的头
    *（有一位神 m14 朝下的干，符尾根部压在谱线上，谱线撑满了那一行，读成了 E4；那块墨占 0.48~0.51，实心头约 0.75）。
    *  离干尖多远一律不收试过：两声部共干的头也贴着干尖（独唱谱音符 −0.09）。 */
   const tipFlag = (x: number, g: number): boolean => {
-    if (!nl || (atTop ? box.y + box.h - g : g - box.y) >= sp * 1.5) return false;
+    if (!nl || (atTop ? box.y + box.h - g : g - box.y) >= sp * TIP_FLAG_REACH) return false;
     let ink = 0, n = 0;
     for (let y = Math.round(g - hh / 2); y < Math.round(g + hh / 2); y++)
       for (let xx = Math.round(x - hw / 2); xx < Math.round(x + hw / 2); xx++) {

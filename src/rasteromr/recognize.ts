@@ -1911,6 +1911,26 @@ export async function recognizeRasterPage(
             m = asKey(box);
           }
         }
+        // 还不像，就把**块左缘往上伸的竖笔**接回来：降号的竖笔上半截去线后断开、没进块，
+        // 剩下的肚子连着下半截竖笔只有 1.9 格高（高举主大能第四行低音谱表，读成 B♭2 头 + 干）
+        if (!m) {
+          // 原图（带谱线）上，块左缘三成格内的列从块顶往上还连着墨的，量到最高处
+          const bin = raster.bin;
+          let top = b.y;
+          for (let x = b.x; x <= Math.min(bin.w - 1, b.x + Math.round(unit.space * 0.3)); x++) {
+            let y = b.y;
+            while (y > 0 && bin.data[(y - 1) * bin.w + x]) y--;
+            if (bin.data[b.y * bin.w + x]) top = Math.min(top, y);
+          }
+          if (b.y - top >= unit.space * 0.3) {
+            const u = { x: b.x, y: top, w: b.w, h: b.y + b.h - top };
+            const m2 = asKey(u);
+            if (m2 && m2.smufl === "accidentalFlat") {
+              box = u;
+              m = m2;
+            }
+          }
+        }
         // 还不像，就把**同一列**（一格宽）里的碎块整列并起来：细笔画的降号被谱线切成上下几截，
         // 截与截之间空着去掉的那条线（所信有根基：B♭ 断在中线上下、隔 0.46 格，D♭ 碎成四块）
         if (!m) {

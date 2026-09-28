@@ -2140,8 +2140,12 @@ export async function recognizeRasterPage(
       // **长得像休止的块先按休止收**：粗体铅字本的四分休止（1.0×3.1 格）字典里没有这一类，
       // 尺寸又正落在「头 + 干」这一档，被摘出一个假头（《主我敬拜你》第八小节的休止成了 E4）。
       // 与 Maestro 的休止模板比，距离 77；真的「头 + 干（+ 尾）」块一个都比不上。
-      const rm = matchTemplate(binSig(nl, b), b.w / unit.space, b.h / unit.space, restTpl);
-      const rs = rm ?? (isEighthRest(nl, b, c.area, unit) ? { smufl: "rest8th" as SmuflName } : null);
+      // 块里有一根几乎通高的直竖笔的是干（有一位神 m11 加线下的八分，干 + 尾连着下面的歌词，配上了四分休止模板）。
+      // 四分休止是折线，粗体的最长竖墨也到不了块高的八成五
+      const vr = longestVRun(raster.bin, b);
+      const straight = vr >= b.h * 0.85 && vr >= unit.space * 2.5;
+      const rm = straight ? null : matchTemplate(binSig(nl, b), b.w / unit.space, b.h / unit.space, restTpl);
+      const rs = rm ?? (!straight && isEighthRest(nl, b, c.area, unit) ? { smufl: "rest8th" as SmuflName } : null);
       if (rs) {
         stemHeads.push({ box: b, code: rs.smufl });
         ledger.claim(b, `rest:${rs.smufl}`);

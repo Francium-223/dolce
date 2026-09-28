@@ -3819,12 +3819,15 @@ function splitUnisons(notes: StaffNote[], stems: StemInfo[], beams: BeamShape[],
     if (n.rest || n.grace || up.has(n.sym) === down.has(n.sym)) continue;
     const b = n.sym.box;
     const w = b.right - b.left;
+    // 窗口往头外放 0.25 格：另一根干常离头缘两三像素（倚靠主永远膀臂 m13 低音 A♭3，朝上的干在右缘外 2~4px）。
+    // 「反方向没有墨」那道照旧只看头缘内：放宽了会碰上旁边的墨（万古磐石歌 m6 F3）
+    const out = Math.max(1, sp * 0.25);
     if (up.has(n.sym)) {
-      const [x0, x1] = [b.left - 1, b.left + w * 0.3];
-      if (reach(x0, x1, b.bottom, 1) >= sp * UNISON_REACH && reach(x0, x1, b.top, -1) < sp * 0.5 && clear(n.sym, x0, x1, b.bottom + 1, b.bottom + sp * UNISON_REACH) && headRows(x0, x1, b.bottom + 2, b.bottom + sp * UNISON_REACH) < sp * 0.3) down.add(n.sym);
+      const [x0, x1] = [b.left - out, b.left + w * 0.3];
+      if (reach(x0, x1, b.bottom, 1) >= sp * UNISON_REACH && reach(b.left - 1, x1, b.top, -1) < sp * 0.5 && clear(n.sym, x0, x1, b.bottom + 1, b.bottom + sp * UNISON_REACH) && headRows(x0, x1, b.bottom + 2, b.bottom + sp * UNISON_REACH) < sp * 0.3) down.add(n.sym);
     } else {
-      const [x0, x1] = [b.right - w * 0.3, b.right + 1];
-      if (reach(x0, x1, b.top, -1) >= sp * UNISON_REACH && reach(x0, x1, b.bottom, 1) < sp * 0.5 && clear(n.sym, x0, x1, b.top - sp * UNISON_REACH, b.top - 1) && headRows(x0, x1, b.top - sp * UNISON_REACH, b.top - 2) < sp * 0.3) up.add(n.sym);
+      const [x0, x1] = [b.right - w * 0.3, b.right + out];
+      if (reach(x0, x1, b.top, -1) >= sp * UNISON_REACH && reach(x0, b.right + 1, b.bottom, 1) < sp * 0.5 && clear(n.sym, x0, x1, b.top - sp * UNISON_REACH, b.top - 1) && headRows(x0, x1, b.top - sp * UNISON_REACH, b.top - 2) < sp * 0.3) up.add(n.sym);
     }
   }
   /** 朝下那根「干」其实是头下方歌词字的一笔：头下 1.2 格内先是一段细墨、接着连续几行 0.9~2.4 格宽的横墨（字的横笔）。

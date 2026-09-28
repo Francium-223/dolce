@@ -2890,7 +2890,12 @@ export async function recognizeRasterPage(
       const inRow = (n: StaffNote) => {
         const cx = (n.sym.box.left + n.sym.box.right) / 2;
         const cy = (n.sym.box.top + n.sym.box.bottom) / 2;
-        if (cy < n.staff.box.bottom + unit.space) return false;
+        // 谱表**上方**也一样：两行谱之间的词归上一行谱，可字的笔画被收成头时落到了下一行谱的上加线区
+        //（倚靠主永远膀臂 m3「穌」、大地风光 m3「愛」，低音谱表上方 2.4 格的空心头）
+        const below = cy >= n.staff.box.bottom + unit.space;
+        // 上方只看两格开外：一两格上的是上加线的真音，上一行谱的歌词紧贴着它（当我们回到天家末行八个高音、−2.7）
+        // 只剔空心头（字里的口字框才围得出内腔）：实心的多半是高声部的真音（合唱谱扫描档 −0.15）
+        if (!below && (cy > n.staff.box.top - unit.space * 2 || n.sym.code === "noteheadBlack")) return false;
         // 中心要落在（贴着）某个字格上：字被拆散时，剩下的笔画就在旁边成了字格；
         // 真的低音符头旁边没有字格压着（合唱谱谱表间距窄，歌词行离低音符头常只有一格，
         // 只看「落在行里」实测会误删真音）
@@ -2905,7 +2910,7 @@ export async function recognizeRasterPage(
           // 残格高 15、字高 40，头中心在残格上方 7px、谱表下 2.4 格，按残格判就漏了）。
           // 只放宽不到字高六成的格、且头在谱表下两格开外：一律按整行高判，齐来称颂、齐来谢主歌各误删一个
           // 真的低音；合唱谱破碎两处谱表下一格的加一线音也被删
-          const far = cy >= n.staff.box.bottom + unit.space * 2;
+          const far = below ? cy >= n.staff.box.bottom + unit.space * 2 : cy <= n.staff.box.top - unit.space * 2;
           return r.cells.some((c) => {
             const [y0, y1] = far && c.h < r.charH * 0.6 ? [top, bot] : [c.y, c.y + c.h];
             return cx > c.x - pad(r) && cx < c.x + c.w + pad(r) && cy > y0 - pad(r) && cy < y1 + pad(r);

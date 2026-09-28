@@ -1082,8 +1082,22 @@ export async function recognizeRasterPage(
       // 另一端那个也得够一个头高：杠两头都剩一截的（主使我喜乐 m16）不算
       return !others.some((o) => o !== b && o.h >= unit.space * 0.8 && far.x >= o.x - 2 && far.x <= o.x + o.w + 2 && far.y >= o.y - q.lw && far.y <= o.y + o.h + q.lw);
     });
+  /**
+   * 块有六成高度落在一条够厚（0.35 格以上）符杠的**杠身**里：网纹粗杠的中段被收成头（耶和华是我的牧者 m11，
+   * 杠拟合厚 0.51 格，头 1.33×0.9 格的 0.68 在杠带里）。真头不会埋在杠身里
+   */
+  const inBeamBody = (b: Rect) => {
+    const cxb = b.x + b.w / 2;
+    return prims.beams.some((q) => {
+      if (q.lw < unit.space * 0.35 || cxb < Math.min(q.x0, q.x1) || cxb > Math.max(q.x0, q.x1)) return false;
+      const t = q.x1 === q.x0 ? 0 : (cxb - q.x0) / (q.x1 - q.x0);
+      const yc = q.y0 + (q.y1 - q.y0) * t;
+      const ov = Math.min(b.y + b.h, yc + q.lw / 2 + 1) - Math.max(b.y, yc - q.lw / 2 - 1);
+      return ov >= b.h * 0.6;
+    });
+  };
   /** 并块拆分、碎块合并那几路出的黑头，正接在杠端又压着杠的中线：杠起头那一截（有一位神 m10、当我们回到天家 m3）。高到一格也算 */
-  const beamStump = (b: Rect, others: Rect[]) => b.h <= unit.space * BEAM_END_MERGED_H && atBeamEnd(b, others) && onBeamLine(b, unit.space);
+  const beamStump = (b: Rect, others: Rect[]) => inBeamBody(b) || (b.h <= unit.space * BEAM_END_MERGED_H && atBeamEnd(b, others) && onBeamLine(b, unit.space));
   // 几何闸那一路同样要剔杠头：善牧恩慈歌放大后，符杠左端提剩的一截 0.86×0.6 格，
   // 刚好卡过实心头的尺寸下限，出了个 F5。只剔**矮**的（不到 0.65 格）：贴着符杠、又被去线
   // 削扁的真头中心也会落在杠的中线上（宁静的伯利恒三个 1.1×0.72 格的，门槛 0.75 时被剔掉）。
@@ -1091,6 +1105,7 @@ export async function recognizeRasterPage(
   const heads = rawHeads.filter((hd) => {
     if (hd.code !== "noteheadBlack") return true;
     const end = atBeamEnd(hd.box, rawHeads.map((o) => o.box));
+    if (inBeamBody(hd.box)) return false;
     return hd.box.h >= unit.space * (end ? BEAM_END_STUMP_H : BEAM_STUMP_H) || !onBeamLine(hd.box, end ? unit.space : 0);
   });
   const claimed = new Set([...heads.map((h) => h.comp.id), ...restIds, ...harmonyIds]);
@@ -1254,6 +1269,8 @@ export async function recognizeRasterPage(
     for (let i = stacked.length - 1; i >= 0; i--) if (fake(stacked[i])) stacked.splice(i, 1);
     const blackBoxes = [...heads.map((h) => h.box), ...split.map((q) => q.box)];
     for (let i = split.length - 1; i >= 0; i--) if (beamStump(split[i].box, blackBoxes)) split.splice(i, 1);
+    // 光杆干端头那一路收的实心头：干端正对着网纹粗杠时，杠身被收成头（耶和华是我的牧者 m11）
+    for (let i = stacked.length - 1; i >= 0; i--) if (stacked[i].code === "noteheadBlack" && inBeamBody(stacked[i].box)) stacked.splice(i, 1);
   }
   const syms: RasterSym[] = [
     ...heads.filter((h) => !dropHead.has(h.comp.id)).map((h) => ({ box: h.box, code: h.code })),

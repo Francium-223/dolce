@@ -2024,7 +2024,7 @@ export async function recognizeRasterPage(
         ledger.claim(b, `rest:${rs.smufl}`);
         continue;
       }
-      let r = headFromStemBlock(raster.bin, b, c.area, masks, unit, pitchGrid, onLineY);
+      let r = headFromStemBlock(raster.bin, b, c.area, masks, unit, pitchGrid, onLineY, nl);
       // **空心头被去线切成两半**：右半个圈与干连成一块（不到一个头宽），左半个圈是另一小块（我一生要赞美你 m13 F4 附点二分）。
       // 块窄过一个头时，把干端一格内、左右紧贴着的无主小块并进来再判
       const joined: number[] = [];
@@ -2044,7 +2044,7 @@ export async function recognizeRasterPage(
           area += c2.area;
           joined.push(c2.id);
         }
-        if (joined.length && !syms.some((s0) => overlapFrac(box, s0.box) > 0.5)) r = headFromStemBlock(raster.bin, box, area, masks, unit, pitchGrid, onLineY);
+        if (joined.length && !syms.some((s0) => overlapFrac(box, s0.box) > 0.5)) r = headFromStemBlock(raster.bin, box, area, masks, unit, pitchGrid, onLineY, nl);
       }
       if (!r) continue;
       for (const id of joined) merged.add(id);

@@ -810,7 +810,9 @@ export async function recognizeRasterPage(
   const frames: LineFrame[] = groups.map((g, i) => ({
     top: staffGeoms[i].top,
     bottom: staffGeoms[i].bottom,
-    at: localLineModel(raster.bin, g.lines.map((l) => l.y), staffGeoms[i].left, staffGeoms[i].right, unit),
+    // 量的范围取**最长**那条线：倾斜页上有一条线的投影段在半途断了，按最短的量，右边一截只能拿末桶外推
+    //（颂赞与尊贵第二行右端实测偏 4.5 像素、外推只给 1，m6 的 A4 读成 G4）。线外的桶量不到，按每桶三条以上取中位兜着
+    at: localLineModel(raster.bin, g.lines.map((l) => l.y), Math.min(...g.lines.map((l) => l.left)), Math.max(...g.lines.map((l) => l.right)), unit),
   }));
   const jianpuBands = findJianpuBands(prims.vSegs, staffGeoms, unit);
   // 简谱小节线同 x 的谱表竖段补成整条小节线（细线扫描件被阈值切断的，见 `completeStaffBars`）

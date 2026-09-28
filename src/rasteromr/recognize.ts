@@ -19,7 +19,7 @@ import type { Seg, SPage, Staff, Sym, Tag } from "../staffomr/model";
 import { overlapY } from "../staffomr/model";
 import { buildRasterPage, makeSymObj, makeTextObj, type RasterSym } from "./adapt";
 import { binSig, blobImage, extendVSegs, findBlobs, findBraces, findPrimitives, groupByLeftInk, ledgerGrid, joinVSegs, removeStaffLines, verticalStrokes, type BeamQuad, type LineSeg, type RasterPrims } from "./prims";
-import { findRasterHeads, hollowHeadsByPitch, headsOnBareStems, probeBareStems, hollowHeadsFromCavities, hollowHeadsAlongStems, hollowHeadsFromHoles, hollowHeadsOnLedgers, hollowSlit, inkColumn, judgeHeadBox, mergeHoles, type PitchStep } from "./notehead";
+import { archCavity, findRasterHeads, hollowHeadsByPitch, headsOnBareStems, probeBareStems, hollowHeadsFromCavities, hollowHeadsAlongStems, hollowHeadsFromHoles, hollowHeadsOnLedgers, hollowSlit, inkColumn, judgeHeadBox, mergeHoles, type PitchStep } from "./notehead";
 import { bootstrapClefs, matchTemplate, RasterGlyphLookup, type BootStaff } from "./rasterglyphs";
 import { sigDistance } from "../omr/glyphdict";
 import { completeStaffBars, cutJianpuStrip, eraseInBand, findJianpuBands, jianpuKey, type JianpuStrip } from "./jianpuband";
@@ -1189,6 +1189,13 @@ export async function recognizeRasterPage(
       stacked.push(hd);
     }
   }
+  // 弧与谱线围出的空当当成了空心头的内腔（`notehead.ts::archCavity`），剔掉，墨留给弧那一步
+  {
+    const onStaffLine = (y: number) => gridYs.some((ly) => Math.abs(ly - y) <= unit.lineThick / 2);
+    const arch = (b: Rect) => archCavity(raster.bin, b, onStaffLine);
+    for (const h of heads) if (h.code === "noteheadHalf" && !dropHead.has(h.comp.id) && arch(h.box)) dropHead.add(h.comp.id);
+    for (let i = stacked.length - 1; i >= 0; i--) if (stacked[i].code === "noteheadHalf" && arch(stacked[i].box)) stacked.splice(i, 1);
+  }
   const syms: RasterSym[] = [
     ...heads.filter((h) => !dropHead.has(h.comp.id)).map((h) => ({ box: h.box, code: h.code })),
     ...stacked,
@@ -1661,7 +1668,9 @@ export async function recognizeRasterPage(
   function sharpAsHeads(ss: RasterSym[], edge: number, onStaff: (r: Rect) => boolean): { heads: RasterSym[]; box: Rect } | null {
     const sp = keySp;
     // 从左往右找：串是逐个往右认的，先配上右边那个会跳过左边那个（齐来称颂低音谱表第二、三个升号）
-    const hs = ss.filter((s0) => s0.code === "noteheadBlack" && onStaff(s0.box) && s0.box.x >= edge - 1 && s0.box.x < edge + sp * 2).sort((a, b) => a.box.x - b.box.x);
+    // 左缘可以伸进前面的盒里 0.3 格：有一位神 m18 行首的 F♯ 左缘压进高音谱号的盒 4px（谱号尾巴往右甩），
+    // 被拆成两个头，从谱号右缘起算就漏了。两根贯通竖笔那道闸（`sharpBox`）挡得住谱号自己的碎块
+    const hs = ss.filter((s0) => s0.code === "noteheadBlack" && onStaff(s0.box) && s0.box.x >= edge - sp * 0.3 && s0.box.x < edge + sp * 2).sort((a, b) => a.box.x - b.box.x);
     // 候选：上下叠着的一对，或者单独一个（另一道横笔没被认成头）
     const sets: RasterSym[][] = [];
     for (const a of hs)

@@ -3798,6 +3798,8 @@ function splitUnisons(notes: StaffNote[], stems: StemInfo[], beams: BeamShape[],
     let rows = 0;
     for (let y = Math.round(Math.min(y0, y1)); y <= Math.max(y0, y1); y++) {
       if (y < 0 || y >= bin.h) continue;
+      // 落在已认符杠上的行不算：干穿过下层的短杠（倚靠主永远膀臂 m13 低音，十六分的第二道杠一格宽）
+      if (beams.some((q) => q.box.left <= x1 && q.box.right >= x0 && y >= q.box.top - 1 && y <= q.box.bottom + 1)) continue;
       let widest = 0;
       for (let x = Math.round(x0); x <= Math.round(x1); x++) {
         if (x < 0 || x >= bin.w || !bin.data[y * bin.w + x]) continue;

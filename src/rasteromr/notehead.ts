@@ -1423,3 +1423,60 @@ export function archCavity(bin: Binary, box: Rect, onLine: (y: number) => boolea
   const top = onLine(best.a - 1) && ws[0] >= most * 0.9 && ws[ws.length - 1] <= most * 0.4 && widening([...ws].reverse()) && !beyond(best.a - 1, -1);
   return bottom || top;
 }
+
+/**
+ * 空心头盒里的内腔**有一侧直接就是符干**吗：八分音符的尾往下弯回来，与干围出一块白（所信有根基 m4、m12，
+ * 我一生要赞美你 m36）。真头的内腔与干之间多半隔着一圈头的墨，挨着内腔的那一列只有头那么高——
+ * 但干从头中间穿过、或压在圈上的字体里也会直接挨着（万口欢唱的骑线二分和弦），所以只配合「落在符尾里」用。
+ * 从盒中段离中心最近的白点灌出内腔（碰到盒边的不算封闭内腔），逐行看内腔最左、最右的白外面挨着的墨，
+ * 那一列的竖墨长两格以上的行过六成就算。
+ */
+export function stemWalledCavity(bin: Binary, box: Rect, sp: number): boolean {
+  const x0 = Math.max(0, box.x);
+  const y0 = Math.max(0, box.y);
+  const x1 = Math.min(bin.w - 1, box.x + box.w - 1);
+  const y1 = Math.min(bin.h - 1, box.y + box.h - 1);
+  const ink = (x: number, y: number) => !!bin.data[y * bin.w + x];
+  const cx = Math.round((x0 + x1) / 2);
+  const cy = Math.round((y0 + y1) / 2);
+  const band = Math.round(box.h * 0.2);
+  let seed: [number, number] | null = null;
+  for (let r = 0; r <= box.w / 2 && !seed; r++)
+    for (let dy = -band; dy <= band && !seed; dy++)
+      for (const dx of [-r, r]) if (!seed && cx + dx > x0 && cx + dx < x1 && cy + dy > y0 && cy + dy < y1 && !ink(cx + dx, cy + dy)) seed = [cx + dx, cy + dy];
+  if (!seed) return false;
+  const w = x1 - x0 + 1;
+  const seen = new Uint8Array(w * (y1 - y0 + 1));
+  const stack: [number, number][] = [seed];
+  seen[(seed[1] - y0) * w + seed[0] - x0] = 1;
+  const rowMin = new Map<number, number>();
+  const rowMax = new Map<number, number>();
+  while (stack.length) {
+    const [x, y] = stack.pop()!;
+    if (x === x0 || x === x1 || y === y0 || y === y1) return false; // 碰到盒边：不是封闭的内腔
+    rowMin.set(y, Math.min(rowMin.get(y) ?? x, x));
+    rowMax.set(y, Math.max(rowMax.get(y) ?? x, x));
+    for (const [nx, ny] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]] as const) {
+      if (ink(nx, ny)) continue;
+      const k = (ny - y0) * w + nx - x0;
+      if (seen[k]) continue;
+      seen[k] = 1;
+      stack.push([nx, ny]);
+    }
+  }
+  const run = (x: number, y: number): number => {
+    let t = y;
+    let d = y;
+    while (t > 0 && ink(x, t - 1)) t--;
+    while (d < bin.h - 1 && ink(x, d + 1)) d++;
+    return d - t + 1;
+  };
+  let left = 0;
+  let right = 0;
+  for (const [y, a] of rowMin) {
+    if (ink(a - 1, y) && run(a - 1, y) >= sp * 2) left++;
+    const b = rowMax.get(y)!;
+    if (ink(b + 1, y) && run(b + 1, y) >= sp * 2) right++;
+  }
+  return rowMin.size >= 2 && Math.max(left, right) >= rowMin.size * 0.6;
+}

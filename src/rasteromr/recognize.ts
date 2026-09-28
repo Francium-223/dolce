@@ -19,7 +19,7 @@ import type { Seg, SPage, Staff, Sym, Tag } from "../staffomr/model";
 import { overlapY } from "../staffomr/model";
 import { buildRasterPage, makeSymObj, makeTextObj, type RasterSym } from "./adapt";
 import { binSig, blobImage, extendVSegs, findBlobs, findBraces, findPrimitives, groupByLeftInk, ledgerGrid, joinVSegs, removeStaffLines, verticalStrokes, type BeamQuad, type LineSeg, type RasterPrims } from "./prims";
-import { archCavity, findRasterHeads, hollowHeadsByPitch, headsOnBareStems, probeBareStems, hollowHeadsFromCavities, hollowHeadsAlongStems, hollowHeadsFromHoles, hollowHeadsOnLedgers, hollowSlit, inkColumn, judgeHeadBox, mergeHoles, type PitchStep } from "./notehead";
+import { archCavity, stemWalledCavity, findRasterHeads, hollowHeadsByPitch, headsOnBareStems, probeBareStems, hollowHeadsFromCavities, hollowHeadsAlongStems, hollowHeadsFromHoles, hollowHeadsOnLedgers, hollowSlit, inkColumn, judgeHeadBox, mergeHoles, type PitchStep } from "./notehead";
 import { bootstrapClefs, matchTemplate, RasterGlyphLookup, type BootStaff } from "./rasterglyphs";
 import { sigDistance } from "../omr/glyphdict";
 import { completeStaffBars, cutJianpuStrip, eraseInBand, findJianpuBands, jianpuKey, type JianpuStrip } from "./jianpuband";
@@ -2823,7 +2823,26 @@ export async function recognizeRasterPage(
     const heads = pg.symbols.filter((s0) => s0.hasTag("Note") && /^notehead/.test(s0.code));
     const besideHead = (h: Sym) =>
       heads.some((o) => o !== h && Math.abs(o.box.right - h.box.left) <= sp0 * 0.6 && Math.abs(o.py - h.py) <= sp0 * 2.5 && o.box.left < h.box.left);
-    pg.symbols = pg.symbols.filter((s0) => !(s0.hasTag("Note") && s0.code === "noteheadHalf" && inFlag(s0) && besideHead(s0)));
+    // 或者**同一根干的另一端是实心头**：尾是那个实心头的，真二分头不带尾（所信有根基 m4、m12，我一生要赞美你 m36，
+    // 尾弯回来围出的白被收成空心头或全音符）。救主降生那种两端都是空心头的不受影响
+    const stemSegs0 = pg.segs.filter((sg) => sg.isV && sg.hasTag("Stem"));
+    const blacks = heads.filter((o) => o.code === "noteheadBlack");
+    const otherEndBlack = (h: Sym) =>
+      stemSegs0.some((st) => {
+        if (st.box.left > h.box.right + sp0 * 0.3 || st.box.right < h.box.left - sp0 * 0.3) return false;
+        if (st.box.bottom < h.box.top - sp0 * 0.3 || st.box.top > h.box.bottom + sp0 * 0.3) return false;
+        const hcy = (h.box.top + h.box.bottom) / 2;
+        const far = Math.abs(hcy - st.box.top) < Math.abs(hcy - st.box.bottom) ? st.box.bottom : st.box.top;
+        if (Math.abs(far - hcy) < sp0 * 1.5) return false;
+        return blacks.some((o) => o.box.left <= st.box.right + sp0 * 0.3 && o.box.right >= st.box.left - sp0 * 0.3 && far >= o.box.top - sp0 * 0.5 && far <= o.box.bottom + sp0 * 0.5);
+      });
+    // 再要内腔有一侧直接就是干（`notehead.ts::stemWalledCavity`）：两声部共干、另一端是实心头的真二分头，
+    // 上面偶尔也会误认出一个尾（耶和华是我的牧者 m17 加一线上的 A5）
+    const walled = (h: Sym) =>
+      stemWalledCavity(raster.bin, { x: Math.round(h.box.left), y: Math.round(h.box.top), w: Math.round(h.box.right - h.box.left), h: Math.round(h.box.bottom - h.box.top) }, sp0);
+    pg.symbols = pg.symbols.filter(
+      (s0) => !(s0.hasTag("Note") && inFlag(s0) && ((s0.code === "noteheadHalf" && besideHead(s0)) || ((s0.code === "noteheadHalf" || s0.code === "noteheadWhole") && otherEndBlack(s0) && walled(s0)))),
+    );
   }
   const notes = buildNotes(pg, ctx, beams, stems, hollowish);
   attachAccidentalsByPitch(pg, ctx, notes);

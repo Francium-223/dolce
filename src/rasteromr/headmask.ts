@@ -18,6 +18,7 @@
 import type { Binary, Rect } from "../omr/types";
 import type { RasterUnit } from "./staffline";
 import type { SmuflName } from "../staffomr/glyphs";
+import type { LineSeg } from "./prims";
 
 /** 一类模板：概率图（0~1）与尺寸、样本数。 */
 export interface HeadMask {
@@ -724,4 +725,85 @@ function bandTop(
     }
   }
   return bb;
+}
+
+// ── 实心头：**沿着一端已挂实心头的长干**按音高位置配模板 ───────────────────────
+//
+// 两个声部共用一根朝下的长干（上声部的头在干顶、下声部的头贴在干中段右侧，干再往下伸到下声部的干尖），
+// 整块被当成「一个头 + 干」，中段那个头没人找（我灵镇静 m14 男低 B♭2）。同 `hollowHeadsAlongStems` 的空心版：
+// 从挂着的头往自由端、到自由端往回 ALONG_FREE_SOLID 格为止，逐个音高位置拿本页实心模板打分，
+// 头盒贴着干的一侧、去线图上墨占像实心头、不与已认的头相撞才收。
+
+/** 干至少多长（格）才找：两个声部共干的长干；普通单声部干 3~3.5 格。 */
+const SOLID_ALONG_MIN = 4.5;
+/** 自由端最后这么多格是干本身，不找头。 */
+const ALONG_FREE_SOLID = 2.5;
+/** 模板分、去线图头盒墨占比的门槛。 */
+const SOLID_ALONG_SCORE = 0.45;
+const SOLID_ALONG_INK = 0.6;
+
+export function solidHeadsAlongStems(
+  bin: Binary,
+  nl: Binary,
+  masks: HeadMask[],
+  unit: RasterUnit,
+  grid: (y: number) => number | null,
+  onLine: (y: number) => boolean,
+  stems: LineSeg[],
+  heads: Rect[],
+  avoid: Rect[],
+): Rect[] {
+  const sp = unit.space;
+  if (!masks.length) return [];
+  const hw = Math.round(sp * 1.25);
+  const hh = Math.round(sp * 0.95);
+  const tol = Math.max(unit.lineThick * 2, sp * 0.3);
+  const out: Rect[] = [];
+  const taken = [...heads];
+  const hit = (b: Rect) => [...taken, ...avoid].some((t) => b.x < t.x + t.w && t.x < b.x + b.w && b.y < t.y + t.h && t.y < b.y + b.h);
+  const inkOf = (b: Rect) => {
+    let k = 0, n = 0;
+    for (let y = b.y; y < b.y + b.h; y++)
+      for (let x = b.x; x < b.x + b.w; x++) {
+        if (x < 0 || y < 0 || x >= nl.w || y >= nl.h) continue;
+        n++;
+        k += nl.data[y * nl.w + x];
+      }
+    return n ? k / n : 0;
+  };
+  for (const v of stems) {
+    const vx = (v.x0 + v.x1) / 2;
+    const top = Math.min(v.y0, v.y1);
+    const bot = Math.max(v.y0, v.y1);
+    if (bot - top < sp * SOLID_ALONG_MIN) continue;
+    const ref = heads.find((h) => {
+      const cy = h.y + h.h / 2;
+      return (Math.abs(h.x - vx) <= tol || Math.abs(h.x + h.w - vx) <= tol) && (Math.abs(cy - top) <= sp * 0.75 || Math.abs(cy - bot) <= sp * 0.75);
+    });
+    if (!ref) continue;
+    const ry = ref.y + ref.h / 2;
+    const atTop = Math.abs(ry - top) <= Math.abs(ry - bot);
+    const y0 = atTop ? ry + sp * 0.8 : top + sp * ALONG_FREE_SOLID;
+    const y1 = atTop ? bot - sp * ALONG_FREE_SOLID : ry - sp * 0.8;
+    const seen = new Set<number>();
+    for (let y = y0; y <= y1; y += sp * 0.25) {
+      const g = grid(y);
+      if (g === null || g < y0 - sp * 0.1 || g > y1 + sp * 0.1 || seen.has(g)) continue;
+      seen.add(g);
+      const m = masks.find((q) => q.onLine === onLine(g)) ?? masks[0];
+      let bestB: { x: number; s: number } | null = null;
+      for (let cx = Math.round(vx - hw / 2 - tol); cx <= vx + hw / 2 + tol; cx++) {
+        // 头盒要有一侧贴着干
+        if (Math.abs(cx - hw / 2 - vx) > tol && Math.abs(cx + hw / 2 - vx) > tol) continue;
+        const sc = scoreAt(bin, m, cx, g);
+        if (!bestB || sc > bestB.s) bestB = { x: cx, s: sc };
+      }
+      if (!bestB || bestB.s < SOLID_ALONG_SCORE) continue;
+      const box: Rect = { x: Math.round(bestB.x - hw / 2), y: Math.round(g - hh / 2), w: hw, h: hh };
+      if (hit(box) || inkOf(box) < SOLID_ALONG_INK) continue;
+      out.push(box);
+      taken.push(box);
+    }
+  }
+  return out;
 }

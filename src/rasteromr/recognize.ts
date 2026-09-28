@@ -26,7 +26,7 @@ import { completeStaffBars, cutJianpuStrip, eraseInBand, findJianpuBands, jianpu
 import { fuseJianpu, type FuseStats, type JianpuRow } from "./jianpufuse";
 import { findLyricRows, foldLyricChars, isLatinRow, LATIN_MIN_CHAINED, latinCells, mapCharsToCells, splitMixedChars, stripKey, stripOf, stripWithout, type LyricRow, type LyricStrip, type OcrChar } from "./lyric";
 import { findHoles, traceContours, type ContourMap } from "./contour";
-import { buildHeadMasks, buildHollowMasks, headFromStemBlock, scoreAt, splitHeadCluster } from "./headmask";
+import { buildHeadMasks, buildHollowMasks, headFromStemBlock, scoreAt, solidHeadsAlongStems, splitHeadCluster } from "./headmask";
 import { headProb, trainHeadClassifier } from "./headclass";
 import { findStaffLabels, labelKey, normalizeLabel, type LabelStrip } from "./stafflabel";
 import { findHarmonyStrips, harmonyKey, harmonyLine, readHarmonyStrip, type HarmonyStrip, type HarmonyToken } from "./harmony";
@@ -2062,6 +2062,13 @@ export async function recognizeRasterPage(
       ledger.claim(r.head, "stemblock:noteheadBlack");
     }
     syms.push(...stemHeads);
+    // 两声部共干的长干中段贴着的实心头（`solidHeadsAlongStems`）
+    const blackHeads = syms.filter((s0) => s0.code === "noteheadBlack").map((s0) => s0.box);
+    const others = syms.filter((s0) => !/^notehead/.test(s0.code)).map((s0) => s0.box);
+    for (const box of solidHeadsAlongStems(raster.bin, nl, masks, unit, pitchGrid, onLineY, [...prims.vSegs, ...stemSegs], blackHeads, [...others, ...prims.beams.map((b) => b.box)])) {
+      syms.push({ box, code: "noteheadBlack" });
+      ledger.claim(box, "along:noteheadBlack");
+    }
   }
 
   // ── **被几何闸判否的块，交给页内自举的判别器再判一次** ────────────────────

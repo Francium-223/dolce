@@ -79,7 +79,10 @@ function endingCandidates(bin: Binary, comps: Component[], rows: StaffRow[], num
     // 括线到数字顶的距离随谱面松紧变化很大：行内有圆滑线时括线被顶到 ~2.8 字号高处
     // （沧海一声笑的 1./4./6. 三房实测 y 差 29px、numH 11）。窗口停在 1.8 字号会整片漏掉，
     // 故放深到 3.4 字号，误检交给 hasLeftHook 的立脚形态挡。
-    const y0 = Math.max(0, Math.floor(rowTop - numH * 3.4));
+    // 但窗口不越过上一行音符底下半个字号：上一行的减时线正贴在那里，又长又扁，左端下面
+    // 歌词字的竖笔还能冒充立脚（2038 谁一直在街上呼喊 行距紧，3.4 字号够到上一行减时线，读出四处假房）。
+    const prevBottom = Math.max(-Infinity, ...rows.filter((r) => r !== row && r.bottomY < row.topY).map((r) => r.bottomY));
+    const y0 = Math.max(0, Math.floor(rowTop - numH * 3.4), Math.ceil(prevBottom + numH * 0.5));
     const y1 = Math.min(bin.h - 1, Math.ceil(rowTop - numH * 0.3));
     // 直接扫水平墨线：即使括线与左侧复纵线粘成一个高连通块，顶横线仍是一段连续 run。
     for (let y = y0; y <= y1; y++) {

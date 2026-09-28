@@ -44,6 +44,8 @@ export interface FuseStats {
 /** 配对的 x 容差（线距，扣掉全页平移之后）。相邻两个八分音符隔一格半上下；
  *  符干另一头的假头比真头偏出去 0.7 格上下（真头没检出、只剩它时要配得上）。 */
 const PAIR_DX = 0.8;
+/** 谱表上与别的音同列的音超过这么多成，算多声部（见 `fuseJianpu`）。独唱简谱混排谱实测 0，SATB 闭合谱 0.67~1.0。 */
+const POLY_FRAC = 0.5;
 const STEP_LETTERS = ["C", "D", "E", "F", "G", "A", "B"];
 const SHARPS = "FCGDAEB";
 const FLATS = "BEADGCF";
@@ -121,7 +123,7 @@ export function fuseJianpu(
   })();
   // 先把每条简谱行拆成小节、与五线谱的音配好对，八度等全页投完票再定
   type Meas = { jn: { n: JianpuNum; x: number; q: number }[]; sn: StaffNote[]; pairs: [JianpuNum, StaffNote][] };
-  const all: { st: Staff; fifths: number; meas: Meas[] }[] = [];
+  const all: { st: Staff; fifths: number; meas: Meas[]; poly: boolean }[] = [];
   const votes: number[] = [];
   for (const strip of strips) {
     const st = staffOf(strip);
@@ -135,7 +137,15 @@ export function fuseJianpu(
     for (const b of [...row.bars].sort((a, c) => a - c).map((b) => strip.box.x + b))
       if (!bars.length || b - bars[bars.length - 1] > sp * 0.5) bars.push(b);
     const edges = [-Infinity, ...bars, Infinity];
-    const staffNotes = notes.filter((n) => n.staff === st && !n.chordExtra && !n.grace && n.voice === 1);
+    // **多声部谱表**（SATB 闭合谱：简谱行印在女高女低那行谱上方）：一半以上的音与别的音同列（同一和弦组或横向差不到 0.3 格）。
+    // 简谱只是最上面那个声部的旋律，只能对每一列的**最高音**，而且只核音高——同列别的音是真的内声部，不能当假头删；
+    // 时值、增删音都按单旋律凑拍，放在这里会把内声部凑没（来敬拜荣耀王 100 → 65%、齐来崇拜 94.8 → 60.7%）
+    const sameCol = (n: StaffNote, o: StaffNote) => o !== n && ((!!n.group && o.group === n.group) || Math.abs(cx(o) - cx(n)) < sp * 0.3);
+    const voiced = notes.filter((n) => n.staff === st && !n.rest && !n.grace);
+    const poly = voiced.filter((n) => voiced.some((o) => sameCol(n, o))).length > voiced.length * POLY_FRAC;
+    const staffNotes = poly
+      ? notes.filter((n) => n.staff === st && !n.grace && (n.rest ? !voiced.some((o) => Math.abs(cx(o) - cx(n)) < sp * 0.3) : !voiced.some((o) => sameCol(n, o) && o.diatonic > n.diatonic)))
+      : notes.filter((n) => n.staff === st && !n.chordExtra && !n.grace && n.voice === 1);
     const meas: Meas[] = [];
     for (let i = 0; i + 1 < edges.length; i++) {
       const [a, b] = [edges[i], edges[i + 1]];
@@ -164,14 +174,14 @@ export function fuseJianpu(
       }
       meas.push({ jn, sn, pairs });
     }
-    all.push({ st, fifths, meas });
+    all.push({ st, fifths, meas, poly });
   }
   if (!all.length) return stats;
   // 八度基准：`1` 在全音阶序号上的位置 − 主音音级，取全页众数（配错的对各投各的，压不过众数）
   const base = mode(votes);
   const qSums = all.flatMap((r) => r.meas.map((m) => m.jn.reduce((s, j) => s + j.q, 0)));
   const full = mode(qSums.filter((q) => q > 0));
-  for (const { fifths, meas } of all) {
+  for (const { fifths, meas, poly } of all) {
     const tonic = tonicOf(fifths);
     for (const m of meas) {
       const jSum = m.jn.reduce((s, j) => s + j.q, 0);
@@ -182,7 +192,9 @@ export function fuseJianpu(
         stats.pairs++;
         if (!n.rest && j.d >= 1 && j.d <= 7 && Number.isFinite(base)) {
           const dia = base + tonic + j.d - 1 + 7 * j.oct;
-          if (dia !== n.diatonic) {
+          // 多声部谱表只收差一级的（五线谱读错最常见的就是差一级）：简谱八度点在这几首靠不住，整八度的「纠正」
+          // 多半是错的（欢然颂主 D5 → D4），差两级以上的多半是配错了对（齐来崇拜 D4 → F4）
+          if (dia !== n.diatonic && (!poly || Math.abs(dia - n.diatonic) === 1)) {
             const s = ((dia % 7) + 7) % 7;
             const step = STEP_LETTERS[s];
             const keep = step === n.step; // 只差八度：发声的升降照旧
@@ -197,7 +209,7 @@ export function fuseJianpu(
           }
         }
         // 时值只改音符对音符的：休止在简谱里是按拍拆开写的（二分休止写成 `0 0`），对不成一对一
-        if (!staffOk && !n.rest && j.d !== 0) {
+        if (!poly && !staffOk && !n.rest && j.d !== 0) {
           const bd = baseDots(qOf(j));
           if (bd && Math.abs(bd.base * (2 - 1 / 2 ** bd.dots) - n.duration) > 1e-6) {
             n.base = bd.base;
@@ -207,6 +219,7 @@ export function fuseJianpu(
           }
         }
       }
+      if (poly) continue; // 多声部谱表只核音高（见上面 `poly`）
       // **配上的音同一和弦里的其余音都是假的**：简谱行是单旋律，一个数字只对一个音。
       // 假的多半是符干另一头被当成符头（《是谁》G4 的符干顶上多出个 E5、B4 的符干底下多出个 B3），
       // 与真符头拼成和弦，写出时还排在真的前面。

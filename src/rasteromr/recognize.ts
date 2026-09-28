@@ -490,10 +490,8 @@ const TIME_C_WHOLE_DIST = 240;
 const KEY_SELF_DIST = 120;
 /** 几何闸收下的实心头，矮于这个数（线距的倍数）又压在符杠中线上的，是杠头。 */
 const BEAM_STUMP_H = 0.65;
-/** 杠端那一截的高度上限（格）：主使我喜乐 m16 杠起头连着干尖、压着第五线，0.69 格。杠中段照旧 `BEAM_STUMP_H`。 */
-const BEAM_END_STUMP_H = 0.8;
-/** 并块拆分、碎块合并那几路出的杠端假头高度上限（格）：有一位神 m10 杠起头连着第五线，0.95 格。 */
-const BEAM_END_MERGED_H = 1.0;
+/** 杠端假头的高度上限（格）：主使我喜乐 m16 杠起头连着干尖 0.69 格，有一位神 m10 连着第五线 0.95 格，倚靠主永远膀臂 m11 主杠尾连着下层短杠 1.13 格。 */
+const BEAM_END_STUMP_H = 1.2;
 /** 结构还原号：两根竖笔的间距（格）。 */
 const NAT_GAP = [0.35, 0.8] as const;
 /** 按角色限定认拍号数字（见拍号那一段）：分子只在 2~9 里挑，分母只在 2、4、8 里挑。
@@ -1096,17 +1094,16 @@ export async function recognizeRasterPage(
       return ov >= b.h * 0.6;
     });
   };
-  /** 并块拆分、碎块合并那几路出的黑头，正接在杠端又压着杠的中线：杠起头那一截（有一位神 m10、当我们回到天家 m3）。高到一格也算 */
-  const beamStump = (b: Rect, others: Rect[]) => inBeamBody(b) || (b.h <= unit.space * BEAM_END_MERGED_H && atBeamEnd(b, others) && onBeamLine(b, unit.space));
+  /** 黑头正接在杠端又压着杠的中线（两端外推一格）：杠起头那一截；或埋在杠身里。各路出的黑头都查 */
+  const beamStump = (b: Rect, others: Rect[]) => inBeamBody(b) || (b.h <= unit.space * BEAM_END_STUMP_H && atBeamEnd(b, others) && onBeamLine(b, unit.space));
   // 几何闸那一路同样要剔杠头：善牧恩慈歌放大后，符杠左端提剩的一截 0.86×0.6 格，
   // 刚好卡过实心头的尺寸下限，出了个 F5。只剔**矮**的（不到 0.65 格）：贴着符杠、又被去线
   // 削扁的真头中心也会落在杠的中线上（宁静的伯利恒三个 1.1×0.72 格的，门槛 0.75 时被剔掉）。
   const rawHeads = findRasterHeads(nl, blobs.filter((c) => !restIds.has(c.id) && !harmonyIds.has(c.id)), prims.vSegs, unit, onGrid, inBand, matchHollow, offStaff);
   const heads = rawHeads.filter((hd) => {
     if (hd.code !== "noteheadBlack") return true;
-    const end = atBeamEnd(hd.box, rawHeads.map((o) => o.box));
-    if (inBeamBody(hd.box)) return false;
-    return hd.box.h >= unit.space * (end ? BEAM_END_STUMP_H : BEAM_STUMP_H) || !onBeamLine(hd.box, end ? unit.space : 0);
+    if (beamStump(hd.box, rawHeads.map((o) => o.box))) return false;
+    return hd.box.h >= unit.space * BEAM_STUMP_H || !onBeamLine(hd.box);
   });
   const claimed = new Set([...heads.map((h) => h.comp.id), ...restIds, ...harmonyIds]);
 

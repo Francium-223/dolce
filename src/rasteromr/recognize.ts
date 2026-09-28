@@ -2146,6 +2146,9 @@ export async function recognizeRasterPage(
         // （万福泉源歌连已认出的头都只打到 0.2 分），改按内腔中心直接定头（`hollowHeadsFromCavities`）
         if (!holes.some((o) => o.x >= box.x && o.x + o.w <= box.x + box.w && o.y >= box.y - 1 && o.y + o.h <= box.y + box.h + 1)) {
           if (!halfSize) continue;
+          // 又窄又高的块不是头：还原号两竖笔夹着的方框也是四向碰墨的「内腔」（我灵镇静 m15 B♮，块宽 0.64 个头、高 3 格）。
+          // 只按窄判会误伤缺边的真头
+          if (box.w < halfSize.w * 0.8 && box.h > unit.space * 2.2) continue;
           const found = hollowHeadsFromCavities(nl, mergeHoles(openCavities(raster.bin, box, unit), unit, onLineOrGrid), unit, prims.vSegs, inCavityBand, syms.map((s0) => s0.box), halfSize, syms.filter((s0) => s0.code === "noteheadBlack").map((s0) => s0.box));
           if (!found.length) continue;
           for (const id of group) used.add(id), merged.add(id);

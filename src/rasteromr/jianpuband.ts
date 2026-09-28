@@ -232,6 +232,9 @@ export interface JianpuStrip {
   bars: number[];
 }
 
+/** 跨过条顶边的墨在条里高不过条高的这么多，算截下来的一截（见 `cutJianpuStrip`）。 */
+const CUT_SLIVER = 0.15;
+
 export function cutJianpuStrip(bin: Binary, band: JianpuBand): JianpuStrip {
   const { x, y, w, h } = band.box;
   const data = new Uint8Array(w * h);
@@ -241,6 +244,31 @@ export function cutJianpuStrip(bin: Binary, band: JianpuBand): JianpuStrip {
       const sy = y + yy;
       if (sx >= 0 && sy >= 0 && sx < bin.w && sy < bin.h) data[yy * w + xx] = bin.data[sy * bin.w + sx];
     }
+  // 跨过条顶边、在条里只剩薄薄一截（不到条高的 `CUT_SLIVER`）的墨，是上方和弦字母被截下的底
+  //（颂赞与尊贵 m1、m5「F」下面那一横的衬线）：留着会被简谱那一路当成数字上的高音点，整团抹掉。
+  // 真的高音点整个落在条里、碰不到顶边；数字、小节线顶到边的在条里还有一大截，不动
+  const seen = new Uint8Array(w * h);
+  for (let x0 = 0; x0 < w; x0++) {
+    const sx = x + x0;
+    if (!data[x0] || seen[x0] || y <= 0 || sx < 0 || sx >= bin.w || !bin.data[(y - 1) * bin.w + sx]) continue;
+    const comp: number[] = [x0];
+    seen[x0] = 1;
+    let maxY = 0;
+    for (let k = 0; k < comp.length; k++) {
+      const xx = comp[k] % w;
+      const yy = (comp[k] / w) | 0;
+      maxY = Math.max(maxY, yy);
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = xx + dx;
+          const ny = yy + dy;
+          if (nx < 0 || ny < 0 || nx >= w || ny >= h || !data[ny * w + nx] || seen[ny * w + nx]) continue;
+          seen[ny * w + nx] = 1;
+          comp.push(ny * w + nx);
+        }
+    }
+    if (maxY < h * CUT_SLIVER) for (const i of comp) data[i] = 0;
+  }
   return { staff: band.staff, box: band.box, w, h, data, bars: band.bars };
 }
 

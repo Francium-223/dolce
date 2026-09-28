@@ -490,6 +490,8 @@ const TIME_C_WHOLE_DIST = 240;
 const KEY_SELF_DIST = 120;
 /** 几何闸收下的实心头，矮于这个数（线距的倍数）又压在符杠中线上的，是杠头。 */
 const BEAM_STUMP_H = 0.65;
+/** 杠端那一截的高度上限（格）：主使我喜乐 m16 杠起头连着干尖、压着第五线，0.69 格。杠中段照旧 `BEAM_STUMP_H`。 */
+const BEAM_END_STUMP_H = 0.8;
 /** 结构还原号：两根竖笔的间距（格）。 */
 const NAT_GAP = [0.35, 0.8] as const;
 /** 按角色限定认拍号数字（见拍号那一段）：分子只在 2~9 里挑，分母只在 2、4、8 里挑。
@@ -1052,20 +1054,41 @@ export async function recognizeRasterPage(
   }
 
   /** 块的中心压在某条符杠的中线上（半个杠厚以内）：那是提走符杠之后剩下的杠头，不是符头。 */
-  const onBeamLine = (b: Rect) => {
+  const onBeamLine = (b: Rect, ext = 0) => {
     const cxb = b.x + b.w / 2;
     const cyb = b.y + b.h / 2;
+    // `ext`：两端各外推多远。杠的拟合常收不到最末一截（有一位神 m4，杠拟合到 757、剩下 759~773 一截连着干尖被收成 F♯5）；
+    // 只给几何闸那一路外推，判别器那一路外推了会剔掉真头（当我们回到天家 −0.4）
     return prims.beams.some((q) => {
-      if (cxb < Math.min(q.x0, q.x1) || cxb > Math.max(q.x0, q.x1)) return false;
+      if (cxb < Math.min(q.x0, q.x1) - ext || cxb > Math.max(q.x0, q.x1) + ext) return false;
       const t = q.x1 === q.x0 ? 0 : (cxb - q.x0) / (q.x1 - q.x0);
       return Math.abs(cyb - (q.y0 + (q.y1 - q.y0) * t)) <= Math.max(q.lw, unit.space * 0.25);
     });
   };
+  /**
+   * 块**正接在一条够厚的符杠的端头上**：杠端的 x 落在块的横向范围内（±2px）、上下与杠盒交叠，杠厚 0.35 格以上。
+   * 杠起头那一截常连着干尖、压着谱线，比杠厚一截，拟合也常收不到它（主使我喜乐 m16、有一位神 m4）。
+   * 谱线、加线误检出的薄「杠」不算：它们穿过真头时两端恰好落在头上（合唱谱破碎五处真头）；
+   * 另一端也压着一个头的不算：扫描件上同高的几个头被谱线连成一条厚「杠」。真杠的另一端是干尖
+   */
+  const atBeamEnd = (b: Rect, others: Rect[]) =>
+    prims.beams.some((q) => {
+      if (q.lw < unit.space * 0.35 || b.y >= q.box.y + q.box.h || b.y + b.h <= q.box.y) return false;
+      const hit = (x: number) => x >= b.x - 2 && x <= b.x + b.w + 2;
+      const far = hit(q.x0) ? { x: q.x1, y: q.y1 } : hit(q.x1) ? { x: q.x0, y: q.y0 } : null;
+      if (!far) return false;
+      // 另一端那个也得够一个头高：杠两头都剩一截的（主使我喜乐 m16）不算
+      return !others.some((o) => o !== b && o.h >= unit.space * 0.8 && far.x >= o.x - 2 && far.x <= o.x + o.w + 2 && far.y >= o.y - q.lw && far.y <= o.y + o.h + q.lw);
+    });
   // 几何闸那一路同样要剔杠头：善牧恩慈歌放大后，符杠左端提剩的一截 0.86×0.6 格，
   // 刚好卡过实心头的尺寸下限，出了个 F5。只剔**矮**的（不到 0.65 格）：贴着符杠、又被去线
   // 削扁的真头中心也会落在杠的中线上（宁静的伯利恒三个 1.1×0.72 格的，门槛 0.75 时被剔掉）。
-  const heads = findRasterHeads(nl, blobs.filter((c) => !restIds.has(c.id) && !harmonyIds.has(c.id)), prims.vSegs, unit, onGrid, inBand, matchHollow, offStaff)
-    .filter((hd) => hd.code !== "noteheadBlack" || hd.box.h >= unit.space * BEAM_STUMP_H || !onBeamLine(hd.box));
+  const rawHeads = findRasterHeads(nl, blobs.filter((c) => !restIds.has(c.id) && !harmonyIds.has(c.id)), prims.vSegs, unit, onGrid, inBand, matchHollow, offStaff);
+  const heads = rawHeads.filter((hd) => {
+    if (hd.code !== "noteheadBlack") return true;
+    const end = atBeamEnd(hd.box, rawHeads.map((o) => o.box));
+    return hd.box.h >= unit.space * (end ? BEAM_END_STUMP_H : BEAM_STUMP_H) || !onBeamLine(hd.box, end ? unit.space : 0);
+  });
   const claimed = new Set([...heads.map((h) => h.comp.id), ...restIds, ...harmonyIds]);
 
   // ── 空心符头：按**内腔（洞）**再找一遍 ───────────────────────────────────
@@ -1140,6 +1163,8 @@ export async function recognizeRasterPage(
   const pitchGrid = makePitchGrid(groups, unit);
   const onLineY = (y: number) => lines.some((l) => Math.abs(l.y - y) <= unit.space * 0.25);
   const split: RasterSym[] = [];
+  /** 被并块拆分认领的块（拍号那一段要用：粗体 4/4 一整块常被拆成两个黑头）。 */
+  const splitIds = new Set<number>();
   /** 已经被认成**单个**符头、但要作废的那些（块里其实装着两三个头）。 */
   const dropHead = new Set<number>();
   const restTpl = (look.templates ?? []).filter((t) => t.smufl === "restQuarter" || t.smufl === "rest8th");
@@ -1156,6 +1181,7 @@ export async function recognizeRasterPage(
       }
       if (!parts.length) continue;
       claimed.add(c.id);
+      splitIds.add(c.id);
       for (const b of parts) split.push({ box: b, code: "noteheadBlack" });
     }
     // **已经认成一个符头的块也要再看一眼**：漏掉的和弦成员多半就藏在这里
@@ -1578,7 +1604,9 @@ export async function recognizeRasterPage(
     // `csymParensRightTall`（大括号）形状相近，认错了照样要能被拍号盖过。
     const cands = blobs.filter((c) => {
       const b = c.bbox;
-      if ((claimed.has(c.id) && !(pass === 1 && !restIds.has(c.id) && !harmonyIds.has(c.id))) || merged.has(c.id)) return false;
+      // 并块拆分认领的块第一趟就进来：4/4 两个数字连成一块，被拆成两个黑头（齐来崇拜第一行：本页头模板一变就拆了）。
+      // 数字那一路按位置切上下两半、各配模板，真的两个叠头配不上数字
+      if ((claimed.has(c.id) && !(pass === 1 && !restIds.has(c.id) && !harmonyIds.has(c.id)) && !splitIds.has(c.id)) || merged.has(c.id)) return false;
       const dc = dictClaimed.has(c.id) ? look.lookup(binSig(nl, b), b.w / unit.space, b.h / unit.space) : null;
       if (dc && (isClef(dc) || isAccidental(dc))) return false;
       if (b.x < left || b.x > left + unit.space * 14) return false;

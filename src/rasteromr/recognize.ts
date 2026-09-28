@@ -1565,6 +1565,17 @@ export async function recognizeRasterPage(
     // 已认的符头盖住大半的块不是休止：按内腔找的空心头不认领块，斜腔的「8」字叠头
     // 去线后正是这副个头（《你的信实广大》末小节）
     if (syms.reduce((a, s0) => a + (s0.code.startsWith("notehead") ? overlapFrac(b, s0.box) : 0), 0) > 0.6) continue;
+    // **贴着一根长干的不是休止**：头 + 尾（干已抽成竖段）剩下的一块，尺寸正落在四分休止这一档
+    //（你的信实广大 m6、万古磐石歌 m12 低音的八分，尾弯回来贴着干）。四分休止不挨着干
+    const stemBeside = prims.vSegs.some((v) => {
+      const x = (v.x0 + v.x1) / 2;
+      const y0 = Math.min(v.y0, v.y1);
+      const y1 = Math.max(v.y0, v.y1);
+      if (y1 - y0 < unit.space * 2.5) return false;
+      if (Math.abs(x - b.x) > unit.space * 0.5 && Math.abs(x - (b.x + b.w)) > unit.space * 0.5) return false;
+      return Math.min(y1, b.y + b.h) - Math.max(y0, b.y) >= b.h * 0.5;
+    });
+    if (stemBeside) continue;
     merged.add(c.id);
     const code = isEighthRest(nl, b, c.area, unit) ? "rest8th" : "restQuarter";
     syms.push({ box: b, code });

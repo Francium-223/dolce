@@ -798,6 +798,7 @@ function attachDots(notes: StaffNote[], dots: Sym[], sp: number): void {
   const rights = new Map(notes.map((n) => [n, rightOf(n)]));
   /** 每个音已收的点（x）：同一列的点一个头只收一个（和弦两个线上音的点各在自己上方的间，离两头一样远）。 */
   const got = new Map<StaffNote, number[]>();
+  const owner = new Map<Sym, StaffNote>();
   for (const d of dots) {
     let best: StaffNote | undefined;
     let bd = Infinity;
@@ -821,8 +822,43 @@ function attachDots(notes: StaffNote[], dots: Sym[], sp: number): void {
     }
     if (!best) continue;
     got.set(best, [...(got.get(best) ?? []), d.px]);
+    owner.set(d, best);
     best.dots++;
     d.addTag("Augmentation");
+  }
+  // **和弦按次序重配**（附点排版规则：和弦各音的点在右边排成一列、一个间一个，上下次序同头的次序；
+  // 挤着二度时点会被挤到下方的间、甚至再往下一个间）。逐个点找最近的头会错配：线上音按惯例抢上方的点，
+  // 把本属于间上那个音的点拿走（恩友歌伴奏 m17 C5/A4/G4/F4：G4 拿了 A4 的点，F4 的点在头心下一格，够不着）。
+  // 一列头（同一谱行、横向交叠、上下相邻不过 3 格）右边同一列的点数**正好等于头数**时，按上下次序一一配。
+  const cols: StaffNote[][] = [];
+  for (const n of notes) {
+    if (n.rest) continue;
+    const c = cols.find((q) => q[0].staff === n.staff && q.some((m) => m.sym.box.left <= rights.get(n)! + sp * 0.3 && rights.get(m)! >= n.sym.box.left - sp * 0.3 && Math.abs(m.sym.py - n.sym.py) <= sp * 3));
+    if (c) c.push(n);
+    else cols.push([n]);
+  }
+  for (const c of cols) {
+    if (c.length < 2) continue;
+    c.sort((a, b) => a.sym.py - b.sym.py);
+    const r = Math.max(...c.map((n) => rights.get(n)!));
+    const top = c[0].sym.py - sp * 0.85;
+    const bot = c[c.length - 1].sym.py + sp * 1.25;
+    const ds = dots.filter((d) => (owner.has(d) ? c.includes(owner.get(d)!) : true) && (d.box.left + d.box.right) / 2 > r && d.px - r <= sp * 1.5 && d.py >= top && d.py <= bot);
+    if (ds.length !== c.length) continue;
+    // 同一列（横向差不过 0.5 格）、上下相隔 0.7 格以上（一个间一个）
+    const mx = ds.reduce((a, d) => a + d.px, 0) / ds.length;
+    if (ds.some((d) => Math.abs(d.px - mx) > sp * 0.5)) continue;
+    ds.sort((a, b) => a.py - b.py);
+    if (ds.some((d, i) => i > 0 && d.py - ds[i - 1].py < sp * 0.7)) continue;
+    for (const d of ds) {
+      const o = owner.get(d);
+      if (o) o.dots--;
+    }
+    ds.forEach((d, i) => {
+      owner.set(d, c[i]);
+      c[i].dots++;
+      d.addTag("Augmentation");
+    });
   }
   // 附点定了才能算时值
   for (const n of notes) {

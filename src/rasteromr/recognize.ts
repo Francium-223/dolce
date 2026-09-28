@@ -4000,6 +4000,14 @@ const DOT_BELOW = 0.35;
 const TWIN_COL = 0.5;
 /** 和弦里上方紧挨着另一个头的，附点窗口下沿放到这么多格（恩友歌 C5/A4/G4 附点四分，G4 的点写在下方的间，头心下 0.55 格）。 */
 const DOT_BELOW_STACKED = 0.75;
+/** 和弦里挤着二度、最下面那个头的点往下挪一个间：头心下一格，再放一点余量。 */
+const DOT_BELOW_PUSHED = 1.2;
+/** 附点四周这么多格（至少 2 像素）以内的墨若连着符干，就是符尾被切断的尖（见 `findDots` 里的 `isolated`）。 */
+const DOT_ISOLATE = 0.12;
+/** 本页附点的中位尺寸（长边）：比它的这么多倍还小的不是附点（父恩广大 m2 头圈边上的毛刺 3px、本页附点 6~7px；
+ *  我灵镇静 m25 连音线尖 5×3、本页 9×9）。本页凑不够 `DOT_MEDIAN_N` 个点就不比。 */
+const DOT_SMALL = 0.62;
+const DOT_MEDIAN_N = 4;
 /** 附点取块时窗口上下多放的余量（格），见 `findDots`。 */
 const DOT_PAD = 0.3;
 
@@ -4082,11 +4090,23 @@ function findDots(bin: Binary, syms: RasterSym[], unit: RasterUnit, onLine: (y: 
     }
     return r;
   };
-  /** 窗口下沿：上方一格半内紧挨着另一个和弦头的，点可以写到下方的间（上方的间被邻头的点占了）。 */
+  /** 同一列（左右 `TWIN_COL` 格内）上下 `dy0`~`dy1` 格（往上为正）内另有一个头。 */
+  const colHead = (b: Rect, dy0: number, dy1: number) => {
+    const cy = b.y + b.h / 2;
+    return heads.some((h2) => h2.box !== b && h2.box.x < b.x + b.w + sp * TWIN_COL && h2.box.x + h2.box.w > b.x - sp * TWIN_COL && cy - (h2.box.y + h2.box.h / 2) > sp * dy0 && cy - (h2.box.y + h2.box.h / 2) < sp * dy1);
+  };
+  /**
+   * 窗口下沿，按附点的排版规则反推：间上的音点在本间，线上的音点在上方的间；和弦里上方的间被别的音的点占了、
+   * 或下声部（和弦里别的头在上方）的线上音，点写到**下方的间**（头心下半格，天父世界歌伴奏 m11 G4、恩友歌 G4）。
+   * 和弦里挤着二度的，点按头的次序一个间一个间往下排，最下面那个头的点可以再往下挪一个间（恩友歌伴奏 m17
+   * C5/A4/G4/F4，F4 的点在下加一间，头心下一格）。
+   */
   const below = (b: Rect) => {
     const cy = b.y + b.h / 2;
-    const stacked = heads.some((h2) => h2.box !== b && h2.box.x < b.x + b.w + sp * TWIN_COL && h2.box.x + h2.box.w > b.x - sp * TWIN_COL && cy - (h2.box.y + h2.box.h / 2) > sp * 0.3 && cy - (h2.box.y + h2.box.h / 2) < sp * 1.2);
-    return stacked ? DOT_BELOW_STACKED : DOT_BELOW;
+    const above = colHead(b, 0.3, 3.2);
+    if (above && colHead(b, -0.1, 0.7) && !colHead(b, -3.2, -0.3)) return DOT_BELOW_PUSHED;
+    if (colHead(b, 0.3, 1.2) || (above && onLine(Math.round(cy)))) return DOT_BELOW_STACKED;
+    return DOT_BELOW;
   };
   /** 点落在这个头的附点窗口里吗。 */
   const inWindow = (b: Rect, d: Rect) => {
@@ -4095,6 +4115,77 @@ function findDots(bin: Binary, syms: RasterSym[], unit: RasterUnit, onLine: (y: 
     const hy = b.y + b.h / 2;
     const r = rightOf(b);
     return cx > r + sp * 0.05 && cx < r + sp * 1.3 && cy > hy - sp * 0.85 && cy < hy + sp * below(b);
+  };
+  /**
+   * 点的盒外一圈（`DOT_ISOLATE` 格宽、至少 2 像素）里的墨连着一根**符干**（一格半内有一段 1.5 格以上的竖墨）：
+   * 是符尾的尖——符尾弯下来的末端被切断，剩一个圆点贴着笔画的断口（善牧恩慈歌 m9、万福泉源歌 m18）。
+   * 只贴着连音线、加线的真附点不算（晨曦破晓 m8、m9 的附点二分）。谱线那几行不算。
+   */
+  const isolated = (d: Rect): boolean => {
+    const g = Math.max(2, Math.round(sp * DOT_ISOLATE));
+    const R = Math.round(sp * 1.5);
+    const x0 = Math.max(0, d.x - R), x1 = Math.min(bin.w, d.x + d.w + R);
+    const y0 = Math.max(0, d.y - R * 2), y1 = Math.min(bin.h, d.y + d.h + R * 2);
+    const W = x1 - x0;
+    const seen = new Uint8Array(W * (y1 - y0));
+    const stack: number[] = [];
+    // 谱线、加线（横向连着一格以上的墨）不算、也不从它灌过去：谱线局部位置与 `onLine` 差一两行时，
+    // 从线上灌进挨着的符干会把真附点判成符尾尖（倚靠主永远膀臂 m7 贴线的附点八分）
+    const hRun = (x: number, y: number) => {
+      let a = x;
+      let c = x;
+      while (a > 0 && bin.data[y * bin.w + a - 1]) a--;
+      while (c < bin.w - 1 && bin.data[y * bin.w + c + 1]) c++;
+      return c - a + 1;
+    };
+    const inDot = (x: number, y: number) => x >= d.x && x < d.x + d.w && y >= d.y && y < d.y + d.h;
+    for (let y = d.y - g; y < d.y + d.h + g; y++) {
+      if (y < y0 || y >= y1 || onLine(y)) continue;
+      for (let x = d.x - g; x < d.x + d.w + g; x++) {
+        if (x < x0 || x >= x1 || inDot(x, y) || !bin.data[y * bin.w + x] || seen[(y - y0) * W + x - x0] || hRun(x, y) >= sp) continue;
+        seen[(y - y0) * W + x - x0] = 1;
+        stack.push(x, y);
+      }
+    }
+    if (!stack.length) return true;
+    // 从圈里的墨往外灌（不进点本身），记下每列灌到的最长竖段。去线图上笔画过谱线处常断开几行，
+    // 竖着碰到谱线行就跳过去接着灌（符尾从干上下来要穿过一两条谱线）
+    const colRun = new Map<number, [number, number]>();
+    while (stack.length) {
+      const y = stack.pop()!;
+      const x = stack.pop()!;
+      const c = colRun.get(x);
+      colRun.set(x, c ? [Math.min(c[0], y), Math.max(c[1], y)] : [y, y]);
+      for (let dy = -1; dy <= 1; dy++)
+        for (let dx = -1; dx <= 1; dx++) {
+          const nx = x + dx;
+          let ny = y + dy;
+          if (dy !== 0 && ny >= y0 && ny < y1 && onLine(ny)) {
+            let k = 0;
+            while (k < 8 && ny >= y0 && ny < y1 && onLine(ny)) {
+              ny += dy;
+              k++;
+            }
+          }
+          if (nx < x0 || nx >= x1 || ny < y0 || ny >= y1 || inDot(nx, ny) || !bin.data[ny * bin.w + nx]) continue;
+          const k = (ny - y0) * W + nx - x0;
+          if (seen[k] || hRun(nx, ny) >= sp) continue;
+          seen[k] = 1;
+          stack.push(nx, ny);
+        }
+    }
+    // 竖段要真连着：那一列从上到下逐行都是墨
+    for (const [x, [a, c]] of colRun) {
+      if (c - a + 1 < sp * 1.5) continue;
+      let run = 0;
+      let most = 0;
+      for (let y = a; y <= c; y++) {
+        run = bin.data[y * bin.w + x] || onLine(y) ? run + 1 : 0;
+        most = Math.max(most, run);
+      }
+      if (most >= sp * 1.5) return false;
+    }
+    return true;
   };
   for (const hd of heads) {
     const b = hd.box;
@@ -4123,8 +4214,14 @@ function findDots(bin: Binary, syms: RasterSym[], unit: RasterUnit, onLine: (y: 
         .filter((o) => Math.abs(o.y + o.h / 2 - dcy) > sp * 0.6)
         .filter((o) => !heads.some((h2) => h2 !== hd && h2.box.x < b.x + b.w + sp * TWIN_COL && h2.box.x + h2.box.w > b.x - sp * TWIN_COL && inWindow(h2.box, o)));
       if (twins.length) continue;
+      if (!isolated(d)) continue;
       out.push(d);
     }
+  }
+  if (out.length >= DOT_MEDIAN_N) {
+    const dims = out.map((d) => Math.max(d.w, d.h)).sort((p, q) => p - q);
+    const med = dims[dims.length >> 1];
+    return out.filter((d) => Math.max(d.w, d.h) >= med * DOT_SMALL);
   }
   return out;
 }

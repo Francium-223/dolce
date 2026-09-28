@@ -564,6 +564,9 @@ export function findStaffForNote(pg: SPage, nt: Sym, lines: Seg[]): boolean {
   // **先试音符上方那行**（照 musicpp 的次序）。反过来的话，大谱表里挂在顶行下沿的音符
   // 会先去试下面那行谱，归错行——实测多行系统的顶行小节自检因此只有 43.9%，
   // 而下行反而多出一截时值。
+  // 但离下面那行近一倍以上的先试下面：两行谱之间的歌词、简谱字的横笔也横跨符头、长短合格，
+  // 挂在下行谱上方两条加线的头会被上行谱「数够」七条加线收走（所信有根基 m12 E♭4 读成 D♭2）
+  if (stfB && distB * 2 < distA && findLegers(nt, stfB, lines)) return true;
   if (stfA && findLegers(nt, stfA, lines)) return true;
   if (stfB && findLegers(nt, stfB, lines)) return true;
   return false;
@@ -592,6 +595,23 @@ export function findLegers(nt: Sym, stf: Staff, lines: Seg[]): boolean {
   // 这些音符会全被丢掉；丢掉的符头连带它的符干也无人认领，那根符干随后被当成小节线
   // （实测 p100 的 x=409 就是这么来的）。
   const need = Math.floor(Math.abs(stf.middleStep(nt.py)) / 2) - 2;
+  // 要三条以上加线的，只数从谱表边缘起**按线距连成一串**的：谱表间歌词、简谱字的横笔也横跨符头、长短合格，
+  // 会替离谱表很远的假头「数够」加线。两条以内不查：和弦里错开的头，近谱表那条加线只横跨旁边那个头
+  //（向主唱新歌 m7 A3 下面的 C4 线只跨 C♯4）
+  if (need >= 3) {
+    const sp = stepDist * 2;
+    const down = nt.py > y2;
+    let at = down ? stf.box.bottom : stf.box.top;
+    let chain = 0;
+    for (const l of poss.slice().sort((a, b) => (down ? a.cy - b.cy : b.cy - a.cy))) {
+      const gap = down ? l.cy - at : at - l.cy;
+      if (gap < sp * 0.5) continue;
+      if (gap > sp * 1.4) break;
+      chain++;
+      at = l.cy;
+    }
+    if (chain < need) return false;
+  }
   if (poss.length >= need) {
     nt.ownerStaff = stf;
     for (const it of poss) it.addTag("Leger");

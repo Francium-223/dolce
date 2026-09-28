@@ -484,6 +484,8 @@ const PAIR_FILL_MAX = 0.96;
 
 /** 拍号数字与模板的签名距离上限。见 `bootstrapTimeSig` 那段的说明。 */
 const TIME_TEMPLATE_DIST = 180;
+/** 压着一个全音符的 C 拍号列用的距离上限（见拍号那一段）。 */
+const TIME_C_WHOLE_DIST = 240;
 /** 调号串里按「前一个记号」认下一个的签名距离上限（同一本同一种记号，比模板近得多）。 */
 const KEY_SELF_DIST = 120;
 /** 几何闸收下的实心头，矮于这个数（线距的倍数）又压在符杠中线上的，是杠头。 */
@@ -1534,6 +1536,10 @@ export async function recognizeRasterPage(
   // 但只认与已认出的拍号**同值、x 对齐**（1.5 格内）的那一对；认中了，盒里的假头随下面「盖过字典」一并删掉。
   const timeFound: { x: number; codes: string }[] = [];
   const timeDone = new Set<(typeof groups)[number]>();
+  // **C 拍号被当成全音符**：粗体 C 上半截的球头垂下来碰到第三线，围出一块白，被内腔那一路收成全音符
+  //（有一位神第一行，C 读成 C♯5 全音符）。这样的列 C 模板的距离上限放宽一档（那个 C 到模板 225）：
+  // 两格多高、骑在中线上、里头又压着个全音符的，行首只有 C 拍号
+  const wholes = syms.filter((s0) => s0.code === "noteheadWhole").map((s0) => s0.box);
   for (const pass of [0, 1])
   for (const g of groups) {
     if (timeDone.has(g) || (pass === 1 && !timeFound.length)) continue;
@@ -1587,7 +1593,10 @@ export async function recognizeRasterPage(
       if (box.h < unit.space * 3) {
         // **C 拍号**（`timeSigCommon` / `timeSigCutCommon`）是一个块、骑在中线上
         if (Math.abs(box.y + box.h / 2 - mid) > unit.space * 0.8) continue;
-        const m = matchTemplate(binSig(nl, box), box.w / unit.space, box.h / unit.space, tpl, TIME_TEMPLATE_DIST);
+        const whole = box.h >= unit.space * 1.8 && wholes.some((w) => w.x >= box.x - 1 && w.x + w.w <= box.x + box.w + 1 && w.y >= box.y - 1 && w.y + w.h <= box.y + box.h + 1);
+        // 放宽时只在 C 模板里挑：别的模板（和弦字母、休止）在宽上限下反倒更近
+        const cTpl = tpl.filter((t) => t.smufl === "timeSigCommon" || t.smufl === "timeSigCutCommon");
+        const m = whole ? matchTemplate(binSig(nl, box), box.w / unit.space, box.h / unit.space, cTpl, TIME_C_WHOLE_DIST) : matchTemplate(binSig(nl, box), box.w / unit.space, box.h / unit.space, tpl, TIME_TEMPLATE_DIST);
         if (m && (m.smufl === "timeSigCommon" || m.smufl === "timeSigCutCommon")) hits.push({ box, code: m.smufl });
       } else {
         // **两个数字摞起来**：按中线几何切开，不按碎块自己的位置分上下半
@@ -2613,6 +2622,7 @@ export async function recognizeRasterPage(
   const ctx = findClefKeyTime(pg);
   demoteMidKeys(pg, ctx);
   extendKeyChains(pg, ctx);
+  dropHeadsInKey(pg, ctx);
   shareKeySignature(ctx);
   extendKeyByCarry(ctx, opts.carryKey);
   keyFromChords(pg, ctx, harmonies.map((h) => h.text), unit);
@@ -3235,6 +3245,30 @@ function extendKeyChains(pg: SPage, ctx: Map<Staff, StaffContext>): void {
       c.key = [...c.key, nx];
     }
   }
+}
+
+/**
+ * **调号区里不出头**：头心落在谱号左缘到本行最后一个调号记号右缘之间的，是调号记号的碎块被当成了头
+ *（所信有根基低音谱表四个降号，E♭ 的肚子连着 A♭ 的竖笔，收成 E♭3 空心头）。只认这一行谱自己认出的调号
+ *（`ctx.key` 可能是从别行借来的）。
+ */
+function dropHeadsInKey(pg: SPage, ctx: Map<Staff, StaffContext>): void {
+  const sp = pg.normalStaffSpace || pg.space;
+  const drop = new Set<(typeof pg.symbols)[number]>();
+  for (const c of ctx.values()) {
+    if (!c.clef) continue;
+    const clef = c.clef.box;
+    const onStaff = (b: Box) => b.top < c.staff.box.bottom && b.bottom > c.staff.box.top;
+    const keys = pg.symbols.filter((s0) => s0.hasTag("Key") && onStaff(s0.box) && s0.box.left >= clef.left && s0.box.left < clef.right + sp * 10);
+    if (!keys.length) continue;
+    const right = Math.max(...keys.map((k) => k.box.right));
+    for (const s0 of pg.symbols) {
+      if (!s0.hasTag("Note") || !onStaff(s0.box)) continue;
+      const cx = (s0.box.left + s0.box.right) / 2;
+      if (cx > clef.left && cx < right) drop.add(s0);
+    }
+  }
+  if (drop.size) pg.symbols = pg.symbols.filter((s0) => !drop.has(s0));
 }
 
 /**

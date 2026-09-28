@@ -1095,7 +1095,7 @@ const chordOverlapX = (a: StaffChord, b: StaffChord): boolean => !(a.left > b.ri
  *   1. 整小节休止（`restHBar`）与「本身就够一小节」的和弦单独收着，不进时间列；
  *   2. 其余按 x 从左到右分**时间列**——与上一列的首和弦横向不相交就开新列，
  *      但两根符干的间隙不到半个线距时仍算同一列（两个声部的符干挨在一起）；
- *   3. 每一列的时值取**列内最小**的那个（长音跨过后面几列），累加成 offset；
+ *   3. 每一列的时值取**列内最小**的那个（长音跨过后面几列），累加成 offset；凑不满再按「还在响的音里最早结束」推进一次；
  *   4. 总和正好等于拍号才提交，否则整小节判失败。
  *
  * `ignoreSmall`：先不带它试一遍，失败再带它试一遍（原文 :1477-1480）。
@@ -1160,15 +1160,38 @@ function checkFull(chords: StaffChord[], expect: number, sp: number, ignoreSmall
     return true;
   }
 
-  let res = 0;
-  for (const g of grps) {
-    g.offset = res;
-    let d = Infinity;
-    for (const ch of g.chords) d = Math.min(d, guessDur(ch));
-    if (!isFinite(d) || d <= 0) return false;
-    res += d;
-  }
-  if (Math.abs(res - expect) >= EPS) return false;
+  // 列起点：先按原文——每列取**列内最短**的时值累加；凑不满再按「所有还在响的音里最早结束的那个」
+  // 推进一次：两个声部节奏错开时（男高附点四分 + 八分、男低两个四分，欢然颂主 m4），前一列的长音
+  // 跨过本列，只取本列最短会把八分那列推晚半拍、整小节凑不满。单声部时两种算法一样；
+  // 一律改用后者，合唱谱几档小降（原先凑得满的小节有的被改了起点）
+  const byMin = (): boolean => {
+    let res = 0;
+    for (const g of grps) {
+      g.offset = res;
+      let d = Infinity;
+      for (const ch of g.chords) d = Math.min(d, guessDur(ch));
+      if (!isFinite(d) || d <= 0) return false;
+      res += d;
+    }
+    return Math.abs(res - expect) < EPS;
+  };
+  const byEnds = (): boolean => {
+    let res = 0;
+    const ends: number[] = [];
+    for (const g of grps) {
+      g.offset = res;
+      for (const ch of g.chords) {
+        const d = guessDur(ch);
+        if (!isFinite(d) || d <= 0) return false;
+        ends.push(res + d);
+      }
+      const next = Math.min(...ends.filter((e) => e > res + EPS));
+      if (!isFinite(next)) return false;
+      res = next;
+    }
+    return Math.abs(Math.max(...ends) - expect) < EPS && Math.abs(res - expect) < EPS;
+  };
+  if (!byMin() && !byEnds()) return false;
   for (const g of grps)
     for (const ch of g.chords) {
       ch.offset = g.offset;

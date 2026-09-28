@@ -614,6 +614,11 @@ export function findPrimitives(
     if (c.bbox.w > thinV * 2) {
       const core = barlineCore(vMask, w, c, staffBands, thinV * 2, unit);
       if (core && !atStaffLeft(core.x0) && !staffLefts.some((l) => core.x0 >= l - unit.space && core.x0 <= l + unit.space * 4)) vSegs.push(core);
+      else if (!core) {
+        // 竖向闭运算跨过符杠，把上方和弦字母的斜笔接到了符干上（主使我喜乐 m8 那个「A」下的 A4）：取窄的那一段
+        const narrow = narrowPart(vMask, w, c, thinV, unit);
+        if (narrow && !atStaffLeft(narrow.x0) && isolated(bin, narrow, true)) vSegs.push(narrow);
+      }
       continue;
     }
     const seg = centerLine(vMask, w, c, false);

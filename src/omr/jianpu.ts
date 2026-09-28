@@ -516,9 +516,12 @@ function splitArcEndDots(bin: Binary, comps: Component[], numH: number): Compone
       const at = (i: number) => col[fromLeft ? i : b.w - 1 - i]!;
       // 点的范围按「≥1.6 倍笔画」量（点的左右边缘那一两列墨少，按门槛量会从第一列就断掉，
       // 实测 `6,8,8,9,8,8,5` 对笔画 3），其中要有列真正厚过门槛。
+      // 块最外那一两列只擦着点的圆边，墨比 1.6 倍笔画还少（2038《谁一直在街上呼喊》实测 `5,8,10,12…`、
+      // `…12,8,2`，笔画 4），从那儿量会一步就断；先让过至多 0.08 字号的薄边，点的范围仍从第一列墨算起。
       let i = 0;
       while (i < b.w && at(i) === 0) i++;
       const start = i;
+      while (i < b.w && i - start < numH * 0.08 && at(i) > 0 && at(i) < stroke * 1.6) i++;
       let peak = 0;
       while (i < b.w && at(i) >= stroke * 1.6) { peak = Math.max(peak, at(i)); i++; }
       const runW = i - start;
@@ -530,7 +533,10 @@ function splitArcEndDots(bin: Binary, comps: Component[], numH: number): Compone
     // 先按两端都切来量弧的底边，再逐个验点；没过验的那一端列还给弧
     const arc = tightBox(bin, b, left?.[1] ?? 0, right?.[0] ?? b.w, 0, b.h);
     if (!arc) { out.push(k); continue; }
-    const asDot = (run: [number, number] | null): Rect | null => {
+    // 「比弧低」只跟**本端这一侧**的弧比：弧的另一只脚落在邻音的八度点旁，本就与这个点一样低
+    //（2038 `2̇⌒3̇` 右脚底 = 左点底，右点自己没粘上弧），故量弧底时让过远端 0.5 字号。
+    const foot = Math.round(numH * 0.5);
+    const asDot = (run: [number, number] | null, fromLeft: boolean): Rect | null => {
       if (!run) return null;
       const d = tightBox(bin, b, run[0], run[1], 0, b.h);
       if (!d) return null;
@@ -539,9 +545,12 @@ function splitArcEndDots(bin: Binary, comps: Component[], numH: number): Compone
       // ——1801《活水的江河》第 6/7/8/10 行那四个被弧脚罩住的高八度点实测 5×9 = 0.56，卡在 0.6 上
       // 整个丢掉（点自己是 5×7 = 0.71）。0.5 仍挡得住细长的弧脚碎片（那些是 2~3 px 宽、十来 px 高）。
       if (d.w > numH * 0.45 || d.h > numH * 0.45 || d.h < numH * 0.12 || ratio < 0.5 || ratio > 1.7) return null;
-      return rbottom(d) > rbottom(arc) ? d : null;                           // 点挂在弧脚上，比弧低
+      const x0 = left?.[1] ?? 0, x1 = right?.[0] ?? b.w;
+      const near = fromLeft ? tightBox(bin, b, x0, Math.max(x0 + 1, x1 - foot), 0, b.h)
+        : tightBox(bin, b, Math.min(x1 - 1, x0 + foot), x1, 0, b.h);
+      return rbottom(d) > rbottom(near ?? arc) ? d : null;                   // 点挂在弧脚上，比弧低
     };
-    const dl = asDot(left), dr = asDot(right);
+    const dl = asDot(left, true), dr = asDot(right, false);
     if (!dl && !dr) { out.push(k); continue; }
     const arcBox = tightBox(bin, b, dl ? left![1] : 0, dr ? right![0] : b.w, 0, b.h);
     if (!arcBox) { out.push(k); continue; }
@@ -611,6 +620,37 @@ function splitArcInnerDots(bin: Binary, comps: Component[], numH: number): Compo
       probe("splitArcInnerDots");
       out.push({ id: nextId++, bbox: d, area: Math.round(inkFill(bin, d) * d.w * d.h), cx: rcx(d), cy: rcy(d) });
     }
+  }
+  return out;
+}
+
+/** 小号波音**压在高八度点上**：2038《谁一直在街上呼喊》`2̇` 头上的 ∿ 与点 4-连通成 24×24 一块（字号 49）——
+ *  宽过点（0.45 字号）、矮过数字块（0.55 字号），classify 哪一档都不收，点和波音一起丢了。
+ *  splitOrnamentDot 管的是大号记号（主体宽 ≥0.7 字号），这块的记号只有 0.5 字号宽，够不着。
+ *  这里在归类前拆：自下而上逐行量墨宽，底下一段窄行（≤0.35 字号）是点，其上紧接明显更宽（≥1.3 倍点宽）、
+ *  矮（0.1~0.3 字号）的一截是记号。两截各收成一块：点照常进点池，记号交给后面的波音判据（锯齿形）裁决。 */
+function splitMordentDot(bin: Binary, comps: Component[], numH: number): Component[] {
+  const out: Component[] = [];
+  let nextId = 2_700_000;
+  const mk = (r: Rect): Component => ({ id: nextId++, bbox: r, area: r.w * r.h, cx: rcx(r), cy: rcy(r) });
+  for (const k of comps) {
+    const b = k.bbox;
+    if (b.w < numH * 0.3 || b.w > numH * 0.6 || b.h < numH * 0.35 || b.h > numH * 0.65) { out.push(k); continue; }
+    const span = (y: number) => {
+      let lo = -1, hi = -1;
+      for (let x = 0; x < b.w; x++) if (bin.data[(b.y + y) * bin.w + b.x + x]) { if (lo < 0) lo = x; hi = x; }
+      return lo < 0 ? 0 : hi - lo + 1;
+    };
+    const spans = Array.from({ length: b.h }, (_, y) => span(y));
+    let y = b.h - 1;
+    while (y >= 0 && spans[y] > 0 && spans[y] <= numH * 0.35) y--;
+    const dotH = b.h - 1 - y;
+    const dot = dotH > 0 ? tightBox(bin, b, 0, b.w, y + 1, b.h) : null;
+    const top = y >= 0 ? tightBox(bin, b, 0, b.w, 0, y + 1) : null;
+    if (!dot || !top || dotH < numH * 0.15 || dot.w / dot.h < 0.6 || dot.w / dot.h > 1.7 ||
+        top.w < dot.w * 1.3 || top.h < numH * 0.1 || top.h > numH * 0.3) { out.push(k); continue; }
+    probe("splitMordentDot");
+    out.push(mk(top), mk(dot));
   }
   return out;
 }
@@ -1223,6 +1263,7 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend): Promise<Rec
   if (isCleanPage(comps, estimateNumH(comps))) {
     comps = splitArcEndDots(bin, comps, estimateNumH(comps));
     comps = splitArcInnerDots(bin, comps, estimateNumH(comps));
+    comps = splitMordentDot(bin, comps, estimateNumH(comps));
   }
   const { c, numH } = classify(comps, bin);
 

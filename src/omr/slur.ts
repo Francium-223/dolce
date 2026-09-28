@@ -26,6 +26,13 @@ function flatBottomShare(bin: Binary, b: Rect): number {
   return cols ? onBase / cols : 0;
 }
 
+/** 上缘是不是平的：离两端 8% 处的最高墨点都在整块顶边 0.15 字号以内（房号括线）；拱形的弧在那里已掉下去。 */
+function flatTop(bin: Binary, b: Rect, numH: number): boolean {
+  const topAt = (x: number) => { let y = b.y; while (y < b.y + b.h && !bin.data[y * bin.w + x]) y++; return y; };
+  const dx = Math.round(b.w * 0.08);
+  return topAt(b.x + dx) - b.y <= numH * 0.15 && topAt(b.x + b.w - 1 - dx) - b.y <= numH * 0.15;
+}
+
 /**
  * 一个弧连通块里**套着的内弧**：两条弧共用一个端点（外弧罩三音、内弧只罩后两音）时，
  * 内弧的收尾一段与外弧交叠、被 4-连通粘成同一个块，包围盒只剩外弧那一条。
@@ -276,7 +283,10 @@ export function detectSlurs(bin: Binary, comps: Component[], rows: StaffRow[], n
       // 两端只有很短的竖钩，bbox 宽高比通常远大于圆弧。若把它交给下面的覆盖音符逻辑，会给整行
       // 错加一组 slur。真长弧即使跨度很大也有明显拱高（现有样本 w/h≈7.3），这里用很保守的
       // w/h>=12 且至少 6 个字号宽来识别 ending 括线；短横线和正常圆弧均不受影响。
-      if (b.w >= numH * 6 && b.w / b.h >= 12) { probe("arc.endingBracketReject"); return false; }
+      // 但只凭宽高比会误伤恰好扁到 12 的长弧（2038《谁一直在街上呼喊》末两条 312×26、313×26 正好 12，
+      // 行末 `1̇ 7 6` 的嵌套弧和拖向下一行的 tie 一起丢了）——再看上缘：括线顶是一条平线，离两端 8% 处
+      // 仍在最高处；弧在那里已经往下掉了大半个拱高。
+      if (b.w >= numH * 6 && b.w / b.h >= 12 && flatTop(bin, b, numH)) { probe("arc.endingBracketReject"); return false; }
       // 弧高上限放到 ~1 字号：跨相邻两音的弧其拱高可达一个字号（实测耶稣普治 w130 h32、numH39，
       // 卡在旧的 0.8 字号=31 上被整条漏掉）；仍 < 数字块高(≥0.55~2 字号且 w/h<2)，靠 w/h≥2 兜住不误纳数字。
       // 跨多音的**长弧**拱得更高（实测「主祢真伟大」跨 `5__|5---|5` 的 tie：w205 h28、numH22，

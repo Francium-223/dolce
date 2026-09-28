@@ -207,6 +207,20 @@ function barColumnNear(bin: Binary, x: number, maxLw: number, bands: [number, nu
   return false;
 }
 
+/** 块里各行墨宽（最左到最右）的众数：干那几十行宽度一致，块里连着的字、头边各行宽窄不一。 */
+function modalRowWidth(mask: Uint8Array, w: number, c: Component): number {
+  const b = c.bbox;
+  const n = new Map<number, number>();
+  for (let y = b.y; y < b.y + b.h; y++) {
+    let a = -1, z = -1;
+    for (let x = b.x; x < b.x + b.w; x++) if (mask[y * w + x]) { if (a < 0) a = x; z = x; }
+    if (a >= 0) n.set(z - a + 1, (n.get(z - a + 1) ?? 0) + 1);
+  }
+  let best = 1, cnt = 0;
+  for (const [k, v] of n) if (v > cnt || (v === cnt && k < best)) (best = k), (cnt = v);
+  return best;
+}
+
 /**
  * 块里**窄的那一段**：竖笔连着别的细笔画（二分头的圈边横向游程也细，进了竖笔掩模，与符干连成一块），
  * 最宽处超过平均线宽两倍时，取行宽不超过平均线宽加 2 的最长连续行重做中心线。
@@ -653,7 +667,8 @@ export function findPrimitives(
       if (core && !atStaffLeft(core.x0) && !staffLefts.some((l) => core.x0 >= l - unit.space && core.x0 <= l + unit.space * 4)) vSegs.push(core);
       else if (!core) {
         // 竖向闭运算跨过符杠，把上方和弦字母的斜笔接到了符干上（主使我喜乐 m8 那个「A」下的 A4）：取窄的那一段
-        const narrow = inkRun(bin, narrowPart(vMask, w, c, thinV, unit), unit, staffBands);
+        // 行宽按这块自己的众数放宽（按细笔上限放的话，贴干的头边也收进来，干粗到 8px：高举主大能 m7 F3 丢了）
+        const narrow = inkRun(bin, narrowPart(vMask, w, c, modalRowWidth(vMask, w, c), unit), unit, staffBands);
         if (narrow && !atStaffLeft(narrow.x0) && isolated(bin, narrow, true)) vSegs.push(narrow);
       }
       continue;

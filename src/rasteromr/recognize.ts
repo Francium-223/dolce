@@ -1999,8 +1999,30 @@ export async function recognizeRasterPage(
         ledger.claim(b, `rest:${rs.smufl}`);
         continue;
       }
-      const r = headFromStemBlock(raster.bin, b, c.area, masks, unit, pitchGrid, onLineY);
+      let r = headFromStemBlock(raster.bin, b, c.area, masks, unit, pitchGrid, onLineY);
+      // **空心头被去线切成两半**：右半个圈与干连成一块（不到一个头宽），左半个圈是另一小块（我一生要赞美你 m13 F4 附点二分）。
+      // 块窄过一个头时，把干端一格内、左右紧贴着的无主小块并进来再判
+      const joined: number[] = [];
+      if (!r && b.w < unit.space * 0.85 && b.h >= unit.space * 1.6) {
+        let box = b;
+        let area = c.area;
+        for (const c2 of blobs) {
+          if (c2 === c || claimed.has(c2.id) || dictClaimed.has(c2.id) || merged.has(c2.id)) continue;
+          const q = c2.bbox;
+          if (q.w > unit.space * 1.2 || q.h > unit.space * 1.3) continue;
+          if (q.x > b.x + b.w + 2 || q.x + q.w < b.x - 2) continue;
+          const nearEnd = q.y + q.h > b.y + b.h - unit.space * 1.3 || q.y < b.y + unit.space * 1.3;
+          if (!nearEnd || q.y < b.y - 2 || q.y + q.h > b.y + b.h + 2) continue;
+          const x0 = Math.min(box.x, q.x);
+          const y0 = Math.min(box.y, q.y);
+          box = { x: x0, y: y0, w: Math.max(box.x + box.w, q.x + q.w) - x0, h: Math.max(box.y + box.h, q.y + q.h) - y0 };
+          area += c2.area;
+          joined.push(c2.id);
+        }
+        if (joined.length && !syms.some((s0) => overlapFrac(box, s0.box) > 0.5)) r = headFromStemBlock(raster.bin, box, area, masks, unit, pitchGrid, onLineY);
+      }
       if (!r) continue;
+      for (const id of joined) merged.add(id);
       // 已有符头压着的不重复出（长干两头的那一档：万古磐石歌的 B♭3/B♭2 别的路已认出，再出一遍成了四个音）
       const dup = (hb: Rect) => [...syms, ...stemHeads].some((s0) => /^notehead/.test(s0.code) && overlapFrac(hb, s0.box) > 0.3);
       if (dup(r.head)) continue;

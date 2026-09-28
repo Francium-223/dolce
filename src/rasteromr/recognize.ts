@@ -1286,6 +1286,15 @@ export async function recognizeRasterPage(
     for (const h of heads) if (h.code === "noteheadBlack" && !dropHead.has(h.comp.id) && shortBeam(h.box)) dropHead.add(h.comp.id);
     const blackBoxes = [...heads.map((h) => h.box), ...split.map((q) => q.box)];
     for (let i = split.length - 1; i >= 0; i--) if (beamStump(split[i].box, blackBoxes)) split.splice(i, 1);
+    // 内腔那一路的空心头/全音符**三成以上压在实心头上**的：升号右竖笔与两个贴着的实心头左缘围出的白
+    //（千古保障歌伴奏 m7，G♯4/B4 前面读出一个 A4）。实心头是拆块那一路后认的，内腔那一路的「已认」挡不住
+    const inter = (a: Rect, b: Rect) => Math.max(0, Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x)) * Math.max(0, Math.min(a.y + a.h, b.y + b.h) - Math.max(a.y, b.y));
+    const solids = [...heads.filter((h) => h.code === "noteheadBlack" && !dropHead.has(h.comp.id)).map((h) => h.box), ...split.map((q) => q.box)];
+    for (let i = stacked.length - 1; i >= 0; i--) {
+      const q = stacked[i];
+      if (q.code !== "noteheadHalf" && q.code !== "noteheadWhole") continue;
+      if (solids.reduce((a, b) => a + inter(q.box, b), 0) >= q.box.w * q.box.h * 0.3) stacked.splice(i, 1);
+    }
     // 光杆干端头那一路收的实心头：干端正对着网纹粗杠时，杠身被收成头（耶和华是我的牧者 m11）
     for (let i = stacked.length - 1; i >= 0; i--) if (stacked[i].code === "noteheadBlack" && inBeamBody(stacked[i].box)) stacked.splice(i, 1);
   }

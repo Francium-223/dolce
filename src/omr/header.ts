@@ -233,7 +233,8 @@ function parseMeta(lines: HLine[]): MetaInfo {
   // 一片 "Eb调4/4"）先剥掉拍号再认。
   if (res.fifths === undefined) {
     for (const l of lines) {
-      const t = l.text.replace(/\s+/g, "").replace(/(调)\d{1,2}[/／]\d{1,2}$/, "$1");
+      // 「调」前的 `0`/`O` 是读坏了的 D（1218 1014 `0调4/4`）；拍号里偶夹一个噪点（130 `2./4`）
+      const t = l.text.replace(/\s+/g, "").replace(/(调)\d{1,2}[.·]?[/／]\d{1,2}$/, "$1").replace(/^([b#♭♯降升]?)[0Oo](?=[b#♭♯]?调)/, "$1D");
       // 升降号也有写成汉字的：「降E调」「升F调」（选本诗歌712 通本）
       const m = t.length <= 6 && t.match(/^([b#♭♯降升]?)([A-G])([b#♭♯]?)(大调|小调|调)$/);
       if (!m) continue;
@@ -496,7 +497,7 @@ function mergeStackedColumns(comps: Component[], numH: number): Component[] {
 function splitInlineKey(lines: HLine[]): HLine[] {
   const out: HLine[] = [];
   for (const l of lines) {
-    const m = /^(\d{1,4})?((?:[降升]|[b#♭♯])?[A-G][b#♭♯]?调\d{1,2}[/／]\d{1,2})(.*)$/.exec(l.text);
+    const m = /^(\d{1,4})?((?:[降升]|[b#♭♯])?[A-G0Oo][b#♭♯]?调\d{1,2}[.·]?[/／]\d{1,2})(.*)$/.exec(l.text);
     const cs = l.chars && l.chars.length === l.text.length ? l.chars : undefined;
     if (!m || !cs || (!m[1] && !m[3])) { out.push(l); continue; }
     const cuts = [0, (m[1] ?? "").length, (m[1] ?? "").length + m[2].length, l.text.length];
@@ -658,8 +659,10 @@ export async function recognizeHeader(
   }
 
   /** `=` 的一道横：扁、薄、不比一个字宽。 */
+  // 宽上限 1.6 字号（原 1.2）：多段歌词的页上 numH 常被偏旁碎块压小（补充本 151 估成 19，数字实高 35），
+  // `=` 的横 23px 就过不了门。放宽不怕：`=` 还要左边紧挨一个读得出 1 的块才算数。
   function isBar(k: Component): boolean {
-    return k.bbox.w >= k.bbox.h * 2.5 && k.bbox.h <= numH * 0.25 && k.bbox.w >= numH * 0.2 && k.bbox.w <= numH * 1.2;
+    return k.bbox.w >= k.bbox.h * 2.5 && k.bbox.h <= numH * 0.25 && k.bbox.w >= numH * 0.2 && k.bbox.w <= numH * 1.6;
   }
 
   /** 页眉里第一谱行之上、中心在 xMax 左边、yMin 以下的字号大小的块（高不过 maxH 字号），按 x 排好。 */
@@ -815,7 +818,7 @@ export async function recognizeHeader(
     return undefined;
   }
 
-  async function keyByGlyphs(titleLine: HLine | null, slashes: SlashGroup[]): Promise<{ fifths: number; bbox: Rect } | undefined> {
+  async function keyByGlyphs(titleLine: HLine | null, slashes: SlashGroup[]): Promise<{ fifths: number; bbox: Rect; viaMeter?: boolean } | undefined> {
     const xMax = titleLine ? titleLine.cx : bin.w / 2;
     const yMin = titleLine ? titleLine.bbox.y : 0, yMax = firstStaffTopY - numH * 0.1;
     const inMeter = (k: Component) => !!geoMeters?.some((m) => overlapRatioX(m.bbox, k.bbox) > 0.5 &&
@@ -832,7 +835,8 @@ export async function recognizeHeader(
       for (const dir of [1, -1] as const) {
         const gapTo = (k: Component) => (dir > 0 ? eq.x - (k.bbox.x + k.bbox.w) : k.bbox.x - (eq.x + eq.w));
         const one = pool
-          .filter((k) => !isBar(k) && gapTo(k) >= -1 && gapTo(k) <= numH * 0.8 &&
+          // 间隙 1.0 字号（原 0.8）：`1 = G` 排得松的（补充本 7：24px，字号 29）
+          .filter((k) => !isBar(k) && gapTo(k) >= -1 && gapTo(k) <= numH &&
             k.bbox.h >= numH * 0.4 && rcyOf(eq) >= k.bbox.y && rcyOf(eq) <= k.bbox.y + k.bbox.h && k.bbox.w <= k.bbox.h * 0.75)
           .sort((p, q) => gapTo(p) - gapTo(q))[0];
         if (dbg) console.log("[header/keyEq]", dir > 0 ? "1=" : "=1", `eq ${eq.x},${eq.y} ${eq.w}x${eq.h}`, one ? `one ${one.bbox.x},${one.bbox.y} ${one.bbox.w}x${one.bbox.h}` : "no-one", `numH ${numH.toFixed(1)}`);
@@ -863,7 +867,7 @@ export async function recognizeHeader(
       const group = chain(st.x, -1, st.band, numH);
       if (dbg) console.log("[header/keyMeter]", st.what, `@${st.x}`, group.length);
       const k = await readKeyGroup(group);
-      if (k) return k;
+      if (k) return { ...k, viaMeter: true };
     }
     return undefined;
   }
@@ -948,7 +952,8 @@ export async function recognizeHeader(
     const x0 = Math.max(ln.bbox.x, L.x - lh * 0.6), x1 = cs[iTiao].cx - lh * 0.3;
     for (const c of comps) {
       const b = c.bbox;
-      if (c === letter || b.x < x0 || b.x + b.w > x1 || b.h > lh * 0.9 || b.h < lh * 0.3 || b.w > lh * 0.5 || b.h < b.w) continue;
+      if (c === letter || b.x < x0 || b.x + b.w > x1 || b.h > lh * 0.9 || b.h < lh * 0.55 || b.w > lh * 0.5 || b.h < b.w) continue;
+      // 下限 0.55：真上标 ♭ 有音名高的八成（304：16×26 对 33），「调」字言字旁那一点只有三成（84 `C调`：7×9 对 30）
       // 上标：顶在音名顶附近、中线高过音名中线
       if (b.y + b.h / 2 > L.y + L.h / 2 || b.y > L.y + lh * 0.3) continue;
       const kind = accidentalOf(bin, b);
@@ -1148,13 +1153,19 @@ export async function recognizeHeader(
     const slashes = slashGroups(glyphPool(titleLine ? titleLine.cx : bin.w / 2, titleLine ? titleLine.bbox.y : 0));
     const glyphSlash = await slashMeters(slashes);
     const textFifths = meta.fifths;
-    const g = await keyByGlyphs(titleLine, slashes);
+    let g = await keyByGlyphs(titleLine, slashes);
+    // 「X调 4/4」写法：音名与拍号之间隔着「调」字，锚点二（拍号左边紧挨的块）够着的是「调」的碎块，
+    // 能读出个假音名（1218 724《主为寻浪子》`C调` 读成 D）。文本路认出了「X调」就以它为准。
+    if (g?.viaMeter && textFifths !== undefined && textFifths !== g.fifths && /调/.test(meta.fifthsLine?.text ?? "")) {
+      probe("key.textOverMeterGlyph"); g = undefined;
+    }
     const glyphKeyBox = g?.bbox;
     if (g) { probe("key.glyphs"); meta.fifths = g.fifths; }
     else if (meta.fifths !== undefined) {
       probe("key.text");
       const acc = superscriptAccidental(meta.fifthsLine);
-      if (acc) { probe("key.text.superAcc"); meta.fifths += acc === "flat" ? -7 : 7; }
+      const f2 = acc ? meta.fifths + (acc === "flat" ? -7 : 7) : NaN;
+      if (f2 >= -7 && f2 <= 7) { probe("key.text.superAcc"); meta.fifths = f2; }
     }
     // 探针：两路并排打日志（核对判据用，dev/scripts/key-layout.mjs）
     if ((globalThis as { __keyGlyphProbe?: boolean }).__keyGlyphProbe) {

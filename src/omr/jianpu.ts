@@ -1748,18 +1748,33 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
   //   · **调号行**：`1=♭E 4/4` 单印一行、字号与谱行相当时，1、E、拍号数字凑够了核，♭ 的竖笔又被收成小节线
   //    （补充本 71《义仆君王》：读成 `1 | 7 1`、页眉 ROI 随之只剩一行）。认法：行首核右边一个字宽内有 `=`——
   //     两道上下叠、横向对齐、都落在该核腰部的短横。简谱里增时线从不上下叠，减时线在数字下方，凑不出这个形。
+  //     尺度用行首那个「1」自己的高度，不用 numH——多段歌词的页 numH 常被偏旁碎块压小（补充本 151 估成 19，
+  //     `=` 的横 23px、「1」高 34）。
   const keyLineRow = (rd: DigitCore[]): boolean => {
+    if (!rd.length) return false;
     const first = rd.reduce((a, b) => (b.bbox.x < a.bbox.x ? b : a)).bbox;
-    const bars = c.hlines.map((k) => k.bbox).filter((b) => b.x >= rright(first) - 1 && b.x - rright(first) <= numH &&
-      b.w <= numH * 1.2 && rcy(b) >= first.y + first.h * 0.2 && rcy(b) <= first.y + first.h * 0.8);
+    const u = Math.max(numH, first.h);
+    const bars = c.hlines.map((k) => k.bbox).filter((b) => b.x >= rright(first) - 1 && b.x - rright(first) <= u &&
+      b.w <= u * 1.2 && rcy(b) >= first.y + first.h * 0.2 && rcy(b) <= first.y + first.h * 0.8);
     return bars.some((a) => bars.some((b) => b !== a && rcy(b) > rcy(a) && rcy(b) - rcy(a) <= numH * 0.5 &&
       Math.min(rright(a), rright(b)) - Math.max(a.x, b.x) >= Math.min(a.w, b.w) * 0.6));
   };
+  // **第一条像样的谱行以上**是页眉：标题、曲号、左上角分类小字那几排被凑成「行」，分类小字中间的分隔横线又被
+  // 当成增时线，休止占比的门跟着放到 0.8，整排读作 0 的汉字也留了下来（补充本 151、174、95 前两三「行」全是页眉）。
+  // 那片区域里调号行以上的丢掉。（试过再按「半数核近方」丢汉字行：粗体数字、连着减时线的核也近方，老语料多首第一谱行被删，未上。）
+  // 只在第一谱行**之上**动：「1=」的形在分类小字里也凑得出来（151「信徒灵修」的「信」竖笔 +「徒」两横），
+  // 放到全页去找，歌词里碰上一处就会把上面的真谱行整片删掉。
+  const squareCore = (k: DigitCore) => k.bbox.w > k.bbox.h * 0.8 && k.bbox.h >= numH * 0.6;
+  const firstMusicTop = Math.min(...rowMetaAll
+    .filter((m) => m.rd.length >= 3 && m.barlineXs.length >= 2 && m.rd.filter((k) => !squareCore(k)).length >= m.rd.length * 0.7)
+    .map((m) => m.topY));
+  const keyLineBot = Math.max(-Infinity, ...rowMetaAll.filter((m) => m.botY < firstMusicTop && keyLineRow(m.rd)).map((m) => m.botY));
   const pageRowH = median(rowMetaAll.filter((m) => m.rd.length >= 3).map((m) => median(m.rd.map((k) => k.bbox.h))));
   const rowMeta = rowMetaAll.filter((m) => {
     if (m.rd.length < 3) return false;
     if (m.rd.filter(flatCore).length * 2 > m.rd.length) { probe("pseudoRow.flat"); return false; }
     if (keyLineRow(m.rd)) { probe("pseudoRow.keyLine"); return false; }
+    if (m.botY < firstMusicTop && m.botY <= keyLineBot) { probe("pseudoRow.aboveKeyLine"); return false; }
     // **大字行**：核的中位高超过 1.4 字号——音符数字都在一个字号上下，大一号的是标题/曲号那一排
     //（补充本 71：「受难」小字 + 大号曲号「71」（59×46、60×26，字号 36）凑成一行，读成 `1 | 7 1`）。
     // 还要比**全页各行**的中位高高出 1.4 倍：numH 估小了的页（补充本 155，数字核连着八度点）正经谱行也过得了
@@ -2460,27 +2475,59 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
   });
   for (const r of rows) for (const n of r.nums) if (n.digit === RHYTHM_DIGIT) probe("rhythmX");
   // 整曲都被判伪行（极端情况）则回退，至少出点东西。
-  const useRows = rows.length ? rows : allRows;
+  let useRows = rows.length ? rows : allRows;
   // 多声部分组验收：每条谱行都归了系统、≥2 个系统、各系统行数相同且声部号连续——缺一条就当单声部
   //（连谱号认错、伪行剔掉了其中一条，硬分声部会把音乐次序整个打乱）。
   if (useRows.some((r) => r.system !== undefined)) {
-    // 连谱号下钩没够着的末声部行（新编赞美诗·四声部 34 第 1 系统第 4 行，下钩只画到它上沿）：紧贴在某系统
-    // 末行下面（中间没隔歌词，间隔 <1.5 字号）、且那个系统比别的系统少一行，就并进去。
+    // 连谱号认得不全时的几种补救，都以「每系统行数的众数」为准（行数对不上验收就整页退回单声部）：
     {
-      const cnt = new Map<number, number>();
-      for (const r of useRows) if (r.system !== undefined) cnt.set(r.system, (cnt.get(r.system) ?? 0) + 1);
-      const mode = Math.max(0, ...cnt.values());
-      const byY = [...useRows].sort((a, b) => a.topY - b.topY);
+      const countOf = () => {
+        const cnt = new Map<number, number>();
+        for (const r of useRows) if (r.system !== undefined) cnt.set(r.system, (cnt.get(r.system) ?? 0) + 1);
+        return cnt;
+      };
+      let cnt = countOf();
+      const freq = new Map<number, number>();
+      for (const n of cnt.values()) freq.set(n, (freq.get(n) ?? 0) + 1);
+      const mode = [...freq].sort((x, y) => y[1] - x[1] || y[0] - x[0])[0]?.[0] ?? 0;
+      let nextSys = Math.max(-1, ...cnt.keys()) + 1;
+      const byY = [...useRows].sort((x, y) => x.topY - y.topY);
+      // ① 两个系统的连谱号上下挨着连成了一道（336：8 行）：正好两倍就从中间劈开
+      for (const [sys, n] of cnt) {
+        if (mode < 2 || n !== mode * 2) continue;
+        probe("voices.splitDouble");
+        const g = byY.filter((r) => r.system === sys);
+        for (const r of g.slice(mode)) r.system = nextSys;
+        nextSys++;
+      }
+      // ② 整个系统的连谱号没认出来（83 第 1 系统）：连续一段没归系统的行，行数正好是众数，自成一个系统
+      for (let i = 0; i < byY.length; ) {
+        let j = i;
+        while (j < byY.length && byY[j].system === undefined) j++;
+        if (j - i === mode && mode >= 2) {
+          probe("voices.orphanSystem");
+          for (let k = i; k < j; k++) byY[k].system = nextSys;
+          nextSys++;
+        }
+        i = Math.max(j, i + 1);
+      }
+      cnt = countOf();
+      // ③ 连谱号下钩没够着的末声部行（34 第 1 系统第 4 行）、上钩没够着的首声部行（270 第 4 系统）：
+      //    紧贴某系统的末行/首行（中间没隔歌词，间隔 <1.5 字号）、且那个系统比众数少一行，就并进去
       byY.forEach((r, i) => {
-        const prev = byY[i - 1];
-        if (r.system !== undefined || !prev || prev.system === undefined) return;
-        if ((cnt.get(prev.system) ?? 0) >= mode || r.topY - prev.bottomY >= numH * 1.5) return;
-        probe("voices.adoptBelow");
-        r.system = prev.system; r.voice = (prev.voice ?? 0) + 1;
-        cnt.set(prev.system, (cnt.get(prev.system) ?? 0) + 1);
+        if (r.system !== undefined) return;
+        const prev = byY[i - 1], next = byY[i + 1];
+        if (prev?.system !== undefined && (cnt.get(prev.system) ?? 0) < mode && r.topY - prev.bottomY < numH * 1.5) {
+          probe("voices.adoptBelow");
+          r.system = prev.system;
+        } else if (next?.system !== undefined && (cnt.get(next.system) ?? 0) < mode && next.topY - r.bottomY < numH * 1.5) {
+          probe("voices.adoptAbove");
+          r.system = next.system;
+        } else return;
+        cnt.set(r.system, (cnt.get(r.system) ?? 0) + 1);
       });
-      // 同一毛病的另一种样子：那一行被**下一个**连谱号的上钩罩了进去（85 第 3 系统 3 行、第 4 系统 5 行）。
-      // 相邻两系统一少一多、多的那个首行紧贴少的那个末行时挪回去。
+      // ④ 那一行被**下一个**连谱号的上钩罩了进去（85 第 3 系统 3 行、第 4 系统 5 行）：
+      //    相邻两系统差两行、多的那个首行紧贴少的那个末行时挪回去
       byY.forEach((r, i) => {
         const prev = byY[i - 1];
         if (!prev || prev.system === undefined || r.system === undefined || r.system === prev.system) return;
@@ -2488,8 +2535,23 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
         if (a >= b || b - a !== 2 || r.topY - prev.bottomY >= numH * 1.5) return;
         probe("voices.moveUp");
         cnt.set(r.system, b - 1); cnt.set(prev.system, a + 1);
-        r.system = prev.system; r.voice = (prev.voice ?? 0) + 1;
+        r.system = prev.system;
       });
+      // ⑤ 系统里夹着一条杂行（94 第 1 系统第 3、4 声部之间一条 4 个音的碎行）：多出一行、且恰有一行音数
+      //    不到同系统中位数的四成，剔掉
+      const drop = new Set<StaffRow>();
+      for (const [sys, n] of cnt) {
+        if (n !== mode + 1) continue;
+        const g = byY.filter((r) => r.system === sys);
+        const med = median(g.map((r) => r.nums.length));
+        const thin = g.filter((r) => r.nums.length < med * 0.4);
+        if (thin.length === 1) { probe("voices.dropThin"); drop.add(thin[0]!); }
+      }
+      if (drop.size) useRows = useRows.filter((r) => !drop.has(r));
+      // 系统号按纵向位置重排（①② 新开的号排在后面）
+      const order = [...new Set(byY.filter((r) => !drop.has(r) && r.system !== undefined).map((r) => r.system!))];
+      const remap = new Map(order.map((sys, k) => [sys, k]));
+      for (const r of useRows) if (r.system !== undefined) r.system = remap.get(r.system);
     }
     const bySys = new Map<number, StaffRow[]>();
     for (const r of useRows) if (r.system !== undefined) (bySys.get(r.system) ?? bySys.set(r.system, []).get(r.system)!).push(r);

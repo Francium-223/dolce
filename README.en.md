@@ -1,0 +1,183 @@
+# jpeditor
+
+[中文](README.md) | **English**
+
+> An open-source editor and typesetter for **jianpu** (Chinese numbered musical notation): write, recognize,
+> typeset, play back and export scores — in the browser with nothing to install, or as a Windows / macOS desktop app.
+
+[![Release](https://img.shields.io/github/v/release/lodebar2026/jpeditor?display_name=tag)](https://github.com/lodebar2026/jpeditor/releases)
+[![Live demo](https://img.shields.io/badge/%F0%9F%8C%90%20Live%20demo-online-2b6cb0)](https://lodebar2026.github.io/jpeditor/)
+![Platform](https://img.shields.io/badge/platform-Web%20%7C%20macOS%20%7C%20Windows-555)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+
+**What is jianpu?** Jianpu is the numbered notation widely used in China and across East Asia, especially for
+hymnals, choir books and folk songs. The digits `1`–`7` stand for the scale degrees do–ti, with `0` for a rest.
+Dots above or below a digit shift it by an octave, underlines halve the duration, and dashes extend it by a beat.
+Lyrics sit directly under the notes.
+
+## Quick start
+
+| | Where | Notes |
+| :-: | --- | --- |
+| 🌐 | **[Live demo](https://lodebar2026.github.io/jpeditor/)** | Runs in the browser, nothing to install |
+| 🍎 | **[macOS download](https://github.com/lodebar2026/jpeditor/releases/latest)** (`.dmg`, Apple Silicon) | If macOS says the app "is damaged", see [below](#install) |
+| 🪟 | **[Windows download](https://github.com/lodebar2026/jpeditor/releases/latest)** (`x64-setup.exe`) | Installer for Windows 10/11 x64 |
+
+The interface is in Chinese.
+
+![Start page](docs/screenshot-start.png)
+
+![Editor](docs/screenshot.png)
+
+## Features
+
+**Editing**
+- **Source on the left, live score on the right.** The score is re-typeset as you type. Four text formats are
+  supported, each with syntax highlighting and diagnostics:
+  - **123**, the project's own jianpu format (see below)
+  - **JP-Word `.jpwabc`**
+  - **Plain-text jianpu scripts**: the *Fanqie* (番茄简谱) script language and the *Shigeben* (诗歌本) text score,
+    which the Shigeben app calls a "dynamic score"
+  - **ABC notation**
+- **Visual editing.** Select, insert and change notes and marks directly on the score: pitch, octave, accidentals,
+  duration, extension dashes, barlines, slurs and ties, fermatas, accents, and line and page breaks. You can use
+  the keyboard, a context menu or a symbol palette. Every edit is written back to the source text and shares one
+  undo history with the code editor.
+- **Two-way navigation.** Clicking a note or lyric jumps to its place in the source, and the reverse. Measures
+  whose beats don't add up to the time signature are outlined in red.
+- **Simplified ↔ Traditional Chinese conversion** covers lyrics, titles and credits and leaves the music code
+  untouched.
+
+**Optical music recognition (local, offline)**
+- **Jianpu recognition.** Drop in a photo, screenshot or scanned PDF of a jianpu score and it is recognized into
+  123. The result includes notes, durations, lyrics aligned syllable by syllable, and the title, credits and key.
+  Four-part scores are split into their voices. Everything runs locally in the browser or desktop app, and
+  images are never uploaded.
+- **Source-image review.** Recognized symbols are overlaid on the binarized source image at their original
+  positions, so you can check note by note. Clicking a symbol jumps to its source text, and you can play the
+  score back in this view.
+- **Staff-notation PDFs.** A staff PDF with an intact text layer can be recognized into MusicXML, which opens in
+  the staff and mixed views.
+
+**Typesetting**
+- **Four views:**
+  - *Expanded*: repeats and verses are unrolled pass by pass, one verse per slide, for projection.
+  - *Original*: laid out as printed, with verses stacked under the notes, for print.
+  - *Staff*: Western staff notation.
+  - *Mixed*: staff notation with a jianpu layer on top.
+- **Phrase-aware re-layout.** Lines are re-broken using lyric punctuation and musical cues (fermatas, final
+  barlines, long notes, rests, slurs). The original line breaks can be restored with one click.
+- **Paper and styling.** Paper size, orientation, margins and header fonts are all adjustable. `.ss` style sheets
+  keep fonts, colors and layout consistent across a whole songbook.
+
+**Playback**
+- The score plays at its marked tempo, with a cursor that follows along. You can pause, drag the progress bar,
+  click a note to continue from there, set the speed from ×0.5 to ×2, and adjust per-voice volume.
+
+**Save, Save As and Export**
+- **Save** writes back to the original format.
+- **Save As** converts between 123, JPWABC, ABC and the plain-text formats. Anything the target format can't hold
+  is listed before you confirm.
+- **Export** depends on the view:
+  - Jianpu views: **vector PPTX**, **MIDI** and **MusicXML**.
+  - Staff and mixed views: **PNG**, **PDF**, **MIDI** and **MusicXML**.
+
+## The 123 format
+
+123 is the project's **primary jianpu format**: a **jianpu dialect of ABC notation**.
+
+- **Borrowed from ABC:** the header fields (`X:` `T:` `K:` `M:` `w:` …), repeats, endings, multiple voices and
+  play order.
+- **Replaced:** the note body uses jianpu digits instead of ABC letters.
+- **Why it works well:** it is plain UTF-8 text that is easy to write by hand, and it holds scores converted from
+  MusicXML, ABC, the plain-text formats and OMR without loss.
+
+```
+X:1
+T:Amazing Grace
+C:Words John Newton
+K:1=F
+M:3/4
+Q:1/4=76
+5, | 1 - 3_ 1_ | 3 - 2 | 1 - 6, | 5, - $
+w:A-ma-zing_ grace, how sweet the sound
+5, | 1 - 3_ 1_ | 3 - 2 | 5 - - | 5 - |]
+w:That saved a_ wretch like me!_
+```
+
+| Syntax | Meaning | Syntax | Meaning |
+| --- | --- | --- | --- |
+| `1`–`7` `0` | Scale degrees, rest | `\|` `\|:` `:\|` `\|]` | Barline, repeats, final barline |
+| `1'` `1,` | Octave up / down | `[1` `[2` | First / second ending |
+| `#4` `b7` `n4` | Sharp, flat, natural | `( … )`, `2~ 3` | Slur / tie |
+| `1_` `1__` | Eighth, sixteenth (beams follow the beat automatically) | `(3: 1_ 2_ 3_ )` | Triplet |
+| `5.` | Dotted note | `w:` | Lyrics (one music line, then its lyric lines) |
+| `5 -` | Extension dash, +1 beat each | `$` `$$` | Line break, page break |
+| `F 1` | Chord symbol (before its note) | `V:1` `V:2` | Voices |
+
+In the lyrics, CJK characters take one note each and need no spaces. Latin words are split into syllables with `-`
+(`A-ma-zing`), and `_` holds a syllable over the next note.
+
+- Full specification (in Chinese): [docs/格式/123格式.md](docs/格式/123格式.md)
+- In the app, **帮助 (Help) → 123 格式** walks through each construct with live-rendered examples.
+
+## Supported formats
+
+| Format | Extensions | Open | Edit | Save / Save As | Notes |
+| --- | --- | :-: | :-: | :-: | --- |
+| 123 | `.123` | ✅ | ✅ | ✅ | Primary jianpu format, UTF-8 |
+| JP-Word | `.jpwabc` | ✅ | ✅ | ✅ | UTF-16LE with BOM, compatible with JP-Word |
+| Plain-text jianpu | `.pu` `.fq` `.jps` `.txt` | ✅ | ✅ | ✅ | Fanqie and Shigeben dialects, detected automatically |
+| ABC | `.abc` | ✅ | ✅ | ✅ | Native parser: voices, repeats, endings, chords, ornaments… |
+| MusicXML | `.xml` `.musicxml` | ✅ | After converting to a text format | ✅ | A single-voice score can be converted to 123 etc. for editing, or kept as MusicXML for the staff and mixed views |
+| Image / PDF | `.png` `.jpg` `.webp` `.pdf` | OMR | — | — | Jianpu images and scanned PDFs; staff PDFs with a text layer |
+
+## Install
+
+- **Web** (no install): <https://lodebar2026.github.io/jpeditor/>
+- **macOS** (Apple Silicon, `jpeditor_<version>_aarch64.dmg`) and **Windows** (x64,
+  `jpeditor_<version>_x64-setup.exe`): [latest release](https://github.com/lodebar2026/jpeditor/releases/latest)
+- **"jpeditor is damaged" on macOS?** The app is not signed with an Apple developer certificate. Move it to
+  Applications, then run this once in Terminal:
+
+  ```
+  xattr -cr /Applications/jpeditor.app
+  ```
+
+  More details (in Chinese) are in [docs/macOS-打不开.md](docs/macOS-打不开.md).
+
+## Development
+
+jpeditor is built with Tauri 2, TypeScript and SVG. Typesetting, rendering, the score model and editing all live
+in the TypeScript front end. Rust is used only for native acceleration.
+
+The developer docs are in Chinese:
+- Tech stack, build commands, layering and module map: [docs/架构.md](docs/架构.md)
+- Requirements and per-module pages: [docs/](docs/)
+- Roadmap: [docs/待办.md](docs/待办.md)
+
+Regression scripts and test corpora are not part of this repository.
+
+## Acknowledgements
+
+- [open-fanqie](https://github.com/Linho1219/open-fanqie) (MIT): a third-party open-source parser and renderer
+  for Fanqie jianpu scripts. The script spec is at <https://fqdoc.linho.cc/>.
+- The [ABC notation standard](https://abcnotation.com/wiki/abc:standard:v2.1): the basis for the fields and
+  structure of the 123 format.
+- [Bravura / SMuFL](https://github.com/steinbergmedia/bravura) (Steinberg, SIL OFL): music font and glyph metadata.
+- [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) (Apache-2.0): recognition models for digits and lyrics
+  in OMR, run with [onnxruntime-web](https://github.com/microsoft/onnxruntime).
+- Editor, desktop shell and build: [CodeMirror 6](https://codemirror.net/), [Tauri 2](https://tauri.app/),
+  [Vite](https://vite.dev/) and [TypeScript](https://www.typescriptlang.org/).
+- Libraries:
+  - [opencc-js](https://github.com/nk2028/opencc-js): Simplified/Traditional conversion
+  - [pdf.js](https://mozilla.github.io/pdf.js/): PDF rasterization
+  - [jsPDF](https://github.com/parallax/jsPDF): PDF export
+  - [smplr](https://github.com/danigb/smplr): playback samples
+  - [fflate](https://github.com/101arrowz/fflate): PPTX packaging
+  - [opentype.js](https://opentype.js.org/): glyph outlines
+
+## License
+
+The code is licensed under MIT (see [LICENSE](LICENSE)). The bundled Bravura font is licensed under the SIL OFL
+(see `public/redist`). Third-party dependencies are licensed under their own terms.

@@ -234,7 +234,7 @@ function parseMeta(lines: HLine[]): MetaInfo {
   if (res.fifths === undefined) {
     for (const l of lines) {
       // 调名先归一（normKeyText）；拍号里偶夹一个噪点（130 `2./4`）
-      const t = normKeyText(l.text.replace(/\s+/g, "")).replace(/(调)\d{1,2}[.·]?[/／]\d{1,2}$/, "$1");
+      const t = normKeyText(l.text.replace(/\s+/g, "")).replace(/(调)\d{1,2}(?:[.·]?[/／]\d{1,2})?$/, "$1");
       // 升降号也有写成汉字的：「降E调」「升F调」（选本诗歌712 通本）
       const m = t.length <= 6 && t.match(/^([b#♭♯降升]?)([A-G])([b#♭♯]?)(大调|小调|调)$/);
       if (!m) continue;
@@ -495,7 +495,11 @@ function mergeStackedColumns(comps: Component[], numH: number): Component[] {
 function normKeyText(t: string): string {
   return t
     // 音名/升降号与「调」、「调」与拍号之间夹的噪点（76「G调.4/4」、259「D·调」、516「Eb.调」）
-    .replace(/([A-G0OopP口日8εЕ€][b#♭♯h]?)[.·．、](?=调)/, "$1").replace(/调[.·．](?=\d)/, "调")
+    // 音名后的小圈 `°` 是读成了圈的上标 ♭（454「D°调」= ♭D）
+    .replace(/([A-Ga-g0OopP口日8εЕ€])[°º˚](?=调)/, "$1b")
+    .replace(/([A-Ga-g0OopP口日8εЕ€][b#♭♯h]?)[.·．、](?=调)/, "$1").replace(/调[.·．](?=\d)/, "调")
+    // 小写音名（1205「g调」、774「a调」）
+    .replace(/(^|\d)([b#♭♯降升]?)([a-g])(?=[b#♭♯h]?调)/, (_m, a: string, b: string, c: string) => a + b + c.toUpperCase())
     // 读错的音名：D 读成 0/O/p/口，B 读成 日/8，E 读成 ε（1218 1014、110、91、452、462、487、494）；降号读成 h（15「Dh调」）
     .replace(/(^|\d)([b#♭♯降升]?)[0OopP口](?=[b#♭♯h]?调)/, "$1$2D")
     .replace(/(^|\d)([b#♭♯降升]?)[日8](?=[b#♭♯h]?调)/, "$1$2B")
@@ -512,7 +516,7 @@ function splitInlineKey(lines: HLine[]): HLine[] {
   const out: HLine[] = [];
   for (const l of lines) {
     // 归一只改调名那几个字、字数可能变（两个调并成一个），所以先在原文上认形、按原文字位切，切出的调号片再归一
-    const m = /^(\d{1,4})?((?:(?:[降升]|[b#♭♯])?[A-G0OopP口日8εЕ€][b#♭♯h]?[.·．、]?)?(?:[.\-、．·]?(?:[降升]|[b#♭♯])?[A-G][b#♭♯]?)?调(?:(?:[降升]|[b#♭♯])?[A-G][b#♭♯]?调)?[.·．]?\d{1,2}[.·]?[/／]\d{1,2})(.*)$/.exec(l.text);
+    const m = /^(\d{1,4})?((?:(?:[降升]|[b#♭♯])?[A-Ga-g0OopP口日8εЕ€][b#♭♯h]?[.·．、°º˚]?)?(?:[.\-、．·]?(?:[降升]|[b#♭♯])?[A-G][b#♭♯]?)?调(?:(?:[降升]|[b#♭♯])?[A-G][b#♭♯]?调)?[.·．]?\d{1,2}(?:[.·]?[/／]\d{1,2}|(?=[一-鿿])))(.*)$/.exec(l.text);
     const cs = l.chars && l.chars.length === l.text.length ? l.chars : undefined;
     if (!m || !cs || (!m[1] && !m[3])) { out.push(l); continue; }
     const cuts = [0, (m[1] ?? "").length, (m[1] ?? "").length + m[2].length, l.text.length];
@@ -637,7 +641,7 @@ export async function recognizeHeader(
     const read = async (ks: Component[]) => {
       const [text] = await recognizeTexts([buildStrip(surfaceFromBinary(bin), [unionRects(ks.map((g) => g.bbox))])]);
       if ((globalThis as { __omrDebug?: boolean }).__omrDebug) console.log("[header/keyGroup]", JSON.stringify(text), acc, ks.map((g) => `${g.bbox.x},${g.bbox.y} ${g.bbox.w}x${g.bbox.h}`).join(" | "));
-      const t = loose ? (text ?? "").trim().replace(/^[0O口]/, "D").replace(/^[8日]/, "B").replace(/^[εЕ€]/, "E") : text ?? "";
+      const t = loose ? (text ?? "").trim().replace(/^[0Oo口]/, "D").replace(/^[8日]/, "B").replace(/^[εЕ€]/, "E") : text ?? "";
       return /^\s*([1１]\s*[=＝]\s*)?([b#♭♯]?)\s*([A-Ga-g])\s*([b#♭♯]?)\s*$/.exec(t);
     };
     let m = await read(letters);
@@ -1181,6 +1185,9 @@ export async function recognizeHeader(
           // 音名常单独成一框（1218 40：「0」+「调2/4」），往左放宽一个半框高去找
           .filter((c) => c.cx >= ln.bbox.x - ln.bbox.h * 1.5 && c.bbox.x + c.bbox.w <= tiao.cx - 4 && overlapRatioY(c.bbox, ln.bbox) > 0.3 && c.bbox.h >= 8 && !inOther(c))
           .sort((a, b) => a.bbox.x - b.bbox.x);
+        // 组尾挂着「调」字言字旁那一点（8×10，1218 40 读成「oi」、487「Bbi」）：比组内最高块矮一半以上的尾巴剔掉（上标 ♭ 有七成高）
+        const maxH = Math.max(0, ...group.map((c) => c.bbox.h));
+        while (group.length > 1 && group[group.length - 1]!.bbox.h < maxH * 0.5) group.pop();
         const k = group.length && group.length <= 4 ? await readKeyGroup(group, true) : undefined;
         if (k) { probe("key.letterBeforeTiao"); meta.fifths = k.fifths; meta.fifthsLine = ln; }
       }

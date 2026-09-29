@@ -5,12 +5,16 @@ import type { App } from "./app";
 import { PaintResources, ScorePainter } from "../layout/painter";
 import { JpwFile, LayoutSection } from "../jpword/jpwfile";
 import { jpwToScoreDoc } from "../model/fromjpw";
-import { jianpuInputOfJpw } from "../model/jianpuinput";
+import { jianpuInputOfDoc, jianpuInputOfJpw } from "../model/jianpuinput";
+import { parse123 } from "../j123/parse";
+import type { JScore } from "../layout/input";
+import { LYRIC_STACK_RATIO } from "../layout/options";
 import { PlayItem } from "../score/playorder";
 import type { MetaData } from "../smufl/smufl";
 import { isTauriRuntime } from "./fileio";
 import { FEEDBACK_EMAIL, openFeedbackMail } from "./feedback";
 import { VISUAL_ACTIONS } from "./visual/keys";
+import { EXAMPLES_123, GLOSSARY_123, INTRO_123, SPEC_123_URL, wrap123, type NotationExample } from "./help123";
 import {
   APP_VERSION, HOMEPAGE, checkForUpdate, isAutoCheckEnabled, openExternal,
   promptUpdate, setAutoCheckEnabled,
@@ -22,9 +26,8 @@ import {
 
 /**
  * Render a standalone `.jpwabc` snippet to its own `<svg>` for the help /
- * notation documentation examples. Uses a throwaway painter (does not touch
- * the live score) sharing this app's SMuFL metadata. Returns null on parse/
- * layout failure so the caller can silently drop unsupported examples.
+ * notation documentation examples. Returns null on parse/layout failure so
+ * the caller can silently drop unsupported examples.
  * The svg keeps the full page viewBox; crop to content via getBBox after it
  * is attached to the DOM.
  *
@@ -35,10 +38,8 @@ import {
 export function renderExampleSvg(
 meta: MetaData,
 fontSize: number,
-jpwabc: string, opts: { width?: number; height?: number; titlePage?: boolean } = {},
+jpwabc: string, opts: ExampleOpts = {},
 ): SVGSVGElement | null {
-  const width = opts.width ?? 1600;
-  const height = opts.height ?? 540;
   let f: JpwFile | null;
   try {
     f = JpwFile.fromString(jpwabc);
@@ -53,8 +54,42 @@ jpwabc: string, opts: { width?: number; height?: number; titlePage?: boolean } =
     return null;
   }
   if (!score) return null;
+  return renderExampleScore(meta, fontSize, score, f.getSection(LayoutSection)?.desc ?? null, opts);
+}
+
+/** 同上，源码是 123：`parse123` → `jianpuInputOfDoc`（与编辑器里 123 的原样档同一条投影）。有 error 诊断即不画。 */
+export function render123ExampleSvg(
+  meta: MetaData,
+  fontSize: number,
+  text: string,
+  opts: ExampleOpts = {},
+): SVGSVGElement | null {
+  let score;
+  try {
+    const doc = parse123(text);
+    if (doc.diagnostics.some((d) => d.severity === "error")) return null;
+    score = jianpuInputOfDoc(doc);
+  } catch {
+    return null;
+  }
+  if (!score) return null;
+  return renderExampleScore(meta, fontSize, score, null, opts);
+}
+
+interface ExampleOpts { width?: number; height?: number; titlePage?: boolean }
+
+/** 一次性 painter 排一份引擎输入、取第一页（不碰实时谱面，共用 App 的 SMuFL 元数据）。 */
+function renderExampleScore(
+  meta: MetaData,
+  fontSize: number,
+  score: JScore,
+  breakDesc: string | null,
+  opts: ExampleOpts,
+): SVGSVGElement | null {
+  const width = opts.width ?? 1600;
+  const height = opts.height ?? 540;
   // Lyric-less snippets get pass=0 → empty playData → blank layout. Synthesize
-  // a single play pass over all measures so examples without .Words still render.
+  // a single play pass over all measures so examples without lyrics still render.
   if (score.playData.measures.length === 0 && score.parts[0]) {
     const pi = new PlayItem();
     pi.pass = 1;
@@ -64,7 +99,6 @@ jpwabc: string, opts: { width?: number; height?: number; titlePage?: boolean } =
     score.playData.isSimpple = true;
   }
   const p = new ScorePainter(PaintResources.fixed(meta));
-  const breakDesc = f.getSection(LayoutSection)?.desc ?? null;
   try {
     p.loadSync({
       view: "original",
@@ -72,6 +106,9 @@ jpwabc: string, opts: { width?: number; height?: number; titlePage?: boolean } =
       breakDesc,
       style: null,
       fontSize,
+      // 按原谱排一遍（同编辑器原样档）：多段词叠在同一谱行下、反复不展开；不给的话按演唱顺序逐遍排、遍末换页，
+      // 带反复的示例第一页只剩第一遍
+      lyricStack: fontSize * LYRIC_STACK_RATIO,
       // 示例画在压暗的米白纸上（styles.css 的 --help-paper），墨色也从纯黑收一档，
       // 免得深色界面上黑白对比过硬。真正的谱面预览仍是纯白纸 + 用户设定的颜色。
       ink: 0xff1a1a1a,
@@ -144,15 +181,16 @@ const FEATURE_TOPICS: Topic[] = [
   {
     title: "打开与保存文件",
     body: [
-      "从开始页的 **导入乐谱** 打开 `.jpwabc`（本项目原生简谱格式）、`.xml` / `.musicxml`、`.abc`；也可把这些文件直接拖入页面。",
-      "右上角 **保存** 把当前简谱存成 `.jpwabc`（UTF-16LE 编码，与 JP-Word 兼容）；**导出** 用于生成 PDF、PNG、MIDI 或 PPTX。",
+      "从开始页的 **导入乐谱** 打开 `.123`（简谱主格式，见「123 格式」页）、`.jpwabc`（JP-Word）、文本谱（番茄简谱 / 诗歌本）、`.abc`、`.xml` / `.musicxml`；也可把这些文件直接拖入页面。",
+      "右上角 **保存** 按当前格式写回原文件；**另存为** 可换成 123 / JPWABC / ABC / 文本谱等其它格式——换格式装不下的内容会先列出来，确认后再写。",
       "**桌面版**：打开/保存用系统原生对话框，可直接写回磁盘；下次启动会自动恢复上次打开的文件。**浏览器版**：用网页文件选择器打开，保存则以下载方式导出。",
     ],
   },
   {
     title: "编辑与实时排版",
     body: [
-      "左侧是 `.jpwabc` 代码编辑区，**边打字边重排**——停顿约 0.2 秒后右侧谱面自动更新。",
+      "左侧是源码编辑区（123、JPWABC、ABC、文本谱都能直接编辑），**边打字边重排**——停顿约 0.2 秒后右侧谱面自动更新。",
+      "也可以直接在谱面上改音符，见「可视化编辑」页。",
       "**点选**：在谱面上点音符/小节，会高亮并在底部状态栏显示信息。",
       "混排、识别模式下代码区只读或隐藏（详见对应主题）。",
     ],
@@ -168,7 +206,8 @@ const FEATURE_TOPICS: Topic[] = [
   {
     title: "识图（图片转简谱）",
     body: [
-      "把简谱**图片**（PNG/JPG 等）拖进谱面区，会自动识别成简谱并载入编辑。识别在**本地离线**完成，浏览器版和桌面版都能用。",
+      "把简谱**图片**（PNG/JPG 等）或扫描 **PDF** 拖进谱面区，会自动识别成 123 简谱并载入编辑；四声部简谱按声部分开。识别在**本地离线**完成，浏览器版和桌面版都能用。",
+      "文字层完整的**五线谱 PDF** 也能识别，结果进五线谱 / 混排视图。",
       "识别完成后默认进入「二值图 + 半透明识别结果叠加」的核对视图，配合右侧下拉选择 附近浮窗 / 原位叠加 / 仅原图 三种方式，点识别对象可定位到对应代码；工具栏 **原图对照** 可在核对视图与可编辑排版稿之间来回切换。",
       "识别结果建议再人工校对——尤其是歌词和复杂节奏。",
     ],
@@ -201,8 +240,9 @@ const FEATURE_TOPICS: Topic[] = [
   {
     title: "导出",
     body: [
-      "工具栏 **导出**。简谱模式可导出 **PPTX**（矢量，逐页成幻灯片）和 **MIDI**（含反复/力度/声部音量）。",
-      "五线谱 / 混排模式可导出当前页 **PNG**、全部页面 **PDF** 和 **MIDI**，均直接下载。导出内容与当前那一档预览（含简谱层的有无）保持一致。",
+      "工具栏 **导出** 只出别的媒介：简谱模式可导出 **PPTX**（矢量，逐页成幻灯片）、**MIDI**（含反复/力度/声部音量）和 **MusicXML**（给 MuseScore 等五线谱软件）。",
+      "五线谱 / 混排模式可导出当前页 **PNG**、全部页面 **PDF**、**MIDI** 与 **MusicXML**。导出内容与当前那一档预览（含简谱层的有无）保持一致。",
+      "换成别的源格式（123 / JPWABC / ABC / 文本谱）用 **另存为**。",
     ],
   },
   {
@@ -215,7 +255,7 @@ const FEATURE_TOPICS: Topic[] = [
   {
     title: "设置",
     body: [
-      "工具栏 **设置** 可调整：谱面比例（16:9 / 4:3 / A4）、每页行数、字号（基础 / 标题 / 词曲信息）、颜色。",
+      "工具栏 **设置** 分三页：**版面**（纸张、方向、边距、谱面比例、每页行数、字号）、**页眉与样式**（标题 / 副标题 / 经文 / 词曲作者的字体字号、诗集样式表 `.ss`、颜色）、**其他**。只列当前模式下真正生效的项。",
       "多声部简谱还有各声部音量；五线谱 / 混排模式下可勾选「隐藏小节号」，要不要保留数字简谱层则由顶部选「五线谱」还是「混排」决定。",
     ],
   },
@@ -395,20 +435,8 @@ function buildVisualHelp(): HTMLElement {
 
 // ---- 记谱法 ----------------------------------------------------------------
 
-interface NoteEx {
-  /** 小节标题。 */
-  title: string;
-  /** 「常用」或「进阶」定位标签。 */
-  level: "常用" | "进阶";
-  /** 说明段落（支持 **粗** 与 `代码`）。 */
-  body: string[];
-  /** 展示给用户看的源码（通常是 .Voice 里的一行）。 */
-  code: string;
-  /** 实际用于渲染的完整 jpwabc；缺省时用默认包裹 code。若 code 以 `.` 开头（含段头）则直接整体渲染。 */
-  render?: string;
-  /** 渲染独立的标题页（展示 Title/SubTitle/词曲 版式）而非乐谱内容页。 */
-  titlePage?: boolean;
-}
+/** 记谱法示例（字段见 help123.ts；`.jpwabc` 的 `render` 缺省时：code 以 `.` 开头就整体渲染，否则当 `.Voice` 内容包一层）。 */
+type NoteEx = NotationExample;
 
 /** 把一段 .Voice 内容包成可渲染的最小完整 jpwabc（空标题，只设调号/拍号，避免抬头干扰）。 */
 function wrapVoice(voice: string, key = "1=C", meter = "4/4"): string {
@@ -549,20 +577,61 @@ const NOTATION: NoteEx[] = [
 ];
 
 function buildNotationHelp(app: App): HTMLElement {
+  return buildExamplePane({
+    intro:
+      "`.jpwabc` 是 JP-Word 使用的**纯文本简谱格式**，用普通文本分段描述乐谱：`.Title`（抬头）、`.Voice`（旋律，必需）、`.Words`（歌词）等，段头独占一行、以 `.` 开头。下面按**常用在前**的顺序介绍常见记号，每条都附实时渲染的效果。",
+    glossary: GLOSSARY,
+    examples: NOTATION,
+    render: (ex) => {
+      const text = ex.render ?? (ex.code.trimStart().startsWith(".") ? ex.code : wrapVoice(ex.code));
+      return renderExampleSvg(app.meta, app.fontSize, text, { titlePage: ex.titlePage });
+    },
+  });
+}
+
+/** 123 的源码是否自带头部（首行是字段，含中文字段名）；不带就补 `K:` `M:`。 */
+function has123Header(code: string): boolean {
+  return /^(?:[A-Za-z]|[\u4e00-\u9fff]+)[:：]/.test(code.trimStart());
+}
+
+function build123Help(app: App): HTMLElement {
+  const pane = buildExamplePane({
+    intro: INTRO_123,
+    glossary: GLOSSARY_123,
+    examples: EXAMPLES_123,
+    render: (ex) => {
+      const text = ex.render ?? (has123Header(ex.code) ? ex.code : wrap123(ex.code));
+      return render123ExampleSvg(app.meta, app.fontSize, text, { titlePage: ex.titlePage });
+    },
+  });
+  const spec = el("button", "about-link", "完整规范（docs/格式/123格式.md）");
+  spec.onclick = () => {
+    if (isTauriRuntime()) void openExternal(SPEC_123_URL);
+    else window.open(SPEC_123_URL, "_blank", "noopener");
+  };
+  pane.querySelector(".help-intro")?.after(spec);
+  return pane;
+}
+
+/** 记谱法类页面的共同骨架：导语 + 术语速查 + 一张张「说明 / 源码 / 实时渲染」卡片。 */
+function buildExamplePane(o: {
+  intro: string;
+  glossary: [string, string][];
+  examples: NoteEx[];
+  /** `render: false` 的示例不会调它。 */
+  render: (ex: NoteEx & { render?: string }) => SVGSVGElement | null;
+}): HTMLElement {
   const pane = el("div", "help-pane");
-  pane.append(
-    para(
-      "`.jpwabc` 是本项目使用的**纯文本简谱格式**，用普通文本分段描述乐谱：`.Title`（抬头）、`.Voice`（旋律，必需）、`.Words`（歌词）等，段头独占一行、以 `.` 开头。下面按**常用在前**的顺序介绍常见记号，每条都附实时渲染的效果。",
-      "help-intro",
-    ),
-  );
+  pane.append(para(o.intro, "help-intro"));
 
   // 术语速查
   const gloss = el("details", "help-glossary");
   gloss.append(el("summary", undefined, "术语速查（点开）"));
   const dl = el("dl", "help-gloss-list");
-  for (const [term, desc] of GLOSSARY) {
-    dl.append(el("dt", undefined, term));
+  for (const [term, desc] of o.glossary) {
+    const dt = el("dt");
+    dt.append(rich(term));
+    dl.append(dt);
     const dd = el("dd");
     dd.append(rich(desc));
     dl.append(dd);
@@ -570,7 +639,7 @@ function buildNotationHelp(app: App): HTMLElement {
   gloss.append(dl);
   pane.append(gloss);
 
-  for (const ex of NOTATION) {
+  for (const ex of o.examples) {
     const sec = el("div", "help-section");
     const head = el("div", "help-sec-head");
     head.append(el("span", "help-sec-title", ex.title));
@@ -583,8 +652,7 @@ function buildNotationHelp(app: App): HTMLElement {
     pre.textContent = ex.code;
     card.append(pre);
 
-    const renderText = ex.render ?? (ex.code.trimStart().startsWith(".") ? ex.code : wrapVoice(ex.code));
-    const svg = renderExampleSvg(app.meta, app.fontSize, renderText, { titlePage: ex.titlePage });
+    const svg = ex.render === false ? null : o.render({ ...ex, render: ex.render });
     if (svg) {
       const box = el("div", "help-render");
       svg.classList.add("help-svg");
@@ -701,11 +769,13 @@ export function showHelpDialog(app: App): void {
 
   // 标签页：{ 标签, 内容, 首次显示时的补做 }
   const notationPane = buildNotationHelp(app);
+  const pane123 = build123Help(app);
   const pages: { label: string; pane: HTMLElement; onFirstShow?: () => void }[] = [
     { label: "功能帮助", pane: buildFeatureHelp() },
     { label: "可视化编辑", pane: buildVisualHelp() },
+    { label: "123 格式", pane: pane123, onFirstShow: () => cropExamples(pane123) },
     {
-      label: "记谱法",
+      label: "JPWABC 记谱",
       pane: notationPane,
       // getBBox only works once the pane is visible; crop on first reveal.
       onFirstShow: () => cropExamples(notationPane),

@@ -1670,14 +1670,9 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     this.pageEls[np]?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
   // ---------------- playback（控制器在 editor/playback.ts，这里只留与谱面相关的部分） ----------------
-  /** PlaybackHost：识别核对下不试听。 */
+  /** PlaybackHost：三个预览模式都能试听（识别核对播的也是代码区那份，高亮落在识别框上）。 */
   get canPlay(): boolean {
-    return this.mode === "jp" || this.mode === "mixed";
-  }
-
-  /** PlaybackHost：五线谱 / 混排放竖直播放线，跟各声部起音；简谱逐音着色，跟旋律。 */
-  get cursorAllParts(): boolean {
-    return this.mode === "mixed";
+    return this.mode === "jp" || this.mode === "mixed" || this.mode === "recognize";
   }
 
   /** PlaybackHost：当前该播的谱，由 ScoreDoc 拼。
@@ -1711,6 +1706,10 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
   /** PlaybackHost：播到某个元素 → 谱面高亮 + 保证可见。
    *  高亮留在 App 而不进控制器：各排版器按 id 找音的办法不同，那属于「谁在画谱面」。 */
   highlightPlaying(id: ElementId | null, pass: number): void {
+    if (this.mode === "recognize") {
+      this.omr.highlightPlaying(id);
+      return;
+    }
     const page = this.painter.highlight(id, pass);
     if (id !== null && page !== null) {
       if (page !== this.pageIndex) this.pageIndex = page;
@@ -2265,6 +2264,12 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
   /** 进入/退出识别模式：改 mode，并在进入时先退掉混排布局。 */
   setRecognizeMode(on: boolean): void {
     this._setMode(on ? "recognize" : "jp");
+    this.playback.refreshSpeedUi(); // 进度条总长跟着能否试听走
+  }
+
+  /** OmrHost：点中识别框 → 起播点 / 播放中跳过去。 */
+  seekPlayback(point: PlayPoint): void {
+    this.playback.seekTo(point);
   }
 
   /**

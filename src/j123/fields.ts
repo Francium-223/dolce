@@ -6,7 +6,8 @@
 // **字段名一律归一成 ASCII 规范形**再往下走——中文别名只是入口，不进模型。
 // 这与 `pu/dialect.ts` 的取向一致：差异收在一张表里，不在下游写 if。
 
-import type { Diagnostic, Key, PlayPass, SourceSpan, Time } from "../model/doc";
+import type { Clef, Diagnostic, Key, PlayPass, SourceSpan, Time } from "../model/doc";
+import { clefFromName } from "../model/jianpu";
 
 /** ASCII 规范形的字段名。 */
 export type FieldName =
@@ -115,6 +116,12 @@ export function parseFieldLine(
     if (v) f.voice = Number(v[1]);
   }
   return f;
+}
+
+/** `V:n clef=treble-8` 的谱号（ABC §3.1.20 的声部属性；其余属性照规范忽略）。只有八度谱号影响简谱（`writtenOctaveOf`）。 */
+export function parseVoiceClef(value: string): Clef | null {
+  const m = /(?:^|\s)clef=([A-Za-z]+[+-]?8?)(?=\s|$)/.exec(value);
+  return m ? clefFromName(m[1]!) : null;
 }
 
 // ───────────────────────── K: 调号 ─────────────────────────

@@ -21,7 +21,7 @@ import type {
   JBreak, JChord, JCredit, JDirection, JKey, JLyric, JMeasure, JNote, JScore, JTime,
 } from "../layout/input";
 import { measureDuration } from "../layout/input";
-import { AccidentalCarry, continuesMeasure, degreeFromPitch, quarterTempos } from "./jianpu";
+import { AccidentalCarry, attrsAt, continuesMeasure, degreeFromPitch, quarterTempos } from "./jianpu";
 import type {
   Barline, Chord as DocChord, Direction, DirectionPart, ElementId, Harmony, Measure as DocMeasure, MeasureAttrs,
   Mark as DocMark, Note as DocNote, Part as DocPart, Pitch, ScoreDoc, Song,
@@ -162,7 +162,7 @@ export function jianpuInputOfXml(song: Song): JScore {
   let carry = new AccidentalCarry();
   for (const m of measures) {
     if (!continuesMeasure(src.measures[m.index - 1], src.measures[m.index]!)) carry = new AccidentalCarry();
-    initXmlMeasure(m, carry);
+    initXmlMeasure(m, carry, attrsAt(src, 1, m.index).clef?.octaveChange ?? 0);
   }
   findRefrain(measures);
   const playData = playDataOfDoc(song);
@@ -488,7 +488,7 @@ function directionMarks(d: Direction): JDirection[] {
 
 /** 读完一小节：只留 voice ≤ 1、和弦取最高音（歌词并到它上面），再按调号推唱名与记号（倚音先于主音）。
  *  **经简谱语义层**：唱名与八度点 `degreeFromPitch`、小节内延续的记号 `AccidentalCarry.mark`；双升/双降印成 `#`/`b`。 */
-function initXmlMeasure(m: JMeasure, carry: AccidentalCarry): void {
+function initXmlMeasure(m: JMeasure, carry: AccidentalCarry, clefOctave: number): void {
   m.entries = m.entries.filter((e) => e.kind !== "chord" || (e as XChord).voice <= 1);
   for (const ch of chords(m)) {
     if (ch.notes.length <= 1) continue;
@@ -512,7 +512,7 @@ function initXmlMeasure(m: JMeasure, carry: AccidentalCarry): void {
     const d = degreeFromPitch(pitch, key);
     nt.number = nt.rest ? "0" : String(d.number);
     nt.jpAlter = JP_ALTER[carry.mark(pitch, key) ?? ""] ?? " ";
-    nt.jpOctave = d.octaveShift;
+    nt.jpOctave = d.octaveShift - clefOctave; // 八度谱号：照记谱八度写，同 `assignDegrees`
   };
   for (const ch of chords(m)) {
     for (const g of ch.graceNotes) init(g as XNote);

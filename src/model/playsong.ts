@@ -10,7 +10,8 @@
 //   - 文档自带演唱顺序（`Song.playOrder`，`.Repeat` 段）→ 照它排，不推
 //   - `.jpwabc` 没有 `.Repeat` → 不推，整曲按段数逐遍（JP-Word 本来就这么唱）
 
-import type { ElementId, PlayPass, ScoreDoc } from "./doc";
+import type { ElementId, Part, PlayPass, ScoreDoc, Song } from "./doc";
+import { writtenOctaveOf } from "./jianpu";
 import { Fraction } from "../common/fraction";
 import {
   JumpSpec, PlayData, PlaySpecKind, RepeatSpecItem, TimePosition,
@@ -72,6 +73,11 @@ export function playSourceOfSong(doc: ScoreDoc, songIdx = 0, options: PlaySongOp
   return { parts: built.parts.map((measures) => ({ measures })), playData };
 }
 
+/** 行视图的声部号 → 模型的 part（`pu/slots.ts::toPuSong` 按 `P<n>` 的 id 或 part 序编号）。 */
+function partOfVoice(song: Song, voice: number): Part | undefined {
+  return song.parts.find((p) => p.id === `P${voice}`) ?? song.parts[voice - 1];
+}
+
 interface SongMeasures {
   song: PuSong;
   key: Key;
@@ -113,6 +119,12 @@ function songMeasures(doc: ScoreDoc, songIdx: number, options: PlaySongOptions, 
       const id = view.idOf.get(el);
       if (id !== undefined) ch.id = id;
     }, !!options.forExpanded, pitch);
+    // 八度谱号的声部（四声部简谱的男高、男低按高八度记）实际低八度发声
+    const part = withPitch ? partOfVoice(doc.songs[songIdx]!, v) : undefined;
+    const oc = part ? writtenOctaveOf(part) : 0;
+    if (oc) {
+      for (const m of built.measures) for (const ch of m.entries) for (const n of ch.notes) if (n.pitch > 0) n.pitch += 12 * oc;
+    }
     if (first) {
       jumps = built.jumps;
       built.measures.forEach((m, measure) => m.entries.forEach((ch, index) => {

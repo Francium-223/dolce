@@ -216,6 +216,12 @@ export abstract class AbcFamilyEmitter {
     return song.time ? `${song.time.beats}/${song.time.beatType}` : null;
   }
 
+  /** `V:n` 首次出现时跟在声部号后面的属性（123 的 `clef=treble-8`）。默认没有。 */
+  protected voiceAttrs(part: Part): string {
+    void part;
+    return "";
+  }
+
   /** 头部里方言特有的行（ABC 的 `L:`）。默认没有。 */
   protected headerExtra(song: Song): string[] {
     void song;
@@ -626,11 +632,15 @@ export abstract class AbcFamilyEmitter {
     const ranges = systemRanges(song.parts[0]);
     const pranges = song.parts.map((part) => partRanges(ranges, song.parts[0]!, part));
     const bodies = song.parts.map((part, pi) => this.partSystems(part, song, pranges[pi]!, true));
+    const declared = new Set<number>();
     for (let r = 0; r < ranges.length; r++) {
       for (let i = 0; i < song.parts.length; i++) {
         const text = bodies[i]![r]!;
         if (text === "") continue;
-        if (song.parts.length > 1) L.push(`V:${i + 1}`);
+        // 声部属性只在首次出现时写（ABC：带属性的 `V:` 是声明，之后的只切声部）；单声部有属性也得写 `V:1`
+        const attrs = declared.has(i) ? "" : this.voiceAttrs(song.parts[i]!);
+        declared.add(i);
+        if (song.parts.length > 1 || attrs) L.push(`V:${i + 1}${attrs ? " " + attrs : ""}`);
         L.push(text);
         const sys = pranges[i]![r]!;
         for (const line of lyricLines(song.parts[i]!, this.lyricSeparator, this.lyricSkip, sys, this.lyricSlotRule)) L.push(line);

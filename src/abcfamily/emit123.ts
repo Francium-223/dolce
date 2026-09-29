@@ -1,10 +1,10 @@
 // 123 方言的写出端。只回答基类问的那几个问题，其余全在 `emit.ts`。
 
-import type { Chord, Element, Key, Measure, Note, Song } from "../model/doc";
+import type { Chord, Element, Key, Measure, Note, Part, Song } from "../model/doc";
 import { AbcFamilyEmitter, type MarkIndex } from "./emit";
 import { BARE_CHORD_RE } from "./dialect123";
 import { projectForJianpu } from "../model/jianpuproject";
-import { harmonyText, keySpelling, melodyLane, topNote } from "../model/jianpu";
+import { clefName, harmonyText, keySpelling, melodyLane, topNote } from "../model/jianpu";
 
 /** 倚音时值相对八分：下标 = `_` 个数（八分不写，`{2_}` 十六分）。四分倚音写不出，按八分 */
 const GRACE_TYPES = ["eighth", "16th", "32nd", "64th"];
@@ -40,6 +40,13 @@ export class Emitter123 extends AbcFamilyEmitter {
    *  `N.C.` 这类不合规的仍写引号形。 */
   protected override chordSymbolText(text: string): string {
     return BARE_CHORD_RE.test(text) ? `${text} ` : `"${text}"`;
+  }
+
+  /** 八度谱号写成 `clef=treble-8`（简谱按高八度记的男声部，`writtenOctaveOf`）；别的谱号对简谱没有意义，不写。 */
+  protected override voiceAttrs(part: Part): string {
+    const c = part.measures[0]?.attrs?.clefs?.find((x) => (x.staff ?? 1) === 1);
+    const name = c?.octaveChange ? clefName(c) : null;
+    return name ? `clef=${name}` : "";
   }
 
   /** `$` 后换行：一行曲一行源码，方便与源图逐行对照。123 的代码换行不是谱面换行，读回不变。 */

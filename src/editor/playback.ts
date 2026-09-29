@@ -9,10 +9,8 @@ import type { ElementId } from "../model/doc";
 
 /** PlaybackController 向编辑器要的能力。 */
 export interface PlaybackHost {
-  /** 当前是否处于可试听的预览模式（识别核对下不试听）。 */
+  /** 当前是否处于可试听的预览模式。 */
   readonly canPlay: boolean;
-  /** 光标跟各声部起音（五线谱 / 混排的竖直播放线），而不是只跟旋律（简谱逐音着色）。 */
-  readonly cursorAllParts: boolean;
   /** 当前该播的谱（各声部 + 演唱顺序 + 速度）。没有可播内容返回 null。 */
   playable(): PlaySource | null;
   /** 从哪个音开始播（用户在谱面上选中了某个音时）。 */
@@ -147,7 +145,6 @@ export class PlaybackController {
     const paused = p.state === "paused";
     const src = this.host.playable();
     if (!src) return;
-    p.cursorAllParts = this.host.cursorAllParts;
     void this.run(() => p.play(src, this.options(), at, paused));
   }
 
@@ -183,7 +180,6 @@ export class PlaybackController {
     }
     this.cueSec = null;
     const p = this.instance();
-    p.cursorAllParts = this.host.cursorAllParts;
     await this.run(() => p.play(src, this.options(), start ?? 0));
   }
 
@@ -326,9 +322,15 @@ export class PlaybackController {
     if (labelEl) labelEl.textContent = label;
     if (icon) {
       icon.classList.toggle("is-loading", state === "loading");
-      icon.textContent = state === "playing" ? "❚❚" : state === "loading" ? "" : "▶";
+      icon.innerHTML = state === "playing" ? ICON_PAUSE : state === "loading" ? "" : ICON_PLAY;
     }
   }
 }
+
+/** 播放键图标：与停止键（index.html）同一 10×10 viewBox，不靠字形——▶ ❚❚ ■ 走系统字体回落，大小基线各不相同。 */
+const ICON_PLAY = '<svg viewBox="0 0 10 10"><path d="M2 0.8 L9.2 5 L2 9.2 Z" fill="currentColor"/></svg>';
+const ICON_PAUSE =
+  '<svg viewBox="0 0 10 10"><rect x="1.3" y="0.8" width="2.6" height="8.4" rx="0.6" fill="currentColor"/>' +
+  '<rect x="6.1" y="0.8" width="2.6" height="8.4" rx="0.6" fill="currentColor"/></svg>';
 
 const clampSpeed = (v: number): number => Math.max(0.25, Math.min(3, v));

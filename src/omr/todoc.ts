@@ -181,6 +181,14 @@ export function recognizedToDoc(score: RecognizedScore, numOf?: Map<ElementId, J
     id: `P${pi + 1}`,
     measures: measuresOfRows(score.rows.filter((r) => (r.voice ?? 0) === v), score, ids, marks, numOf),
   }));
+  // 四声部简谱（女高、女低、男高、男低）：男声两部照惯例按高八度记，标上八度谱号（123 `V:3 clef=treble-8`），
+  // 试听与五线谱据此落回实际八度（`jianpu.ts::writtenOctaveOf`）。二、三声部的谱看不出哪部是男声，不标。
+  if (parts.length === 4) {
+    for (const p of parts.slice(2)) {
+      const first = p.measures[0];
+      if (first) (first.attrs ??= {}).clefs = [{ sign: "G", line: 2, octaveChange: -1 }];
+    }
+  }
   const title = score.title;
   const song: Song = {
     work: { subtitles: score.subtitle ? [score.subtitle] : [] },

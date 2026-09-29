@@ -721,6 +721,8 @@ function projectPart(
   tuplets: Map<ElementId, { actual: number; normal: number }>,
 ): void {
   let fifths = part.measures[0]?.attrs?.key?.fifths ?? songFifths;
+  /** 八度谱号（`treble-8`）：简谱按高八度记，音高要落回实际八度（`jianpu.ts::writtenOctaveOf`） */
+  let octave = 0;
   // 文本谱/123 的 `beams` 是减时线层数的占位（全是 continue），不是符杠分组；一个 begin 都没有就按拍自动分组（`autoBeams`）
   const realBeams = part.measures.some((m) => m.elements.some((el) => el.kind === "chord" && el.beams?.includes("begin")));
   const quarter = SIMPLE_DIVISIONS * factor;
@@ -743,6 +745,8 @@ function projectPart(
       fifths = m.attrs.key.fifths;
     }
     /** 小节内延续的临时记号（简谱语义层，与 `assignDegrees` 同一份规则）；拆开的后半接着前半 */
+    const clef = m.attrs?.clefs?.find((c) => (c.staff ?? 1) === 1);
+    if (clef) octave = clef.octaveChange ?? 0;
     const carry = (cont && carries.get(cont)) || new AccidentalCarry();
     carries.set(m, carry);
     const dirs: Direction[] = [];
@@ -770,7 +774,10 @@ function projectPart(
       }
       const ch = el;
       for (const n of ch.notes) {
-        if (!n.pitch && n.degree && n.degree.number > 0) n.pitch = carry.pitch(n.degree, { fifths });
+        if (!n.pitch && n.degree && n.degree.number > 0) {
+          n.pitch = carry.pitch(n.degree, { fifths });
+          n.pitch.octave += octave;
+        }
       }
       if (ch.grace) {
         ch.duration = { ...ch.duration, divisions: 0 };

@@ -156,6 +156,36 @@ function applyAttrs(r: ResolvedAttrs, m: Measure, staff: number): void {
   if (clef) r.clef = clef;
 }
 
+// ───────────────────────── 记谱八度 ─────────────────────────
+
+/** 八度谱号（`treble-8` 这类）的名字：`G`/2 高音、`F`/4 低音、`C`/3 中音、`C`/4 次中音，再加 `-8`/`+8`。
+ *  123 `V:n clef=treble-8` 读写共用（`j123/fields.ts::parseVoiceClef`、`emit123.ts`）。 */
+const CLEF_NAMES: readonly [string, Clef["sign"], number][] = [["treble", "G", 2], ["bass", "F", 4], ["alto", "C", 3], ["tenor", "C", 4]];
+
+export function clefFromName(name: string): Clef | null {
+  const m = /^([a-z]+)([+-]8)?$/i.exec(name.trim());
+  const hit = m ? CLEF_NAMES.find(([n]) => n === m[1]!.toLowerCase()) : undefined;
+  if (!m || !hit) return null;
+  const c: Clef = { sign: hit[1], line: hit[2] };
+  if (m[2]) c.octaveChange = m[2] === "-8" ? -1 : 1;
+  return c;
+}
+
+export function clefName(c: Clef): string | null {
+  const hit = CLEF_NAMES.find(([, sign, line]) => sign === c.sign && line === (c.line ?? line));
+  if (!hit) return null;
+  return hit[0] + (c.octaveChange ? (c.octaveChange < 0 ? "-8" : "+8") : "");
+}
+
+/**
+ * 简谱声部的**记谱八度**：第一小节的谱号带八度移位（`treble-8`，`octaveChange = -1`）时，
+ * 简谱照惯例按高八度记（四声部简谱的男高、男低），实际发声低八度。度数 → 音高（试听、投影成 MusicXML）
+ * 加上它，音高 → 度数（`assignDegrees`）减掉它，两头对得上。0 = 按度数原样发声。
+ */
+export function writtenOctaveOf(part: Part): number {
+  return part.measures[0]?.attrs?.clefs?.find((c) => (c.staff ?? 1) === 1)?.octaveChange ?? 0;
+}
+
 // ───────────────────────── 度数补全 ─────────────────────────
 
 /** 本小节元素的**起拍**（四分音符为 1），按声部各自累计。倚音与占位符的起拍是它后面那个音的。 */
@@ -209,6 +239,7 @@ export function assignDegrees(part: Part, initialKey: Key): void {
       for (const n of el.notes) {
         if (!n.pitch) continue;
         const d = degreeFromPitch(n.pitch, r.key);
+        d.octaveShift -= r.clef?.octaveChange ?? 0; // 八度谱号：简谱照记谱八度写（`writtenOctaveOf`）
         const byAll = lane.all.mark(n.pitch, r.key);
         const acc = n === top ? lane.melody.mark(n.pitch, r.key) : byAll;
         if (acc) d.accidental = acc;

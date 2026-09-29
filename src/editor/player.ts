@@ -68,7 +68,7 @@ function findAnchor<A extends { pass: number }>(
   return list.find((x) => idOf(x) === point.id && x.pass === point.pass) ?? list.find((x) => idOf(x) === point.id);
 }
 
-/** 各声部起音按时刻去重（同刻留声部序最前的那个）：五线谱竖直播放线一刻只停一处。 */
+/** 各声部起音按时刻去重（同刻留声部序最前的那个）：竖直播放线一刻只停一处。 */
 function onsetAnchors(tl: Timeline): Timeline["anchors"] {
   const out: Timeline["anchors"] = [];
   for (const a of tl.allAnchors) {
@@ -80,9 +80,6 @@ function onsetAnchors(tl: Timeline): Timeline["anchors"] {
 
 export class ScorePlayer {
   state: PlayState = "stopped";
-  /** 光标跟各声部起音（五线谱 / 混排的竖直播放线），而不是只跟旋律。下一次 `play()` 起生效。 */
-  cursorAllParts = false;
-
   private ctx: AudioContext | null = null;
   private inst: ReturnType<typeof Soundfont> | null = null;
   private instLoading: Promise<ReturnType<typeof Soundfont>> | null = null;
@@ -140,7 +137,8 @@ export class ScorePlayer {
 
     const toSec = (a: Timeline["anchors"][number]): Anchor => ({ t: a.t0 * spq, id: a.chord.id, pass: a.pass });
     this.session = {
-      anchors: (this.cursorAllParts ? onsetAnchors(tl) : tl.anchors).map(toSec),
+      // 光标跟各声部起音（各视图的竖直播放线），不只跟旋律
+      anchors: onsetAnchors(tl).map(toSec),
       lookup: [...tl.anchors, ...tl.allAnchors].map(toSec),
       notes: tl.notes
         .map((n) => ({

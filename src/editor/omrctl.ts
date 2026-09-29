@@ -16,7 +16,8 @@ import {
   type OmrFormat, type RecogView,
 } from "../omr";
 import type { Binary, JpwMeta, RecognizedScore } from "../omr";
-import type { ScoreDoc } from "../model/doc";
+import type { ElementId, ScoreDoc } from "../model/doc";
+import type { PlayPoint } from "./player";
 import type { DocFormatId } from "./formats";
 import { confirmDiscardEdits, type FormatOption, type FormatSource, type FormatSwitch } from "./formatswitch";
 
@@ -38,6 +39,10 @@ export interface OmrHost {
   setStatus(text: string): void;
   saveSettings(): void;
   stopPlayback(): void;
+  /** 点中识别框：停止中记为起播点，播放中跳过去。 */
+  seekPlayback(point: PlayPoint): void;
+  /** 当前文本解析出的模型（试听播的就是它；播放高亮按它的元素 id 找识别框）。 */
+  currentScoreDoc(): ScoreDoc | null;
   /** 重新解析并排版（退出识别模式时回到排版稿）。 */
   reload(text: string): void;
   /**
@@ -93,6 +98,10 @@ export class OmrController implements FormatSource {
   private emitted: string | null = null;
   /** 小节时值自检报出的小节（识别完算一次，核对视图标红） */
   private beatMarks: RecognizedBeatIssue[] = [];
+  /** 元素 id ↔ 识别框序（按 doc 与 meta 身份缓存，见 idMapOf）。 */
+  private idMap: { doc: ScoreDoc; meta: JpwMeta; toI: Map<ElementId, number>; toId: ElementId[] } | null = null;
+  /** 试听的竖直播放线（`rect.omr-playhead`，见 highlightPlaying）。 */
+  private playingEl: SVGRectElement | null = null;
 
   constructor(private host: OmrHost) {}
 
@@ -290,6 +299,7 @@ export class OmrController implements FormatSource {
   renderPages(): void {
     this.host.clearPages();
     this.popupEl = null;
+    this.playingEl = null;
     if (!this.bin || !this.score) return;
     const bin = this.bin;
     const score = this.score;
@@ -321,6 +331,10 @@ export class OmrController implements FormatSource {
       if (range) this.selectCode(range);
       svg.querySelectorAll(".omr-hits rect.selected").forEach((x) => x.classList.remove("selected"));
       r.classList.add("selected");
+      if (r.getAttribute("data-kind") === "note") {
+        const id = this.idOfNote(Number(r.getAttribute("data-i")));
+        if (id !== undefined) this.host.seekPlayback({ id, pass: 1 });
+      }
     });
 
     svg.addEventListener("mousemove", (e) => {
@@ -334,19 +348,102 @@ export class OmrController implements FormatSource {
     });
   }
 
+  // ---------------- 试听高亮 ----------------
+  /**
+   * 元素 id ↔ 识别框序（`data-i`）。两层：
+   * - **id ↔ meta 序**靠源区间：`meta.noteRanges[k].from`（随编辑经 CodeMirror 变更迁移）对元素的 `source.offset`，
+   *   所以在识别模式下改了文本也对得上；对不上的按 `omr/meta.ts::elementMeta` 同样的遍历序号兜底（未编辑时两者一致）。
+   * - **meta 序 → 框序**见 `flatOrder`：多声部时两者不同。
+   * 没有 meta（`.jpwabc` / ABC 产物）返回 null：只播不高亮。
+   */
+  private idMapOf(doc: ScoreDoc | null): { toI: Map<ElementId, number>; toId: ElementId[] } | null {
+    const meta = this.meta;
+    if (!doc || !meta || !this.score) return null;
+    if (this.idMap?.doc === doc && this.idMap.meta === meta) return this.idMap;
+    const toFlat = flatOrder(this.score);
+    const byFrom = new Map<number, number>();
+    meta.noteRanges.forEach((r, k) => { if (r.to > r.from && !byFrom.has(r.from)) byFrom.set(r.from, k); });
+    const toI = new Map<ElementId, number>();
+    const toId: ElementId[] = [];
+    let seq = 0;
+    for (const part of doc.songs[0]?.parts ?? []) {
+      for (const m of part.measures) {
+        for (const el of m.elements) {
+          if (el.kind === "chord" && el.grace) continue;
+          if (el.kind === "space" && el.spacer === "y") continue;
+          const k = el.source && el.source.length > 0 ? byFrom.get(el.source.offset) : undefined;
+          const i = toFlat[k ?? seq];
+          seq++;
+          if (i === undefined || toId[i] !== undefined) continue;
+          toI.set(el.id, i);
+          toId[i] = el.id;
+        }
+      }
+    }
+    this.idMap = { doc, meta, toI, toId };
+    return this.idMap;
+  }
+
+  private idOfNote(i: number): ElementId | undefined {
+    return this.idMapOf(this.host.currentScoreDoc())?.toId[i];
+  }
+
+  /** 框序 → meta 序（点选定位查 `noteRanges` / `lyricRanges` 用）。 */
+  private metaIndex(i: number): number {
+    if (!this.score) return i;
+    const k = flatOrder(this.score).indexOf(i);
+    return k < 0 ? i : k;
+  }
+
+  /**
+   * 播到某个元素：同五线谱（`painter.ts::movePlayhead`），放一条竖直播放线——横向取这个音的识别框，
+   * 纵向贯穿它所在的系统（多声部是连谱号括起的几行，连同夹在中间的歌词带；单声部就是这一行）。null = 撤掉。
+   * 这份谱里对不上框的音（没有 meta 的格式）不挪，留在上一处。
+   */
+  highlightPlaying(id: ElementId | null): void {
+    if (id === null) {
+      this.playingEl?.remove();
+      this.playingEl = null;
+      return;
+    }
+    const score = this.score;
+    const i = score ? this.idMapOf(this.host.currentScoreDoc())?.toI.get(id) : undefined;
+    const box = i === undefined ? null : document.querySelector<SVGRectElement>(`#score-pane .omr-hits rect[data-kind="note"][data-i="${i}"]`);
+    const svg = box?.ownerSVGElement;
+    if (!score || i === undefined || !box || !svg) return;
+    const row = score.rows[this.rowIndexOfFlat(i)]!;
+    const sys = row.system === undefined ? [row] : score.rows.filter((r) => r.system === row.system);
+    const pad = (row.bottomY - row.topY) * 0.25;
+    const bx = Number(box.getAttribute("x"));
+    const bw = Number(box.getAttribute("width"));
+    const y0 = Math.min(...sys.map((r) => r.topY)) - pad;
+    const y1 = Math.max(...sys.map((r) => r.bottomY)) + pad;
+    let line = this.playingEl;
+    if (!line) {
+      line = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      line.setAttribute("class", "omr-playhead");
+      this.playingEl = line;
+    }
+    line.setAttribute("rx", String(Math.round(pad / 2)));
+    line.setAttribute("x", String(bx - pad));
+    line.setAttribute("width", String(bw + pad * 2));
+    line.setAttribute("y", String(y0));
+    line.setAttribute("height", String(y1 - y0));
+    if (line.ownerSVGElement !== svg) svg.appendChild(line);
+    line.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
+
   /** 命中 rect → 编辑器代码区间（据 data-kind 查 meta）。 */
   private rangeOfHit(r: SVGRectElement): { from: number; to: number } | null {
     const meta = this.meta;
     if (!meta) return null;
     const kind = r.getAttribute("data-kind");
     if (kind === "note") {
-      const i = Number(r.getAttribute("data-i"));
-      return meta.noteRanges[i] ?? null;
+      return meta.noteRanges[this.metaIndex(Number(r.getAttribute("data-i")))] ?? null;
     }
     if (kind === "lyric") {
-      const i = Number(r.getAttribute("data-i"));
       const v = Number(r.getAttribute("data-verse"));
-      return meta.lyricRanges[i]?.get(v) ?? null;
+      return meta.lyricRanges[this.metaIndex(Number(r.getAttribute("data-i")))]?.get(v) ?? null;
     }
     if (kind === "title") return meta.titleRange ?? null;
     if (kind === "author") {
@@ -442,6 +539,8 @@ export class OmrController implements FormatSource {
     this.score = null;
     this.beatMarks = [];
     this.meta = null;
+    this.idMap = null;
+    this.playingEl = null;
     this.emitted = null;
     if (this.host.formats.source === this) this.host.formats.use(null);
     this.hidePopup();
@@ -453,4 +552,28 @@ export class OmrController implements FormatSource {
     }
     this.host.syncViewModes();
   }
+}
+
+const flatOrderCache = new WeakMap<RecognizedScore, number[]>();
+
+/**
+ * meta 序 → 框序。框（`omr/overlay.ts` 的 `data-i`）按 `flatten(rows[].nums)` 编号，即谱面**逐行**；
+ * 模型（`omr/todoc.ts`）按声部建 part——声部 0 的各行、再声部 1 的各行……，`meta.ts` 按 part 序编号。
+ * 单声部两者相同；四声部一个系统四行交错，不换算就整片对错框。
+ */
+function flatOrder(score: RecognizedScore): number[] {
+  let out = flatOrderCache.get(score);
+  if (out) return out;
+  const starts: number[] = [];
+  let acc = 0;
+  for (const r of score.rows) { starts.push(acc); acc += r.nums.length; }
+  const order: number[] = [];
+  const voices = [...new Set(score.rows.map((r) => r.voice ?? 0))].sort((a, b) => a - b);
+  for (const v of voices) {
+    score.rows.forEach((r, ri) => {
+      if ((r.voice ?? 0) === v) for (let k = 0; k < r.nums.length; k++) order.push(starts[ri]! + k);
+    });
+  }
+  flatOrderCache.set(score, order);
+  return order;
 }

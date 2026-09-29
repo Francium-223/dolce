@@ -23,6 +23,7 @@ import type {
   AttachedSource,
   Barline,
   Chord,
+  Clef,
   Diagnostic,
   Element,
   ElementId,
@@ -52,6 +53,7 @@ import {
   parseTempoBeat,
   parseTime,
   parseTimes,
+  parseVoiceClef,
   type FieldLine,
   type FieldName,
   type RawPlayPass,
@@ -108,6 +110,8 @@ interface PartBuild {
   /** 刚见过的 `$` 落在小节中间还是小节末，要看后面先来的是音符还是小节线：先记下 `$` 前的最后一个和弦
    *  （及它当时有几条增时线），同一小节里再来音符才落成 `lineBreakAfter`（同 `.jpwabc`，见 `fromjpw.ts`） */
   inlineBreak: { host: Chord; sustains: number; kind: BreakKind } | null;
+  /** `V:n clef=…`（123）：收尾时落到第一小节的 `attrs.clefs` */
+  clef?: Clef;
 }
 
 /** 见到 `$`（或 ABC 的代码行末）：当前小节已有和弦时先记下，是不是小节中间换行等后面来的是什么再定（`PartBuild.inlineBreak`）。 */
@@ -1080,6 +1084,8 @@ export function parseAbcFamily(
       }
       closeMeasure(ctx, b);
       if (b.block && b.block.end === undefined) b.block.end = slotCount(b, ctx.d.id);
+      const first = b.part.measures[0];
+      if (b.clef && first) (first.attrs ??= {}).clefs = [b.clef];
       if (b.part.measures.length) song.parts.push(b.part);
     }
     const slotsOf = new Map<Part, Element[]>();
@@ -1272,7 +1278,7 @@ function applyField(
   ctx: Ctx,
   song: Song,
   f: FieldLine,
-  startPart: (voice: number) => void,
+  startPart: (voice: number) => PartBuild,
   addPlay: (r: RawPlayPass[]) => void,
 ): void {
   switch (f.name) {
@@ -1324,9 +1330,13 @@ function applyField(
       if (tb) song.tempoBeat = tb;
       break;
     }
-    case "V":
-      startPart(f.voice ?? 1);
+    case "V": {
+      const b = startPart(f.voice ?? 1);
+      // 八度谱号只在 123 里有简谱语义（男声部高八度记）；ABC 的音名本就是实际音高，照旧不管
+      const clef = ctx.d.id === "123" ? parseVoiceClef(f.value) : null;
+      if (clef) b.clef = clef;
       break;
+    }
     case "W":
       (song.remarks ??= []).push(f.value);
       break;

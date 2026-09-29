@@ -1770,7 +1770,13 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
     .map((m) => m.topY));
   const keyLineBot = Math.max(-Infinity, ...rowMetaAll.filter((m) => m.botY < firstMusicTop && keyLineRow(m.rd)).map((m) => m.botY));
   const pageRowH = median(rowMetaAll.filter((m) => m.rd.length >= 3).map((m) => median(m.rd.map((k) => k.bbox.h))));
+  // **通栏横线以下是注释**：选本诗歌712 通本谱后隔一道过半页宽的细线印词语注释（「(11)1.昏沉若病：…」），
+  // 注释里的数字凑成了几条伪谱行（`[1 0. 2. | 3 |`）。线上方至少已有两条谱行才认，免得页眉的装饰线误伤。
+  const noteRuleY = Math.min(...c.hlines
+    .filter((h) => h.bbox.w >= bin.w * 0.5 && rowMetaAll.filter((m) => m.botY < h.bbox.y && m.barlineXs.length >= 2).length >= 2)
+    .map((h) => h.bbox.y));
   const rowMeta = rowMetaAll.filter((m) => {
+    if (m.topY > noteRuleY) { probe("pseudoRow.belowNoteRule"); return false; }
     if (m.rd.length < 3) return false;
     if (m.rd.filter(flatCore).length * 2 > m.rd.length) { probe("pseudoRow.flat"); return false; }
     if (keyLineRow(m.rd)) { probe("pseudoRow.keyLine"); return false; }
@@ -1794,7 +1800,7 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
     const staffY = rowMeta.filter((m) => m.barlineXs.length > 0).map((m) => m.botY);
     const lastY = staffY.length ? Math.max(...staffY) : Infinity;
     const tail = rowMetaAll
-      .filter((m) => m.rd.length && m.rd.length < 3 && m.topY > lastY)
+      .filter((m) => m.rd.length && m.rd.length < 3 && m.topY > lastY && m.topY < noteRuleY)
       .filter((m) => m.bars.filter((b) => b.bbox.h >= medBarH * 0.6).length >= 2);
     for (const t of tail) t.tail = true;
     rowMeta.push(...tail);

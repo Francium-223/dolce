@@ -84,8 +84,14 @@ function parseVerseLabel(raw: string): number[] | null {
 // 页脚版权/制作声明的 OCR 经常有少量错字（如「用途」→「用速」），所以不用整句精确匹配，
 // 而要求一条较长文本同时命中至少两个强语义词。正常歌词偶见「制作」等单词也不会被误删。
 const FOOTER_CUE_RE = /(版权|版权所有|制作|团队|原版|音频|音頻|歌谱|歌譜|商业|商業|用途|翻印|请勿|請勿|仅供|僅供)/g;
+// 谱后的词语注释（选本诗歌712 通本：「(12)1.依依：恋慕，不忍分离…」「像。2.寻觅(mì)：寻找。3.…」）：离末谱行近时进了
+// 歌词带，被当成第 2、3…段，fillLeadingVerses 又把第 1 段抄进前几行去补齐。行首「(曲号)」，或拼音括注与「N.词：」编号释义同现。
+const NOTE_HEAD_RE = /^[(（]\d{1,4}[)）]/;
+const PINYIN_RE = /[(（][a-zü]*[āáǎàēéěèīíǐìōóǒòūúǔùǖǘǚǜ][a-zü]*[)）]/;
+const GLOSS_RE = /\d[.．、]?[一-鿿]{1,6}[:：]/;
 function isFooterNoticeLine(text: string): boolean {
   const compact = text.replace(/\s/g, "");
+  if (NOTE_HEAD_RE.test(compact) || (PINYIN_RE.test(compact) && GLOSS_RE.test(compact))) return true;
   if (compact.length < 8) return false;
   const cues = new Set(compact.match(FOOTER_CUE_RE) ?? []);
   return cues.size >= 2;

@@ -1818,8 +1818,12 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
     // （不按「核近方」判：小图粗体的数字核也近方，1940 第一谱行被当页眉删过）
     // 「小字」跟**谱行**（≥2 根小节线）的中位高比，不跟全页各行比——歌词行比数字高，把全页中位抬上去，1218 1168 的真谱行
     // （数字 30px，全页中位 42）被当小字删光过
-    if (Number.isFinite(firstMusicTop) && m.botY < firstMusicTop && (m.barlineXs.length <= 1 ||
-      median(m.rd.map((k) => k.bbox.h)) < musicRowH * 0.8)) { probe("pseudoRow.headerAboveFirst"); return false; }
+    // 小节线 ≤1 根还不够：散板谱（新编赞美诗 164「节奏自由」）真第一谱行也只有一根线。要再满足核少（<6）或核高与谱行差出 25%
+    // （页眉小字「E调4/4」、大号曲号连标题）。
+    const hRow = median(m.rd.map((k) => k.bbox.h));
+    const offSize = hRow < musicRowH * 0.8 || hRow > musicRowH * 1.25;
+    if (Number.isFinite(firstMusicTop) && m.botY < firstMusicTop &&
+      ((m.barlineXs.length <= 1 && (m.rd.length < 6 || offSize)) || hRow < musicRowH * 0.8)) { probe("pseudoRow.headerAboveFirst"); return false; }
     // **大字行**：核的中位高超过 1.4 字号——音符数字都在一个字号上下，大一号的是标题/曲号那一排
     //（补充本 71：「受难」小字 + 大号曲号「71」（59×46、60×26，字号 36）凑成一行，读成 `1 | 7 1`）。
     // 还要比**全页各行**的中位高高出 1.4 倍：numH 估小了的页（补充本 155，数字核连着八度点）正经谱行也过得了

@@ -36,7 +36,7 @@
     `[topY,botY]` 由数字核算出不含下划线/八度点，补高安全）；② **空心环校验**（`midbandInk`）——简谱「0」是空心环、
     从不带斜线，糊死的「3」中间横笔连成穿心斜线被读成「内含斜线的 0」；测中央横带前景占比（真 0 各图 ≤0.47、糊 3
     恒 ≥0.7），>0.65 判"读成 0 却中带占满"= 实为糊 3，走既有 `rankDigits` 取首个非零复原。两修复后 6 曲音符 **100%**、
-    slur/tie 不再受连带（0=休止会丢闭合圆滑线）影响。回归/分析：`node scripts/gen-song-analysis.mjs <歌谱名>`（单曲全流程
+    slur/tie 不再受连带（0=休止会丢闭合圆滑线）影响。回归/分析：`node ../dev/scripts/gen-song-analysis.mjs <歌谱名>`（单曲全流程
     HTML：原图/二值 → 逐格数字与 GT 自动对齐标红 → 歌词条含「祂/他」绿框）。
 
 已修复初版几处 bug：连音(下划线相连)数字粘连不切分、增时线后 MusicXML `type/duration` 不一致、
@@ -919,8 +919,8 @@ y380 的碎块行，歌词带算出 `yBot < yTop`、整条带直接 `continue`�
   「世上所有的民族」少复原一个被误读成 0 的音。提前判定只用于**收集和弦**，不动歌词那条路。
 
 **和弦 GT 的来源是 `testdata/简谱/<曲名>/gt.tomato.pu`** —— 一份对着原图人工核对过和弦的番茄文本谱原文
-（`.jpwabc` 装不下和弦，只能另置载体）。底稿用 `node scripts/gen-pu-gt.mjs [曲名子串…]` 生成，
-**必须逐项核对再当 GT 用**，否则等于拿识别结果给自己打分。`scripts/gt-to-123.mjs` 按音符/增时线序列 LCS
+（`.jpwabc` 装不下和弦，只能另置载体）。底稿用 `node ../dev/scripts/gen-pu-gt.mjs [曲名子串…]` 生成，
+**必须逐项核对再当 GT 用**，否则等于拿识别结果给自己打分。`../dev/scripts/gt-to-123.mjs` 按音符/增时线序列 LCS
 把其中的和弦抄进 `gt.123`（**只抄和弦**：它的音符与歌词是照识别底稿留的，比如沧海一声笑的「竞意寂寥」错字），
 并标一行 `% gt: chords-verified`；`measure-all` 的「和弦」档只给标了的 GT 计分，比对 123 音乐体里的 `"X"` 序列。
 
@@ -930,17 +930,15 @@ y380 的碎块行，歌词带算出 `yBot < yTop`、整条带直接 `continue`�
 谱子作**负样本**（GT 与识别都是 0 个，验证不误检）。再次将我更新 38/38 全对，但该曲无 `.jpwabc` GT，
 不进 `measure-all`。
 
-**两首不计分**（`scripts/gt-to-123.mjs` 的 `CHORD_GT_SKIP`，不抄和弦、不标 chords-verified）：「立定心志」「爱是不保留」的谱面印了
+**两首不计分**（`../dev/scripts/gt-to-123.mjs` 的 `CHORD_GT_SKIP`，不抄和弦、不标 chords-verified）：「立定心志」「爱是不保留」的谱面印了
 **两套并行编配**（括号里另一套，前者页眉写明「括号里和弦是灵栖清泉编配」），同一个音符要挂两个
 和弦——`JpNum.chord` 与番茄文本谱都只能挂一个，GT 载体表达不了真值，拿它算准确率没有意义。
 识别在这两首上会把两套并成一串、同名的那几个被「同名不顺延」去重（40→37、45→42），属预期行为。
 
-回归还有 `node scripts/omr-pu-check.mjs`（逐音符和弦往返无损，两方言各跑一遍）与
-`node scripts/omr-export-check.mjs`（`<harmony>` 列入保全清单——识别核对文本改过后整份重写，
-和弦少一个 123 那边看不出任何异样）。
+回归还有 `node ../dev/scripts/omr-pu-check.mjs`（逐音符和弦往返无损，两方言各跑一遍）。
 
 仅 PaddleOCR 后端(`recognizeTexts`)支持，`nullOcr` 跳过歌词。自然区域分块 rec 实测 W1 98.9%/W2 96.5%
-（早期逐字/拼接 rec 仅 ~85%，差在破坏自然排版+细笔画字漏检）——回归 `node scripts/bench-lyrics.mjs`。
+（早期逐字/拼接 rec 仅 ~85%，差在破坏自然排版+细笔画字漏检）——回归 `node ../dev/scripts/bench-lyrics.mjs`。
 **当前基线（21 首全 GT，2026-09-13 起 GT 统一为 `gt.123`）**：音符 **99.7%** / 八度 / 附点 / 小节 **99.8%**、
 对位 99.4%、标题 / 词曲 **全 100%**、slur-tie **99.8%**、歌词 99.0%（忽略标点 99.3%）、和弦 98.9%。
 已知缺口：世上所有的民族漏 1 组 slur（96.6）、从前所珍爱歌词 94.8（含标点；忽略标点 99.3）、
@@ -951,12 +949,12 @@ y380 的碎块行，歌词带算出 `yBot < yTop`、整条带直接 `continue`�
 **和弦行末尾的方框「副歌」+ 两处三连音**、**顿音 ▼ 整首每音一个**、**四段词的行首段号**三条新判据，
 补进来时三首的识别结果与人工核对过的 GT 逐字节一致。
 （历史：tesseract 初版完整 token 仅 ~25%。）
-回归：`node scripts/measure-all.mjs`(音符/八度/附点/小节/slur-tie/歌词/对位/和弦/标题/词曲、CSV 逐曲+平均；`--node` 快、`--dump=目录` 落盘识别侧 123) +
-`node scripts/bench-lyrics.mjs`(歌词)。
-回归脚本：`node scripts/measure-all.mjs`（自动扫 `testdata/` 每个歌谱文件夹，需本地 Edge；用 `window.__omr` 跑真实管线；
-可加子串参数只测部分曲，如 `node scripts/measure-all.mjs 从前`）。**每首之间重载页面**——App 在同一 page 里
+回归：`node ../dev/scripts/measure-all.mjs`(音符/八度/附点/小节/slur-tie/歌词/对位/和弦/标题/词曲、CSV 逐曲+平均；`--node` 快、`--dump=目录` 落盘识别侧 123) +
+`node ../dev/scripts/bench-lyrics.mjs`(歌词)。
+回归脚本：`node ../dev/scripts/measure-all.mjs`（自动扫 `testdata/` 每个歌谱文件夹，需本地 Edge；用 `window.__omr` 跑真实管线；
+可加子串参数只测部分曲，如 `node ../dev/scripts/measure-all.mjs 从前`）。**每首之间重载页面**——App 在同一 page 里
 复用会串味（「爱是不保留」单跑 slur/歌词 100%，跟在别的歌谱后面跑掉到 60%/42%），基线因此不可复现。
-**GT 与识别产物都是 123，同一套 tokenizer**（`scripts/gt123.mjs`）：识别侧走识别核对落地的真实路径
+**GT 与识别产物都是 123，同一套 tokenizer**（`../dev/scripts/gt123.mjs`）：识别侧走识别核对落地的真实路径
 （`omrEmitter("123")`：`recognizedToDoc` → `emit123`，即 `App.importOmrDoc` 落地的那份），GT 是 `gt.123`。两处口径归一要知道：
 相邻的小节线算一根（`| $ |:` 与 `|:`）；**各段逐音位都同字、连续至少 4 个字的片段**算副歌共用，只留在第 1 段
 （`.jpwabc` 的 `W1-6` 转 123 后每段各抄一遍——123 没有区间写法，识别那边印一遍挂在第 1 段）。
@@ -964,14 +962,14 @@ y380 的碎块行，歌词带算出 `yBot < yTop`、整条带直接 `continue`�
 **语料的两种摆法与 GT**：`testdata/简谱/<曲名>/`（一张图 + GT）是原来那种；按歌本归拢的
 写作 `testdata/简谱/<歌本>/<曲名>/`，扫描时**往下多找一层**（`measure-all.mjs::songAt` /
 `harness.mjs::findSongFixtures`），曲名前缀歌本名以免不同歌本重名。**`measure-all` 只认 `gt.123`**，由
-`node scripts/gt-to-123.mjs` 从原来的两种载体生成：`.jpwabc`（人工核对的那批）与**诗歌本文本谱 `gt.shige.pu`**
+`node ../dev/scripts/gt-to-123.mjs` 从原来的两种载体生成：`.jpwabc`（人工核对的那批）与**诗歌本文本谱 `gt.shige.pu`**
 （诗歌本那批——混合拍的多拍号与曲中转拍号 `.jpwabc` 写不下）。原文件都留着（`.jpwabc` 还是别的回归的夹具）。
 已有 `gt.123` 默认不覆盖。**带反复的曲子要对着原图看歌词**：`.jpwabc` 按演唱遍次挂词，转成 123 后词挂在「那一遍唱到的音」上、
 与谱面印在第几行不符——沧海一声笑（末行四个「啦」、第二三房的词）、爱是不保留（第二房那一行与「得主称赞已足够」）
 已按原图订正，标了 `% gt: hand-corrected`，`gt-to-123 --force` 也不动。
 
 `.jpwabc` GT 那批**都经人工核对**（UTF-16LE + BOM，**必须 LF**：`.Words` 解析按 `\n`
-切行，CRLF 会把 `\r` 当歌词字符、每行报一次 `unsupported char?`）。GT 用 `node scripts/check-gt.mjs [子串]` 校验
+切行，CRLF 会把 `\r` 当歌词字符、每行报一次 `unsupported char?`）。GT 用 `node ../dev/scripts/check-gt.mjs [子串]` 校验
 （逐个 setText，报页数/排版行数/控制台错误）。改了 `.jpwabc` 要重新生成对应的 `gt.123`（`gt-to-123.mjs 曲名 --force`）。
 **页眉识别**（`header.ts`，标题/作词作曲/调号/速度）：首选 **DBNet 文本检测(det)整片识别**——
 `paddleocr.ts` 的 `recognizeRegion(bin, 音符上方区域)` 用 det 模型自动找文本行框、逐行 rec(`recognizeCanvas`
@@ -1104,7 +1102,7 @@ det 漏检时退回**连通域几何法**(大/小字分层 + `splitBlocks` 按 x
 ① 名字组要**非贪婪** + 职能组锚 `$`，否则「卢永亨词曲」的「词」被名字吃掉、只剩「曲」→ `作曲：卢永亨词`；
 ② 职能词之间的分隔符要**可选**，「词曲」是连写的，强求分隔符则职能组只吃得下一个字、又被名字回溯吞掉。
 另要求**不是最大字号行**，免得短标题被当著作者、连标题一起丢掉。改后 14 首词曲 71.4→**100%**。
-回归 `node scripts/measure-all.mjs` 的「标题」「词曲」两档。
+回归 `node ../dev/scripts/measure-all.mjs` 的「标题」「词曲」两档。
 
 **后缀式一律照谱面原样输出**，不再归一成 `<职能>：<名字>`：谱面怎么印就怎么写、不调换次序
 （`盛晓玫 词曲`、`黄霑作词、作曲`）。前缀式（`作词：叶薇心`）本就是原序，不动。**GT 的口径同步
@@ -1404,7 +1402,7 @@ det 漏检时退回**连通域几何法**(大/小字分层 + `splitBlocks` 按 x
 - 头部字段要保证 `sniffDialect` 判得回本方言（番茄靠 `V:`/`D:`/`P:`，诗歌本靠 `T:`/`1=`），
   否则用户存盘再打开就成了另一种方言。
 
-回归 `node scripts/omr-pu-check.mjs`：15 首 GT 曲目 × 2 方言，逐条断言方言嗅探、诊断（error 级一条不许有，
+回归 `node ../dev/scripts/omr-pu-check.mjs`：15 首 GT 曲目 × 2 方言，逐条断言方言嗅探、诊断（error 级一条不许有，
 `orphan-annotation` 等几类 warning 同样不许有）、调号拍号、音符序列（数字/八度/时值/附点/增时线）、
 逐段歌词、弧线条数（跨行的只数起头那条）、段落标记个数、无空小节、无两条挨着的小节线、
 歌词行不被读成联合括号，以及 `noteRanges` 切出来的子串确是音符 token。
@@ -1456,7 +1454,7 @@ jpeg-js 让该块底部多留一行像素（全图墨迹多 798 个，0.16%）�
 块宽正好 9)，全部落空 → 整块被丢弃。**注意 numH 两边都是 31，判据没漂，纯粹是输入差了一行像素。**
 
 sharp 走 libvips→libjpeg-turbo，与浏览器同一套解码，实测 18 首**逐像素、逐字符**一致
-（`scripts/omr-node-check.mjs`），故不留纯 JS 回退——两套解码器就是两套精度基线。
+（`../dev/scripts/omr-node-check.mjs`），故不留纯 JS 回退——两套解码器就是两套精度基线。
 两种装法都逐像素一致，按分发形态选：`npm i sharp`（原生，~28MB 含 libvips）或
 `npm i --cpu=wasm32 sharp`（纯 wasm，~11MB，跨平台一份，**单文件分发只能用这个**，
 原生 `.node` 没法被 bundler 内联）。解码 5ms / 9ms，纯 JS 43ms——但那 40ms 只占单首的 3%，
@@ -1531,7 +1529,7 @@ node scripts/omr-cli.mjs a.jpg b.jpg 谱子目录/ -o 出目录/
 ```bash
 npm run build:cli && node scripts/omr-cli.mjs <图…|目录…> [-f shige|tomato|jpwabc] [-o 出]
                        [--profile] [--thread-mode=auto|always|single] [--threads=N]
-npm run build && npm run build:cli && node scripts/omr-node-check.mjs [曲名子串…]
+npm run build && npm run build:cli && node ../dev/scripts/omr-node-check.mjs [曲名子串…]
 ```
 
 后者是 Node 管线的验收依据：同一张图两端各跑一遍，比文本谱原文与结构统计，逐字符必须相同。

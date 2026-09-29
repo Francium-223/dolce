@@ -10,7 +10,7 @@ JP-Word `.jpwabc` 的分段、词法语法解析，`.jpwabc` → `ScoreDoc`（�
 
 | 函数 | 文件 | 作用 |
 |---|---|---|
-| `JpwFile.fromString(s)` | `src/jpword/jpwfile.ts:283` | 文本 → 分段（失败返回 null） |
+| `JpwFile.fromString(s)` | `src/jpword/jpwfile.ts` | 文本 → 分段（失败返回 null） |
 | `lexVoice(text)` | `src/jpword/lex.ts` | `.Voice` 正文 → token 序列（含空白/注释，带偏移与行列） |
 | `parseVoiceText(text)` | `src/jpword/parse.ts` | 去掉空白/注释的 token 序列；落单 `[` `]` 返回 null |
 | `jpwToScoreDoc(f)` | `src/model/fromjpw.ts` | `JpwFile` → `ScoreDoc`（音符/小节线带 `SourceSpan`）。谱面、试听、转 123/ABC、导出、能力表、双向定位索引都走它 |
@@ -83,5 +83,4 @@ JP-Word `.jpwabc` 的分段、词法语法解析，`.jpwabc` → `ScoreDoc`（�
 
 ## 与原 Kotlin 的对应
 
-原 Kotlin/JVM 桌面版在仓库根 `../`。`jpwfile.kt→jpword/jpwfile.ts`、`jpw.kt→model/fromjpw.ts`（读源文那一步）近乎逐行翻译，
-改行为前先看 `../src/main/kotlin/` 对应文件确认原意。
+`jpwfile.kt→jpword/jpwfile.ts`、`jpw.kt→model/fromjpw.ts`（读源文那一步）由原 Kotlin/JVM 桌面版（不在本仓库）近乎逐行翻译而来。

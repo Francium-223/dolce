@@ -1,6 +1,6 @@
 # 识别：简谱 OMR（图片 / PDF）
 
-**判据全录** → [../实现/OMR-简谱识别.md](../实现/OMR-简谱识别.md)（1466 行）、[../实现/矢量PDF识别.md](../实现/矢量PDF识别.md)（2441 行）
+**判据全录** → [../实现/OMR-简谱识别.md](../实现/OMR-简谱识别.md)、[../实现/矢量PDF识别.md](../实现/矢量PDF识别.md)
 
 ## 职责
 
@@ -12,8 +12,8 @@
 | 函数/文件 | 作用 |
 |---|---|
 | `recognizeMusicppDetailed` | `src/omr/recognize.ts:16` 顶层编排 |
-| `src/omr/jianpu.ts`（1240 行） | 几何启发式主管线 |
-| `src/omr/lyrics.ts`（962 行） | 歌词识别与逐音节↔音符对齐 |
+| `src/omr/jianpu.ts` | 几何启发式主管线 |
+| `src/omr/lyrics.ts` | 歌词识别与逐音节↔音符对齐 |
 | `src/omr/stanzas.ts` | 谱后单独排版的附段歌词（诗行）：按第 1 段的音位骨架逐字对位 |
 | `src/omr/repeats.ts` / `segno.ts` | 反复线与一/二房 / segno 𝄋 字形（→ 小节线上的 `hs` 记号） |
 | `src/omr/header.ts` | 页眉标题/曲号/词曲/调号/拍号/速度（PP-OCRv4 DBNet 文本检测整片识别；调号、斜杠式拍号、速度 `♩=`（含附点）按单字符 + 位置为主、det 文本行兜底）。曲号 → 123 `X:`、诗歌本 `XL:`/`XR:`、番茄拼回标题前 |
@@ -37,7 +37,7 @@
 
 - **`src/omr/vector.ts` 及其 import 链不得触碰 canvas / OffscreenCanvas / document**——Node CLI 要 import 它。
 - PDF 栅格化**必须**用 `getDocument({wasmUrl})`。
-- **归类判据一改就要重跑 `scripts/gen-glyphdict.mjs`**。
+- **归类判据一改就要重跑 `../dev/scripts/gen-glyphdict.mjs`**。
 - 矢量路的硬指标是**未归类对象数**。
 - OCR 兜底后仍读不出的字形**宁可留空也不编造**（`■` 一项曾多出 337 处）。
 - 干净谱面上减时线粘着点/数字：**按本页统计线粗剥掉线带、剩下的每块都得认得出**，认不出就整块不动（`stripUnderline`）。

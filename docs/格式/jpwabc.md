@@ -12,7 +12,7 @@
 |---|---|
 | `src/jpword/lex.ts` | **唯一形式定义**：`.Voice` 段的词法规则（沿用原 JP-Word 的 ANTLR 文法，见 §4 词法表） |
 | `src/jpword/jpwfile.ts` | **段落层规范**：哪些段头合法、各段的行语法 |
-| `src/editor/help.ts:276-407` | 面向用户的记谱法说明（事实上的用户手册） |
+| `src/editor/help.ts` 的 `NOTATION` | 面向用户的记谱法说明（帮助「JPWABC 记谱」页） |
 | `src/model/tojpw.ts` / `fromjpw.ts` | **事实上的可用子集**：写出端只产生哪些记号、读入端只处理哪些 |
 
 - 文件头签名：`// ************** JPW-ABC File Ver 1.0 (for JP-Word v5.50m) **************`
@@ -97,7 +97,7 @@
 ### 无点「1」的绝对音高
 
 落在 **B3(59) … A4(69)** 这一个八度里；**只有主音字母是 B 的调（B / bB）整体降一个八度**，A / bA 不降。
-依据是《简谱通用规范》第 23–24 页。判据在 `score.ts::getBasePitch` 与 `jppitch.ts::jpTonicOctaveShift`
+依据是《简谱通用规范》第 23–24 页。判据在 `jppitch.ts::MusicCommon.getBasePitch` 与 `jppitch.ts::jpTonicOctaveShift`
 两处，**必须同源**。
 
 ## 5. `.Words`：歌词
@@ -169,7 +169,7 @@ JP-Word 存的是 **Windows 换行（`\r\n`）**，读入端按行切完要去�
 2. **`::` / `:|:` 抛错**导致整首载入失败（文法允许、导入端 `throw`）。语料 0 例。
 （原第 3 条「写出端产生 `|:[1` 读不回」随旧写出端删除：现写出端 `tojpw.ts` 不写房号，反复与分遍经 `.Repeat` 表达。）
 
-两条的真实影响面都已用 568 首语料量过（见 `node scripts/census-123.mjs`），故优先级定为低。
+两条的真实影响面都已用 568 首语料量过（见 `node ../dev/scripts/census-123.mjs`），故优先级定为低。
 
 ## 9. 表达力边界
 

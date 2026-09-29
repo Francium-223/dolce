@@ -43,7 +43,7 @@ MusicXML 的 `beams` 是 `<beam>` 元素、`dots` 是 `<dot>`、长音是 `type=
 - **和弦**：结构化的补原文（`harmonyToText`）。`fromxml.ts` 保留一个音前的全部 `<harmony>`（后面的进 `Chord.laterHarmonies`，
   各带 `offset`），投影时按拍位挂到增时线上。小节末还欠着的 `<harmony>`（`fromxml` 放在 `y` 占位符上）位置是
   **小节末 + offset**（负值往回数，常落在前面长音的中间），按这个位置找落点；`y` 本身拆掉——简谱侧会把它画成一拍隐藏休止。
-- **对照基准**是简谱引擎输入的 MusicXML 形状分支（`jianpuInputOfXml` 按 `<type>` 读时值），`scripts/jianpu-shape-check.mjs` 逐音比。
+- **对照基准**是简谱引擎输入的 MusicXML 形状分支（`jianpuInputOfXml` 按 `<type>` 读时值），`../dev/scripts/jianpu-shape-check.mjs` 逐音比。
 
 ## 投影：判据与要害
 
@@ -94,7 +94,7 @@ MusicXML 的 `beams` 是 `<beam>` 元素、`dots` 是 `<dot>`、长音是 `type=
 `jpwToScoreDoc` → `xmlproject` 投影 → 唯一写出端，与 123/文本谱同一条路。`fromjpw` 只填简谱度数、
 不填绝对音高（从前照抄的假 `pitch` 八度恒为 0，会让投影层整首掉到第 0 八度），调号取 `.Title`，速度进 `Song.tempos`，
 房号由 `Song.playOrder` 反推（`xmlproject.ts::voltasOfPlayOrder`）。符杠与 123 一样按拍自动分组。
-`scripts/jpw-xml-check.mjs` 对 582 份读回快照守基线。
+`../dev/scripts/jpw-xml-check.mjs` 对 582 份读回快照守基线。
 
 ### 反复与房号
 

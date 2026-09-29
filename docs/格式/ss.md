@@ -17,7 +17,7 @@
 曲目清单（有哪些歌、顺序、逐曲 meta 覆盖）是**数据**，不进 `.ss`，放书清单 `book.json`（§8），清单用 `style:` 引用 `.ss`。
 
 **样式表不改谱面内容，也不做逐曲规则**：小音符、段号改写、符干、文字换行、逐曲的和弦/文字位置微调、某段歌词换字体，
-都先用脚本改好 MusicXML（KL2020 见 `scripts/kl2020-prep.mjs`，写 `<cue/>`、`<stem>`、`relative-x/relative-y`、
+都先用脚本改好 MusicXML（KL2020 见 `../dev/scripts/kl2020-prep.mjs`，写 `<cue/>`、`<stem>`、`relative-x/relative-y`、
 `<text font-family>` 等标准写法），`.ss` 只管全书统一的版式。写了 `@song` 或 `角色[…]` 的样式表解析时直接报错。
 
 内置一份 + 歌本样例三份（歌本样式照特定印刷本逐点量出，**不在本仓库**，本地私有仓库里留着）：
@@ -304,12 +304,12 @@ block 用 `line-height`（倍数）那两套已经合并——同一件事分两
 - `file` 指向改谱脚本另存的 `.fixed.xml`（没有改谱的曲目指原文件）。XML 表达不了的排版开关（`layout.chinese-hyphen`、`layout.melody-only`、`layout.new-page`）写在 `meta`。
 - `styleByFlow: { "new-page": "…", "continue": "…" }`：**按装页口径叠加**的样式表，解析后接在 `style` 之后
   （后者覆盖前者）。同一本书两种口径只差几项时写这个，不要复制整份样式表——KL2020 接排版（对照 1219 版）
-  印简谱调号「1=X」、单曲版不印，差异就这一条，落在 `src/style/books/kl2020-flow.ss`。
+  印简谱调号「1=X」、单曲版不印，差异就这一条，落在 `kl2020-flow.ss`（不在本仓库）。
 - 清单由导入脚本从曲目库生成（`gen-manifest-kl2020.mjs`），再由 `kl2020-prep.mjs` 改谱并回写 `file` 与开关；库路径由参数或环境变量给。
 
 ## 9. 示例
 
-直接看三份内置歌本（都能被 `scripts/ss-roundtrip.mjs` 解析、写出、再解析）：
+本仓库只内置原样文档布局那两份；三份歌本样式在本地私有仓库（都能被 `../dev/scripts/ss-roundtrip.mjs` 解析、写出、再解析）：
 
 - `hymn500-measured.ss`：统计生成的实测部分（纸、字体、角色、`@jianpu` / `@break` / `@flow`、`@toc` 目录几何）。
 - `hymn500.ss`：fixed 区域（基线写实测数）+ `key-meter()` 组件（避让首行和弦）。

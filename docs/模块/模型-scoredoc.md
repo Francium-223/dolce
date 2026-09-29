@@ -28,7 +28,7 @@
 
 | 文件 | 作用 |
 |---|---|
-| `src/model/doc.ts` | 类型定义（883 行）。层级：`ScoreDoc → Song → Part → Measure → Element` |
+| `src/model/doc.ts` | 类型定义。层级：`ScoreDoc → Song → Part → Measure → Element` |
 | `src/model/helpers.ts` | 遍历/查询/构造 |
 | `src/model/breaks.ts` | 断行读写对：`breaksOf`（模型 → 行首元素）/ `applyBreaks`（行首元素 → 模型，替换原有断行） |
 | `src/model/jianpu.ts` | **简谱语义层**：音高↔度数、相对调号临时记号延续（`AccidentalCarry`，两个方向共用）、`attrsAt`、减时线/增时线/附点（`jianpuShape`）、和弦原文、旋律取音、延音线/跨元素记号按 id 找对端 |
@@ -55,7 +55,7 @@ Node 侧经 `src/cli/j123.ts` → `dist-cli/j123.js` 使用（`npm run build:cli
 
 | 依据 | 内容 |
 |---|---|
-| `scripts/census-123.mjs` | 500 首实测：`<harmony>` 100% 的曲目都有（12646 个）、`<print new-system>` 100%、`lyric number` 到 8 段 |
+| `../dev/scripts/census-123.mjs` | 500 首实测：`<harmony>` 100% 的曲目都有（12646 个）、`<print new-system>` 100%、`lyric number` 到 8 段 |
 
 ## 关键判据
 
@@ -79,7 +79,7 @@ Node 侧经 `src/cli/j123.ts` → `dist-cli/j123.js` 使用（`npm run build:cli
 - **`playOrder` 与 `style` 是 MusicXML 装不下的两样**（`<ending>` 只能整小节），
   只在 `ScoreDoc` 与 `.123` 里活着。
 - 五线谱侧字段（`clef`/`staves`/`transpose`/`pedal`/`octaveShift`/`partGroups`/`defaults`/`technical`）
-  **已由 `fromxml.ts` 填充**（`scripts/staff-fields-check.mjs` 的合成夹具逐样断言过，
+  **已由 `fromxml.ts` 填充**（`../dev/scripts/staff-fields-check.mjs` 的合成夹具逐样断言过，
   真实语料 1035 份的填充率也在那里）。
 - **派生量不存进模型、只经查询层取**（唱名、减时线条数、调号上下文、演唱顺序…，见 `model/jianpu.ts`、`score/playorder.ts`）：
   存了就有同名字段两种口径（`Chord.beams` 在 MusicXML 来源是 `<beam>` 列表、在简谱来源是减时线条数，靠 `isXmlShaped` 分），

@@ -996,7 +996,9 @@ function classify(comps: Component[], bin: Binary): { c: Classified; numH: numbe
     // 卡在上面 0.2 那道门外，全本 `5 - -` 读成 `5.`。但尺寸上它和小号粗印本里压扁的八度点、短波音分不开
     //（一概收成横线，1940、714、我今来就你 的八度点成了第三道减时线）——那两种不在数字中线上，增时线在。
     // 所以只记成候选、先当点，到 buildJpNums 按位置裁决（resolveDashLike）。
-    if (w >= numH * 0.28 && w >= (k.area / w) * 1.8 && h <= numH * 0.25 && k.area >= w * h * 0.75) {
+    // 扁度门比上面放低到 1.6：雅歌 1 的 `5̣ - - -` 第一根 12×7、平均墨厚 6.75，扁度 1.78 差一点；真圆点只有 1.0~1.1，
+    // 候选还要过 resolveDashLike 的位置裁决
+    if (w >= numH * 0.28 && w >= (k.area / w) * 1.6 && h <= numH * 0.25 && k.area >= w * h * 0.75) {
       c.dots.push(k); c.dashLike.push(k); continue;
     }
     // 小点：八度点/附点

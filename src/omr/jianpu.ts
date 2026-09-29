@@ -2624,6 +2624,11 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
         cnt.set(r.system, b - 1); cnt.set(prev.system, a + 1);
         r.system = prev.system;
       });
+      // 没归系统的碎行（64：一条 3 个音的碎块行）：音数不到全曲声部行中位数四成的剔掉，免得「每行都归了系统」这一条验收不过
+      {
+        const medAll = median(useRows.filter((r) => r.system !== undefined && !drop.has(r)).map((r) => r.nums.length));
+        for (const r of useRows) if (r.system === undefined && !drop.has(r) && r.nums.length < medAll * 0.4) { probe("voices.dropOrphanThin"); drop.add(r); }
+      }
       if (drop.size) useRows = useRows.filter((r) => !drop.has(r));
       // 系统号按纵向位置重排（①② 新开的号排在后面）
       const order = [...new Set(byY.filter((r) => !drop.has(r) && r.system !== undefined).map((r) => r.system!))];

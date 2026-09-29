@@ -8,7 +8,7 @@
 //   2. 带下划线的连音（如 6_5_）会粘成一个宽连通域，初版 classify 因 w>numH 直接丢弃 →
 //      现按列投影把宽块切成多个数字格。
 import type { Binary, Component, JpNum, Rect, StaffRow, RecognizedScore } from "./types";
-import { rright, rbottom, rcx, rcy, RHYTHM_DIGIT } from "./types";
+import { rright, rbottom, rcx, rcy, RHYTHM_DIGIT, REJOINED_ARC_ID, isRejoinedArc } from "./types";
 import { connectedComponents } from "./ccl";
 import type { OcrBackend } from "./ocr";
 import { recognizeLyrics } from "./lyrics";
@@ -46,7 +46,9 @@ function splitMergedOctaveDot(
 ): { dot: Component; digit: Component } | null {
   // 仅"过高、但仍有真实笔宽的窄竖块"才可能是点+数字笔：真小节线常细至 1~2px（下限剔之），
   // 数字笔即便是最窄的 "1" 也有可观宽度（≈0.3~0.55字号）。
-  if (b.h <= numH * 1.05 || b.w < numH * 0.3 || b.w > numH * 0.6) return null;
+  // 宽数字粘点（78《马槽歌》Q2 `6̣`，6 与点连成 26×48，字号 30）：块高 ≥1.35 字号、宽不过一字号时也试，只走严格判据。
+  const wide = strict && b.h >= numH * 1.35;
+  if (b.h <= numH * 1.05 || b.w < numH * 0.3 || b.w > numH * (wide ? 1 : 0.6)) return null;
   const ink = rowInk(bin, b);
   const strokeInk = median(ink.filter((v) => v > 0)) || 1;
   const mk = (y0: number, y1: number): Component | null => {
@@ -58,7 +60,8 @@ function splitMergedOctaveDot(
     let v = -1, vMin = Infinity;
     for (let y = winLo; y < winHi; y++) if (ink[y] < vMin) { vMin = ink[y]; v = y; }
     if (v < 0 || vMin > strokeInk * 0.6) return null; // 无清晰低墨谷 → 非点+笔（真小节线墨廓均匀）
-    if (strict && vMin > 1) return null;              // 严格：谷处近乎断开（只剩一个像素粘着）
+    // 严格：谷处近乎断开（只剩一个像素粘着）；宽数字那档放到 0.15 字号（同首 `6̣` 点带一截尾巴粘上来，二值图谷宽 4px）
+    if (strict && vMin > (wide ? Math.max(1, numH * 0.15) : 1)) return null;
     const dotSeg = dotAtTop ? mk(0, v) : mk(v + 1, b.h);
     const digSeg = dotAtTop ? mk(v + 1, b.h) : mk(0, v);
     if (!dotSeg || !digSeg) return null;
@@ -66,9 +69,11 @@ function splitMergedOctaveDot(
     // 点须是真墨斑(≥0.13字号见方、≤0.5字号)、数字笔须够高(≥0.55字号)且宽度像数字(≥0.28字号)。
     // 宽度下限把 1~2px 的细小节线/扫描竖纹挡在门外（它们墨廓也会有单像素起伏被误当"谷"）。
     if (dh > numH * 0.5 || dotSeg.bbox.w > numH * 0.5 || dotSeg.bbox.w < numH * 0.13) return null;
-    if (dgh < numH * 0.55 || dgh > numH * 1.7 || digSeg.bbox.w > numH * 0.7 || digSeg.bbox.w < numH * 0.28) return null;
+    if (dgh < numH * 0.55 || dgh > numH * 1.7 || digSeg.bbox.w > numH * (wide ? 1 : 0.7) || digSeg.bbox.w < numH * 0.28) return null;
     // 严格：点近乎方形、且明显窄于数字——3、5 的顶横扁而与数字等宽，过不了。
     if (strict && (dotSeg.bbox.w > dh * 1.7 || dh > dotSeg.bbox.w * 1.7 || dotSeg.bbox.w > digSeg.bbox.w * 0.8)) return null;
+    // 宽数字那档另要点比谷明显宽：「4」的竖笔下端与谷一样粗，会被当成点切下来（同首 Q1 `4̲` 读成 `4̣`）
+    if (wide && vMin > dotSeg.bbox.w * 0.55) return null;
     probe("splitMergedOctaveDot");
     return { dot: dotSeg, digit: digSeg };
   };
@@ -101,7 +106,8 @@ function strokeLineH(comps: Component[], numH: number): number {
  *  线带找到后向上下吸收毛边行（墨量 ≥ 0.3 线宽），总厚不超过统计线粗 + 1。剥掉线带、对剩下的像素
  *  重做连通域，每一块都得说得清是什么：≤3px 的毛刺丢掉；线下方圆而实的小块是点；（数字型）线上方
  *  一个整字高的块是数字。**有一块说不清就整块放弃**，退回原来的归类——宁可漏也不凭空造出音符或八度。
- *  **只在干净谱面上用**（调用处把门）：脏页上线下沿粘的碎渣与八度点同形，切开等于凭空多一个八度。 */
+ *  **只在干净谱面上用**（调用处把门）：脏页上线下沿粘的碎渣与八度点同形，切开等于凭空多一个八度。
+ *  脏页只收剥出 ≥2 个数字的（一排数字压在同一条线上）。 */
 function stripUnderline(
   bin: Binary, k: Component, numH: number, lineH: number,
 ): { lines: Component[]; dots: Component[]; digits: Component[] } | null {
@@ -132,8 +138,13 @@ function stripUnderline(
   const runs = Array.from({ length: b.h }, (_, y) => rowRun(y));
   let need: number;
   let yFrom = 0;                                                    // 线带只在这一行以下找
-  if (lineMode) need = Math.max(numH * 0.6, b.w * 0.8);
-  else {
+  // 几个数字并排压在一条线上（块宽 ≥1.4 字号）：数字体的横跨就是整块宽，「线比数字体宽出一截」够不上，
+  // 改为线横贯块宽八成、颈按最长游程判（两个数字之间是空的，横跨宽不代表粘着）。
+  const multi = digitMode && b.w >= numH * 1.4;
+  if (lineMode || multi) {
+    need = Math.max(numH * 0.6, b.w * 0.8);
+    if (multi) yFrom = Math.round(numH * 0.7);
+  } else {
     let bodyW = 0;
     for (let y = 0; y < Math.min(b.h, Math.round(numH * 0.8)); y++) bodyW = Math.max(bodyW, rowSpan(y));
     need = Math.max(numH * 0.6, bodyW + Math.max(2, numH * 0.1));
@@ -153,7 +164,7 @@ function stripUnderline(
     if (digitMode) {
       // 颈：线带上方紧挨的那一行得明显窄于线（上下一样宽 = 数字自己的横笔，不是粘上来的线）
       const above = band[0] - 1;
-      if (above < 0 || rowSpan(above) >= lineW * 0.6) return null;
+      if (above < 0 || (multi ? runs[above]! : rowSpan(above)) >= lineW * 0.6) return null;
     }
     // 吸收毛边行，总厚不超过统计线粗 + 1
     let [y0, y1] = band;
@@ -288,6 +299,60 @@ function fullHeightBars(bin: Binary, b: Rect, numH: number): Array<{ cx: number;
   return out;
 }
 
+/** 擦掉长线后，半截弧上还粘着线旁那个音（78《马槽歌》`5⌒|1` 的 5 连着左半截弧）：按列把数字剥下来——
+ *  只有一段粗列（≥0.25 字号、宽 0.3~1.2 字号），其余列都是块上半的细墨（不到粗列门）且够 0.3 字号宽，
+ *  就拆成「数字 + 细弧」两块，细弧再去和线另一侧的半截接。`p` 是子图里的连通块，`labels` 是子图的标号图。 */
+function peelDigit(p: Component, labels: Int32Array, b: Rect, numH: number): Component[] {
+  const pb = p.bbox;
+  const mk = (x0: number, y0: number, x1: number, y1: number, area: number, id: number): Component => {
+    const r = { x: b.x + x0, y: b.y + y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
+    return { id, area, bbox: r, cx: rcx(r), cy: rcy(r) };
+  };
+  const whole = mk(pb.x, pb.y, pb.x + pb.w - 1, pb.y + pb.h - 1, p.area, p.id);
+  if (pb.w < numH * 0.6 || pb.h < numH * 0.5) return [whole];
+  const own = (x: number, y: number) => labels[y * b.w + x] === p.id;
+  const cols: number[] = [], lowest: number[] = [];
+  for (let x = pb.x; x < pb.x + pb.w; x++) {
+    let n = 0, lo = -1;
+    for (let y = pb.y; y < pb.y + pb.h; y++) if (own(x, y)) { n++; lo = y - pb.y; }
+    cols.push(n); lowest.push(lo);
+  }
+  const spans: Array<[number, number]> = [];
+  cols.forEach((n, i) => {
+    if (n < numH * 0.25) return;
+    const last = spans[spans.length - 1];
+    if (last && i - last[1] <= 2) last[1] = i + 1; else spans.push([i, i + 1]);
+  });
+  // 块边缘一两列宽的粗段是擦线剩下的线边，不算第二个数字（同首 Q3 `2`+半截弧 51×43，右缘贴着一列）
+  const edge = spans.filter(([sa, se]) => spans.length > 1 && se - sa < numH * 0.15 && (sa === 0 || se === pb.w));
+  const core = spans.filter((sp) => !edge.includes(sp));
+  if (core.length !== 1) return [whole];
+  const isEdge = (i: number) => edge.some(([sa, se]) => i >= sa && i < se);
+  let [a, e] = core[0]!;
+  while (a > 0 && lowest[a - 1]! > pb.h * 0.5) a--;
+  while (e < pb.w && lowest[e]! > pb.h * 0.5) e++;
+  if (e - a < numH * 0.3 || e - a > numH * 1.2) return [whole];
+  let thinW = 0;
+  for (let i = 0; i < pb.w; i++) {
+    if (i >= a && i < e || !cols[i] || isEdge(i)) continue;
+    if (cols[i]! >= numH * 0.25 || lowest[i]! > pb.h * 0.5) return [whole];     // 不到粗列门就是细墨（弧拱处单列 7px）
+    thinW++;
+  }
+  if (thinW < numH * 0.3) return [whole];
+  const box = (inside: boolean) => {
+    let x0 = Infinity, y0 = Infinity, x1 = -1, y1 = -1, area = 0;
+    for (let y = pb.y; y < pb.y + pb.h; y++) for (let x = pb.x; x < pb.x + pb.w; x++) {
+      if (!own(x, y) || ((x - pb.x >= a && x - pb.x < e) !== inside)) continue;
+      area++; x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+    }
+    return area ? { x0, y0, x1, y1, area } : null;
+  };
+  const d = box(true), t = box(false);
+  if (!d || !t) return [whole];
+  probe("untangleBridged.peelDigit");
+  return [mk(d.x0, d.y0, d.x1, d.y1, d.area, p.id), mk(t.x0, t.y0, t.x1, t.y1, t.area, p.id + 500_000)];
+}
+
 /** 去连通：一根贯穿全高的小节线常像"桥"，把上方的圆滑线弧、数字中线的增时线 '- -' 在交叉点 4-连通地
  *  串成一个宽而稀疏的大块 —— classify 各类都不匹配而整块被丢弃（末尾小节线、跨小节 slur 随之全失，
  *  实测「哦愿我有千万舌头」两行末尾 1--｜7,-）。**本质解法是把这根竖笔从像素上擦掉、重做连通域**，
@@ -348,18 +413,36 @@ function untangleBridged(comps: Component[], bin: Binary, numH: number): Compone
         if (yy >= arcBottom && inBar(b.x + xx)) continue;   // 擦弧带以下的竖笔
         sub.data[yy * b.w + xx] = 1;
       }
-    const pieces = connectedComponents(sub, 4).map((p) => ({
+    const labels = new Int32Array(b.w * b.h);
+    const ccs = connectedComponents(sub, 4, labels);
+    const pieces: Component[] = [];
+    for (const p of ccs) pieces.push(...(spanning ? peelDigit(p, labels, b, numH) : [{
       id: p.id, area: p.area,
       bbox: { x: b.x + p.bbox.x, y: b.y + p.bbox.y, w: p.bbox.w, h: p.bbox.h },
       cx: b.x + p.cx, cy: b.y + p.cy,
-    }));
+    }]));
     for (const bar of bars)
       out.push({ id: 2_000_000 + out.length, bbox: { x: Math.round(bar.cx - 1), y: bar.y, w: 2, h: bar.h }, area: 2 * bar.h, cx: bar.cx, cy: bar.y + bar.h / 2 });
     probe("untangleBridged");
     // 弧不在最顶上也会横穿竖笔：四声部谱的小节线贯穿两个声部，下一声部跨小节线的连音线从竖笔**中段**穿过
     //（78《马槽歌》Q4 `5⌒|1`），擦竖笔时被拦腰截成两半，两半都不够弧宽、整条连音线丢了。
     // 竖笔两侧、同一高度、缺口只有擦掉的那一截宽的两块细墨，接回一条。
-    const thin = (p: Component) => p.bbox.h <= numH * 0.6 && p.bbox.w >= 3;
+    // 「细」= 矮，或墨只占框的四分之一以下：弧端垂到音符头顶，半截弧的框也会被拉高（78 行首那条左半 56×26）
+    // 但带着一段粗列（≥0.25 字号、连续 0.3 字号宽，即粘着个没剥下来的数字）的不算：同首 Q3 `2`+半截弧 51×43 墨也不到四分之一，被接走后 2 就丢了。
+    const hasThickCol = (p: Component): boolean => {
+      if (p.id >= 500_000) return false;                          // peelDigit 剥剩的细弧
+      // 连续够 0.3 字号宽的粗列才是数字；弧端垂到音符头顶那一两列竖直的墨也会过 0.25 字号（78 行首左半截弧）
+      const x0 = p.bbox.x - b.x, y0 = p.bbox.y - b.y;
+      let run = 0;
+      for (let xx = x0; xx < x0 + p.bbox.w; xx++) {
+        let n = 0;
+        for (let yy = y0; yy < y0 + p.bbox.h; yy++) if (labels[yy * b.w + xx] === p.id) n++;
+        run = n >= numH * 0.25 ? run + 1 : 0;
+        if (run >= numH * 0.3) return true;
+      }
+      return false;
+    };
+    const thin = (p: Component) => p.bbox.w >= 3 && (p.bbox.h <= numH * 0.6 || p.area < p.bbox.w * p.bbox.h * 0.25) && !hasThickCol(p);
     const used = new Set<Component>();
     for (const bar of bars) {
       for (const l of pieces) {
@@ -370,7 +453,7 @@ function untangleBridged(comps: Component[], bin: Binary, numH: number): Compone
         used.add(l); used.add(r);
         const bb = unionRect(l.bbox, r.bbox);
         probe("untangleBridged.rejoinArc");
-        pieces.push({ id: l.id, area: l.area + r.area, bbox: bb, cx: rcx(bb), cy: rcy(bb) });
+        pieces.push({ id: REJOINED_ARC_ID + pieces.length, area: l.area + r.area, bbox: bb, cx: rcx(bb), cy: rcy(bb) });
       }
     }
     out.push(...pieces.filter((p) => !used.has(p)));
@@ -500,7 +583,8 @@ function splitArcTail(bin: Binary, comps: Component[], numH: number): Component[
   let nextId = 5_000_000;
   for (const k of comps) {
     const b = k.bbox;
-    if (b.w < numH * 1.6 || b.h < numH * 0.6 || b.h > numH * 1.8) { out.push(k); continue; }
+    // 高到 2 字号：弧从数字头顶拱起的高度也算在块里（78《马槽歌》Q2 `5⌒6` 的 6 连弧 83×55，字号 30）
+    if (isRejoinedArc(k) || b.w < numH * 1.6 || b.h < numH * 0.6 || b.h > numH * 2) { out.push(k); continue; }
     const sub: Binary = { w: b.w, h: b.h, data: new Uint8Array(b.w * b.h) };
     for (let yy = 0; yy < b.h; yy++) for (let xx = 0; xx < b.w; xx++) sub.data[yy * b.w + xx] = bin.data[(b.y + yy) * bin.w + b.x + xx];
     const labels = new Int32Array(b.w * b.h);
@@ -532,17 +616,23 @@ function splitArcTail(bin: Binary, comps: Component[], numH: number): Component[
         spans.splice(si, 1);
       }
     }
-    if (spans.length !== 1) { out.push(k); continue; }
-    let [a, e] = spans[0];
+    // 一段粗列：数字一侧粘弧（`5 − 4 −` 的 5）或记号吊在弧下；两段：一条弧两头各粘一个数字（78《马槽歌》Q1
+    // `3̲⌒4̲` 连成 97×51）。
+    if (spans.length < 1 || spans.length > 2) { out.push(k); continue; }
     // 数字左右缘那几列墨少，但落在块的下半——是数字的笔画，并进粗段
-    while (a > 0 && lowest[a - 1] > b.h * 0.5) a--;
-    while (e < b.w && lowest[e] > b.h * 0.5) e++;
+    const bodies = spans.map(([sa, se]): [number, number] => {
+      let a = sa, e = se;
+      while (a > 0 && lowest[a - 1] > b.h * 0.5 && !residue.has(a - 1)) a--;
+      while (e < b.w && lowest[e] > b.h * 0.5 && !residue.has(e)) e++;
+      return [a, e];
+    });
     // 两侧都是弧：记号挂在弧下（《圣哉三一歌》Q2 `1⌒ᵇ7`，小号 ♭ 吊在弧中间，整块 59×23），粗段窄到 0.2 字号也拆
-    const hanging = a > numH * 0.3 && b.w - e > numH * 0.3;
-    if (e - a < numH * (hanging ? 0.2 : 0.3) || e - a > numH * 1.2) { out.push(k); continue; }
+    const hanging = bodies.length === 1 && bodies[0]![0] > numH * 0.3 && b.w - bodies[0]![1] > numH * 0.3;
+    if (bodies.some(([a, e]) => e - a < numH * (hanging ? 0.2 : 0.3) || e - a > numH * 1.2)) { out.push(k); continue; }
+    const inSpan = (xx: number) => bodies.findIndex(([a, e]) => xx >= a && xx < e);
     let thinW = 0, ok = true;
     for (let xx = 0; xx < b.w && ok; xx++) {
-      if ((xx >= a && xx < e) || residue.has(xx)) continue;
+      if (inSpan(xx) >= 0 || residue.has(xx)) continue;
       if (!cols[xx]) continue;
       if (cols[xx] > numH * 0.2 || lowest[xx] > b.h * 0.5) ok = false;
       thinW++;
@@ -550,22 +640,77 @@ function splitArcTail(bin: Binary, comps: Component[], numH: number): Component[
     if (!ok || thinW < numH * 0.6) { out.push(k); continue; }
     // 记号吊在弧中间时，粗段只取**弧带以下**的墨：弧横过记号头顶的那一截归弧（弧带下沿取粗段两侧相邻细列的
     // 最低墨点）。数字一侧粘弧时整列都归数字——弧尾接在数字顶横上，按弧带切会把 5 的顶横切走读成 1（78 Q3）。
-    const bandBottom = hanging ? Math.max(a > 0 ? lowest[a - 1] : -1, e < b.w ? lowest[e] : -1) : -1;
-    const inBody = (xx: number, yy: number) => xx >= a && xx < e && yy > bandBottom;
-    const piece = (inside: boolean): Component | null => {
+    const [ha, he] = bodies[0]!;
+    const bandBottom = hanging ? Math.max(ha > 0 ? lowest[ha - 1] : -1, he < b.w ? lowest[he] : -1) : -1;
+    /** 这个像素归第几个数字（-1 = 弧） */
+    const owner = (xx: number, yy: number) => { const si = inSpan(xx); return si >= 0 && yy > bandBottom ? si : -1; };
+    const piece = (who: number): Component | null => {
       let x0 = Infinity, y0 = Infinity, x1 = -1, y1 = -1, area = 0;
       for (let yy = 0; yy < b.h; yy++) for (let xx = 0; xx < b.w; xx++) {
-        if (!own(xx, yy) || inBody(xx, yy) !== inside) continue;
+        if (!own(xx, yy) || owner(xx, yy) !== who) continue;
         area++; x0 = Math.min(x0, xx); x1 = Math.max(x1, xx); y0 = Math.min(y0, yy); y1 = Math.max(y1, yy);
       }
       if (!area) return null;
       const abs = { x: b.x + x0, y: b.y + y0, w: x1 - x0 + 1, h: y1 - y0 + 1 };
       return { id: nextId++, bbox: abs, area, cx: rcx(abs), cy: rcy(abs) };
     };
-    const body = piece(true), arc = piece(false);
-    if (!body || !arc) { out.push(k); continue; }
-    probe("splitArcTail");
-    out.push(body, arc);
+    const digits = bodies.map((_, si) => piece(si)), arc = piece(-1);
+    if (digits.some((d) => !d) || !arc) { out.push(k); continue; }
+    probe(digits.length > 1 ? "splitArcTail.bridge" : "splitArcTail");
+    out.push(...(digits as Component[]), arc);
+  }
+  return out;
+}
+
+/** 上一声部的减时线下面挂着下一声部的弧：四声部谱两声部挨得近，Q2 `7⌒1` 的弧顶碰到 Q1 `2̲3̲` 的减时线，
+ *  连成一块（78《马槽歌》82×26，字号 30）——过不了横线的扁度门，Q1 那两个音就没了减时线，弧也跟着丢。
+ *  判据：块顶上一条横贯整块（≥0.85 块宽）的直线带（≤0.3 字号厚），带下剩下的每列都只是细墨（<0.25 字号），
+ *  且连着横贯六成以上的宽（是一条弧，不是减时线下挂的几个低音点）。
+ *  拆成「横线 + 其下的墨」两块，交给 classify 各归各类。 */
+function splitLineOverArc(bin: Binary, comps: Component[], numH: number): Component[] {
+  const out: Component[] = [];
+  let nextId = 7_000_000;
+  for (const k of comps) {
+    const b = k.bbox;
+    if (b.w < numH * 1.2 || b.h <= numH * 0.4 || b.h > numH * 1.2) { out.push(k); continue; }
+    const sub: Binary = { w: b.w, h: b.h, data: new Uint8Array(b.w * b.h) };
+    for (let yy = 0; yy < b.h; yy++) for (let xx = 0; xx < b.w; xx++) sub.data[yy * b.w + xx] = bin.data[(b.y + yy) * bin.w + b.x + xx];
+    const labels = new Int32Array(b.w * b.h);
+    const self = connectedComponents(sub, 1, labels).filter((p) => p.bbox.w === b.w && p.bbox.h === b.h)
+      .sort((p, q) => q.area - p.area)[0];
+    if (!self) { out.push(k); continue; }
+    const own = (xx: number, yy: number) => labels[yy * b.w + xx] === self.id;
+    const run = (yy: number) => { let best = 0, cur = 0; for (let xx = 0; xx < b.w; xx++) { if (own(xx, yy)) { if (++cur > best) best = cur; } else cur = 0; } return best; };
+    let y1 = 0;
+    while (y1 < Math.min(3, b.h) && run(y1) < b.w * 0.85) y1++;          // 线带从顶上两三行内起
+    const y0 = y1;
+    while (y1 < b.h && run(y1) >= b.w * 0.85) y1++;
+    if (y1 === y0 || y1 - y0 > numH * 0.3 || y1 >= b.h - 2) { out.push(k); continue; }
+    // 线下那部分得是**一条**连着横贯六成宽的细墨（弧）：单声部谱减时线下挂的是低音点，零散几个，不拆
+    //（从前所珍爱、8085、11 各被凭空拆出一条弧）。
+    let ok = true, longest = 0, cur = 0;
+    for (let xx = 0; xx < b.w && ok; xx++) {
+      let n = 0;
+      for (let yy = y1; yy < b.h; yy++) if (own(xx, yy)) n++;
+      if (n >= numH * 0.25) ok = false;
+      cur = n ? cur + 1 : 0;
+      longest = Math.max(longest, cur);
+    }
+    if (!ok || longest < b.w * 0.6) { out.push(k); continue; }
+    const box = (from: number, to: number): Component | null => {
+      let x0 = Infinity, yy0 = Infinity, x1 = -1, yy1 = -1, area = 0;
+      for (let yy = from; yy < to; yy++) for (let xx = 0; xx < b.w; xx++) {
+        if (!own(xx, yy)) continue;
+        area++; x0 = Math.min(x0, xx); x1 = Math.max(x1, xx); yy0 = Math.min(yy0, yy); yy1 = Math.max(yy1, yy);
+      }
+      if (!area) return null;
+      const r = { x: b.x + x0, y: b.y + yy0, w: x1 - x0 + 1, h: yy1 - yy0 + 1 };
+      return { id: nextId++, bbox: r, area, cx: rcx(r), cy: rcy(r) };
+    };
+    const line = box(0, y1), below = box(y1, b.h);
+    if (!line || !below) { out.push(k); continue; }
+    probe("splitLineOverArc");
+    out.push(line, below);
   }
   return out;
 }
@@ -780,7 +925,7 @@ function classify(comps: Component[], bin: Binary): { c: Classified; numH: numbe
   // 一模一样，切开就是凭空多一个八度。
   const pageClean = isCleanPage(comps, numH);
   const c: Classified = { blocks: [], barlines: [], hlines: [], dots: [], clean: pageClean };
-  const lineH = pageClean ? strokeLineH(comps, numH) : 0;
+  const lineH = strokeLineH(comps, numH);
   // 高瘦竖块可能是"八度点 + 窄数字"粘连体（数字不含点）：优先切开、把点与数字笔各归其类，
   // 否则会被下面的小节线判据整块吞掉而丢音（实测高八度 "1̇" 在单行简谱里 h 恰同真小节线）。
   const barCand = (w: number, h: number) =>
@@ -791,7 +936,7 @@ function classify(comps: Component[], bin: Binary): { c: Classified; numH: numbe
   for (const k of comps) {
     const { w, h } = k.bbox;
     const cand = barCand(w, h);
-    if (cand || (w <= numH * 0.6 && h > numH * 1.05)) {
+    if (cand || (w <= numH * 0.6 && h > numH * 1.05) || (w <= numH && h >= numH * 1.35)) {
       const sp = splitMergedOctaveDot(bin, k.bbox, numH, !cand);
       if (sp) { c.dots.push(sp.dot); c.blocks.push(sp.digit); continue; }
     }
@@ -812,9 +957,14 @@ function classify(comps: Component[], bin: Binary): { c: Classified; numH: numbe
     // 早先用 h/w≥2.2 会把 "1" 当小节线整片丢掉（本行八处 "1" 全失，见「哦愿我有千万舌头」）。
     if (h >= numH * 1.3 && h <= numH * 4 && w <= numH * 0.6 && h / w >= 3.5) { c.barlines.push(k); continue; }
     // 减时线粘着低八度点 / 数字：剥掉线带，各归各类（判据见 stripUnderline）。
-    if (pageClean) {
+    // 脏页只收「剥出 ≥2 个数字」的：一排数字底都压在同一条减时线上（78《马槽歌》Q2 `1̲2̲` 连线成一块 101×42，
+    // 读成一个 1），这形是明摆着的，碎渣冒充八度点的顾虑在这里不成立。
+    {
       const sp = stripUnderline(bin, k, numH, lineH);
-      if (sp) { c.hlines.push(...sp.lines); c.dots.push(...sp.dots); c.blocks.push(...sp.digits); continue; }
+      if (sp && (pageClean || sp.digits.length >= 2)) {
+        if (!pageClean) probe("stripUnderline.dirtyMulti");
+        c.hlines.push(...sp.lines); c.dots.push(...sp.dots); c.blocks.push(...sp.digits); continue;
+      }
     }
     // 独立横线：扁宽（增时线/分隔），且不够高不足以含数字。
     // 宽度门 0.6 字号是照减时线（要盖住整个数字）定的，**增时线可以短得多**：迦南诗选那批
@@ -865,8 +1015,14 @@ function classify(comps: Component[], bin: Binary): { c: Classified; numH: numbe
         const paired = c.barlines.some((o) => o !== k &&
           Math.abs(rcx(o.bbox) - rcx(k.bbox)) < numH * 0.7 && Math.abs(rcy(o.bbox) - rcy(k.bbox)) < numH &&
           o.bbox.h <= k.bbox.h * 2.5);
-        // 细到一两像素的是擦小节线剩下的线边（78《马槽歌》2×36），不是 1（1 的竖笔至少 0.28 字号宽），丢掉。
-        if (!paired) { if (k.bbox.w >= numH * 0.15) c.blocks.push(k); else probe("barline.residue"); continue; }
+        // 细于 0.2 字号的不是 1（1 的竖笔至少 0.28 字号宽）：是小节线断下来的一截或擦线剩下的线边
+        //（78《马槽歌》末系统 Q2 那截 5×43、行首擦剩的 2×36）。够一字高的留作小节线，否则丢掉。
+        if (!paired && k.bbox.w < numH * 0.2) {
+          probe("barline.residue");
+          if (k.bbox.h >= numH) real.push(k);
+          continue;
+        }
+        if (!paired) { c.blocks.push(k); continue; }
       }
       real.push(k);
     }
@@ -1204,7 +1360,8 @@ function buildJpNums(
       // 而歌词字的顶部小笔画（歌词带紧接在数字下方 ~15px，与「减时线下方的低音点」几乎同高）
       // 偏在两字之间、|dx| 0.3~0.39，旧阈值放它进来 → 凭空多出低八度点，若该音本就有高八度点还会
       // 被一加一减抵消（实测「主祢真伟大」Coda 的 `i`(为) 丢点、`7`(我) 平白多点）。
-      if (Math.abs(rcx(kb) - dcx) > numH * 0.25) continue;
+      // 声部行放到 0.35：新编赞美诗·四声部的低音点常印得偏左（78《马槽歌》Q2 `5̲̣` 点心偏 9px，字号 30）
+      if (Math.abs(rcx(kb) - dcx) > numH * (voiceMates.length ? 0.35 : 0.25)) continue;
       // 音符上方那一带偶尔印着别的字（段落名、上一行歌词的尾字），它的碎笔散成几个点大小的小块，
       // 尺寸与居中判据都拦不住（17《不失足》首音头顶那个「羔」字，`3.` 成了 `3̈.`）。
       // 分野在**左右**：八度点在数字正上/正下方孤零零一个，同高度上左右一个字距内不会再有小块
@@ -1227,6 +1384,15 @@ function buildJpNums(
       //（新编赞美诗·四声部《三一来临歌》Q2 `5̣ − −`、《圣哉三一歌》Q4 `6̣ 6̣` 都读成了不带点）。
       // 另一侧正对着点、且明显更近（不到本侧间隙的 0.8）的别声部数字在，这个点就是它的。只比同系统别的
       // 声部行：单声部谱数字下面紧跟着歌词，汉字也是「数字块」，拿它们比会把真低音点抢走（17、1773 等十来首）。
+      // 声部行上，点与数字之间隔着一条横过本音符的横线（减时线）：次序是数字 → 减时线 → 低音点，这就是低音点，
+      // 不再看它下方有没有墨——四声部第 2 声部底下紧挨着歌词，点下 2px 就是字（78《马槽歌》Q2 `4̲̣5̲̣`）。
+      const underOwnLine = (dot: Rect): boolean => voiceMates.length > 0 && cls.hlines.some((l) =>
+        l.bbox.y >= rbottom(d) - 2 && rbottom(l.bbox) <= dot.y + 1 && overlapX(l.bbox, d) >= d.w * 0.5 &&
+        rcx(dot) >= l.bbox.x && rcx(dot) <= rright(l.bbox));
+      // 声部行上，点正下方那团墨是下一声部的弧（扁而宽的弧候选）而不是字：78 末系统 Q1 `6̣` 的点下 7px 就是 Q2 `(6 4 6)` 的弧。
+      const overArc = (dot: Rect): boolean => voiceMates.length > 0 && arcs.some((a) => a.bbox.w >= numH &&
+        a.bbox.h <= numH * 0.5 && a.bbox.y >= rbottom(dot) - 1 && a.bbox.y <= rbottom(dot) + numH * 0.3 &&
+        rcx(dot) >= a.bbox.x && rcx(dot) <= rright(a.bbox));
       const nearerOther = (up: boolean): boolean => voiceMates.some((ob) => {
         if (Math.abs(rcx(ob) - rcx(kb)) > numH * 0.3) return false;
         if (up) return rbottom(ob) <= d.y && kb.y - rbottom(ob) >= -1 && kb.y - rbottom(ob) < gapAbove * 0.8;
@@ -1257,8 +1423,8 @@ function buildJpNums(
       // （14~15px vs 真点 3~13px），靠位置分不开。改看**它下方还有没有墨**：八度点孤立、下方留白，
       // 字顶笔画下方紧接着字的其余笔画。（先试过宽高比，但小字号图上真点只有 2×3 像素、比值不可靠，
       // 世上所有的民族的真低音点被误剔、音符 100→99.3。）
-      } else if (gapBelow >= -1 && gapBelow < numH * 0.8 && inkBelow(bin, kb, numH) < 0.12 && dotSized(kb) && !hasSideMate(kb) &&
-          !nearerOther(false)) {
+      } else if (gapBelow >= -1 && gapBelow < numH * 0.8 && (inkBelow(bin, kb, numH) < 0.12 || underOwnLine(kb) || overArc(kb)) &&
+          dotSized(kb) && !hasSideMate(kb) && !nearerOther(false)) {
         downDots.push(kb); }
     }
     // 八度点是**竖排叠放**的：第二、三个点各自摞在前一个点的正上/正下方——同一条竖线上、
@@ -1314,7 +1480,12 @@ function buildJpNums(
       // 包围盒高≈平均线厚；弧拱起来，包围盒高是线厚的好几倍。
       const below = kb.y - rbottom(d);
       const curved = kb.h >= numH * 0.2 && kb.h > (k.area / kb.w) * 2.2;
-      if (!curved && below > -numH * 0.2 && below < numH * 0.75 && overlapX(kb, d) >= Math.min(kb.w, d.w) * 0.4) {
+      // 减时线**不跨小节线**，也**不会在低音点下方**（次序是数字 → 减时线 → 低音点）。78《马槽歌》下一声部跨小节线的
+      // 连音线又扁又直，正落在上一声部 `5̣` 的点下面，被数成了减时线。
+      const crossesBar = barlineXs.some((x) => x > kb.x + 2 && x < rright(kb) - 2);
+      const underDot = cls.dots.some((o) => Math.abs(rcx(o.bbox) - rcx(d)) <= numH * 0.3 &&
+        o.bbox.y >= rbottom(d) - 1 && rbottom(o.bbox) <= kb.y + 1);
+      if (!curved && !crossesBar && !underDot && below > -numH * 0.2 && below < numH * 0.75 && overlapX(kb, d) >= Math.min(kb.w, d.w) * 0.4) {
         belowLines.push(kb);
       }
     }
@@ -1419,6 +1590,7 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend): Promise<Rec
   comps = splitBarDash(bin, comps, estimateNumH(comps));
   comps = splitBarCap(bin, comps, estimateNumH(comps));
   comps = splitArcTail(bin, comps, estimateNumH(comps));
+  comps = splitLineOverArc(bin, comps, estimateNumH(comps));
   if (isCleanPage(comps, estimateNumH(comps))) {
     comps = splitArcEndDots(bin, comps, estimateNumH(comps));
     comps = splitArcInnerDots(bin, comps, estimateNumH(comps));
@@ -1436,7 +1608,8 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend): Promise<Rec
     // 它并进了下一声部的谱行，读成 `0`。数字再怎么粘连也没这么扁（两三个粘连的数字宽高比也就 1~2）。
     // 拱得高的弧（同首 56×26）扁度不够，但墨只是一条线：够宽、不到一字高、墨占包围盒不到两成的也不是数字。
     const thinCurve = blk.bbox.w >= numH * 1.5 && blk.bbox.h < numH && blk.area < blk.bbox.w * blk.bbox.h * 0.2;
-    if ((blk.bbox.w >= blk.bbox.h * 2.5 && blk.bbox.h < numH * 0.7) || thinCurve) { probe("block.flatArc"); continue; }
+    if ((blk.bbox.w >= blk.bbox.h * 2.5 && blk.bbox.h < numH * 0.7) || thinCurve ||
+      isRejoinedArc(blk)) { probe("block.flatArc"); continue; }
     const { cores, arc } = splitBlock(bin, blk, numH);
     allCores.push(...cores);
     if (arc) mergedArcs.push(arc);
@@ -1612,6 +1785,39 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend): Promise<Rec
     });
   }
 
+  // 同一系统上下相邻两个声部行**共用**贯穿两行的小节线：线的一端常只画到另一行的半腰（78《马槽歌》第 3 系统
+  // 行首那根 y1703–1815，Q4 数字 1789–1829），按「覆盖本行七成」那一行就少一根线、少一个小节，按小节序号对行
+  // 时整行错位。一根线伸进相邻声部行的数字带过半，也算那一行的。
+  if (sysOf.size) {
+    for (const m of staff) {
+      const sv = sysOf.get(m);
+      if (!sv) continue;
+      const n = staff.find((o) => sysOf.get(o)?.sys === sv.sys && sysOf.get(o)!.voice === sv.voice + 1);
+      if (!n) continue;
+      const share = (from: typeof m, to: typeof m, down: boolean) => {
+        const h = to.botY - to.topY;
+        for (const bar of from.bars) {
+          const x = rcx(bar.bbox);
+          // 「已有这根」按 0.15 字号判：终止线的细粗两根只隔 8px（同首末系统 1532/1540，字号 30）
+          if (to.barlineXs.some((t) => Math.abs(t - x) <= numH * 0.15)) continue;
+          const reach = down ? rbottom(bar.bbox) - to.topY : to.botY - bar.bbox.y;
+          // 线在两声部之间断成两截时，这一行里正对着的那截短竖线（被行内「不到最高线六成」滤掉了，
+          // 末系统 Q2 那截 5×43）也算（同首）。
+          const piece = reach < h * 0.4 ? c.barlines.find((k) => Math.abs(rcx(k.bbox) - x) <= numH * 0.3 &&
+            Math.min(rbottom(k.bbox), to.botY) - Math.max(k.bbox.y, to.topY) >= h * 0.6) : bar;
+          if (!piece) continue;
+          probe("barline.sharedVoice");
+          to.bars.push(piece);
+          to.barlineXs.push(rcx(piece.bbox));
+        }
+        to.bars.sort((a, b) => rcx(a.bbox) - rcx(b.bbox));
+        to.barlineXs.sort((a, b) => a - b);
+      };
+      share(m, n, true);
+      share(n, m, false);
+    }
+  }
+
   // 临时升降号：印在音符左侧、紧贴着，比数字矮一截也窄一截（实测 ♯ 是 10×17，同行数字 15×24）。
   // 摘出音符流，记在右邻那个音符上（下游 applyJpPitch 会按简谱规矩在小节内延续）。
   const accidentals = new Map<DigitCore, "sharp" | "flat" | "natural">();
@@ -1772,7 +1978,9 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend): Promise<Rec
         // 声部行（连谱号括着）的两根离得开一些（四声部《圣哉三一歌》Q3/Q4 中心距 20~21px，字号 36），
         // 粗细也按两根彼此比：同一道 ‖ 的细粗之比比与全曲中位比稳（《三一来临歌》那道对中位不到 1.5 倍）。
         const braced = sysOf.has(m);
-        if (gap > numH * (braced ? 0.7 : 0.5) || gap < 2) continue;   // 不是并排的两根 / 同一根被噪声切成两块
+        // 下限按字号放到 0.15（至少 4px）：擦小节线接弧时同一根线会剩两截、中心只差 2px（78《马槽歌》下两声部
+        // 行首读成 `||`）；真复纵线两根中心距 9px 起（76《天上有粮》，字号 44 即 0.2）。
+        if (gap > numH * (braced ? 0.7 : 0.5) || gap < Math.max(4, numH * 0.15)) continue;   // 不是并排的两根 / 同一根被切成两截
         const thick = Math.max(cur.bbox.w, prev.bbox.w) >= medW * 1.5 ||
           (braced && Math.max(cur.bbox.w, prev.bbox.w) >= Math.min(cur.bbox.w, prev.bbox.w) * 1.3);
         const rowLast = i === m.bars.length - 1;
@@ -2287,17 +2495,43 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend): Promise<Rec
   let stanzaRegions: RecognizedScore["stanzaRegions"];
   if (ocr.recognizeTexts) {
     // 连谱号（多声部谱左侧那道 `[`）竖穿歌词带，它的竖笔与钩会被当成行首的字（《圣哉三一歌》第 1、2 系统
-    // 歌词读成 `I///L`）。多声部分组成立时，整块落在连谱号左右缘与上下端之内的一概剔掉。右缘不放宽：
-    // 钩已在连谱号的包围盒里，紧挨着的就是段号（「1圣哉」的 1）。
+    // 歌词读成 `I///L`）。多声部分组成立时剔掉。右缘不放宽：钩已在连谱号的包围盒里，紧挨着的就是段号（「1圣哉」的 1）。
+    // 只剔连谱号本身（够高的竖笔块）和上下钩那两端的块：钩向右伸，框把紧挨竖线的段号「1」也罩了进去（三一来临歌、马槽歌）。
     const inBrace = (k: Component) => useRows.some((r) => r.voice !== undefined) && braceRects.some((br) =>
       k.bbox.x >= br.x - numH * 0.3 && rright(k.bbox) <= rright(br) + 2 &&
-      k.bbox.y >= br.y - numH * 0.5 && rbottom(k.bbox) <= rbottom(br) + numH * 0.5);
-    const lyricComps = comps.filter((k) => !fermataArcs.has(k) && !inBrace(k));
+      k.bbox.y >= br.y - numH * 0.5 && rbottom(k.bbox) <= rbottom(br) + numH * 0.5 &&
+      (k.bbox.h >= numH * 2 || k.bbox.y <= br.y + numH * 1.5 || rbottom(k.bbox) >= rbottom(br) - numH * 1.5));
+    // 同一系统里共用小节线（有线从上一行穿过缝伸进下一行）的两个声部行（Q1/Q2、Q3/Q4）之间不印歌词，那道缝里只有连音线和线的碎段，
+    // 当成歌词行就读出 `////一`、`/a u r` 这类伪歌词（78《马槽歌》下两声部）。
+    const pairedGaps: Array<[number, number]> = [];
+    for (let i = 0; i + 1 < useRows.length; i++) {
+      const r = useRows[i]!, n = useRows[i + 1]!;
+      if (r.system === undefined || r.system !== n.system) continue;
+      const gapMid = (r.bottomY + n.topY) / 2;
+      if (c.barlines.some((k) => k.bbox.y < gapMid - numH * 0.3 && rbottom(k.bbox) > gapMid + numH * 0.3 &&
+        r.barlineXs.some((x) => Math.abs(x - rcx(k.bbox)) <= numH * 0.3))) pairedGaps.push([r.bottomY, n.topY]);
+    }
+    const inPairedGap = (k: Component) => pairedGaps.some(([y0, y1]) => rcy(k.bbox) > y0 && rcy(k.bbox) < y1);
+    const lyricComps = comps.filter((k) => !fermataArcs.has(k) && !inBrace(k) && !inPairedGap(k));
     const lr = await recognizeLyrics(bin, lyricComps, useRows, numH, ocr, headerRegions);
     lyricRegions = lr.lyrics.length ? lr.lyrics : undefined;
     chordRegions = lr.chords.length ? lr.chords : undefined;
     // 谱后单独排版的附段（第 2…N 段印成诗行、不跟音符对齐）：照第 1 段的音位骨架填进去。
     // 要排在下面「digit=0 复原」「隐含 tie 补检」之前——两者都看音符有没有词。
+    // 多声部谱的歌词只挂在一个声部上（四声部本子夹在第 2、3 声部之间 → 第 2 声部）。别的声部行底下被当成歌词行的
+    // 是连音线、小节线碎段、连谱号钩一类（78《马槽歌》读出 `/a u r`、`//一十。十`），按声部整体判：字数不到
+    // 词最多那个声部三成的，整声部清掉。
+    if (useRows.some((r) => r.voice !== undefined)) {
+      const charsOf = (v: number) => useRows.filter((r) => r.voice === v)
+        .reduce((a, r) => a + r.nums.reduce((b, n) => b + (n.lyrics ?? []).join("").replace(/[^一-鿿A-Za-z]/g, "").length, 0), 0);
+      const voices = [...new Set(useRows.map((r) => r.voice!))];
+      const best = Math.max(...voices.map(charsOf));
+      for (const v of voices) {
+        if (charsOf(v) >= best * 0.3) continue;
+        probe("lyrics.voiceNoise");
+        for (const r of useRows) if (r.voice === v) { for (const n of r.nums) delete n.lyrics; delete r.lyricLabels; }
+      }
+    }
     const st = await recognizeTrailingStanzas(bin, useRows, numH, ocr, lyricRegions);
     if (st.length) stanzaRegions = st;
     // 弧配音两可的（整体右偏的弧），等各段歌词都落位后按一字多音的形裁决。

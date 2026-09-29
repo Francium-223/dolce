@@ -1010,6 +1010,7 @@ export async function recognizeLyrics(
   // 装配时本就被丢弃、不占音符位，只需从 rec 原文行首把它取回来做重映射。
   // 标签通常只印在第一谱行；后续谱行（如房内那几行）行序与它一致，故按**视觉行序**建全局映射。
   const verseLabels = new Map<number, number[]>();
+  const filledLabel = new Set<string>();         // 漏读后按「行序+1」补上的（谱行:行序）
   {
     const seen = new Set<number>();
     for (const [key, raw] of rawByKey) {
@@ -1023,6 +1024,19 @@ export async function recognizeLyrics(
       const cnMargin = marginLabel.get(key);
       const nums = parseVerseLabel(raw) ?? (cnMargin ? [CN_NUM.indexOf(cnMargin) + 1] : null);
       if (nums) { probe("lyrics.verseLabel"); verseLabels.set(verse, nums); }
+    }
+    // 段号漏读补齐：读出来的（≥2 个）都恰好是「行序+1」，同一谱行上别的歌词行没读出号的，也照「行序+1」补上。
+    // 号常与首字或连谱号粘着、行识别时丢掉（新编赞美诗·四声部 78《马槽歌》「1远」的 1、2《三一来临歌》压在连谱号
+    // 竖线上的「3」「4」），缺了首行的 1 整套就作废了。
+    if (verseLabels.size >= 2 && [...verseLabels].every(([v, ns]) => ns.length === 1 && ns[0] === v + 1)) {
+      const labelRow = [...rawByKey.keys()].map((k) => k.split(":").map(Number)).find(([r, v]) => r >= 0 && verseLabels.has(v))?.[0];
+      for (const key of rawByKey.keys()) {
+        const [rowIdx, v] = key.split(":").map(Number);
+        if (rowIdx !== labelRow || verseLabels.has(v) || !perLine.has(key)) continue;
+        probe("lyrics.verseLabelFill");
+        verseLabels.set(v, [v + 1]);
+        filledLabel.add(key);
+      }
     }
     // 只在标签成套时才信：首行必须标 1、号不重复、至少两行有标签。零星误读（歌词里恰好有
     // 数字、OCR 把字读成数字）达不到这几条，映射整体作废、退回"行序即段号"。
@@ -1048,12 +1062,15 @@ export async function recognizeLyrics(
     for (const [key, raw] of rawByKey) {
       const [rowIdx, visual] = key.split(":").map(Number);
       const cnMargin = marginLabel.get(key);
-      if (rowIdx < 0 || !perLine.has(key) || !(parseVerseLabel(raw) || cnMargin)) continue;
+      const filled = filledLabel.has(key);
+      if (rowIdx < 0 || !perLine.has(key) || !(parseVerseLabel(raw) || cnMargin || filled)) continue;
       const targets = versesOf(visual);
       const row = staff[rowIdx];
-      const cn = CN_LABEL_RE.exec(raw);
-      // 谱面的号**不带点**（新编赞美诗·四声部「1圣哉」「2恳求」号紧贴首字）就照印写，不补点。
-      const dotted = !/^\s*\d(?![\d.．、,，])/.test(raw) || targets.length > 1;
+      const cn = filled ? null : CN_LABEL_RE.exec(raw);
+      // 谱面的号**不带点**（新编赞美诗·四声部「1圣哉」「2恳求」号紧贴首字）就照印写，不补点；补上的号随读出来的那几个。
+      const undotted = (r: string) => /^\s*\d(?![\d.．、,，])/.test(r);
+      const dotted = (filled ? ![...rawByKey].some(([k, r]) => k.split(":")[0] === String(rowIdx) && parseVerseLabel(r) && undotted(r))
+        : !undotted(raw)) || targets.length > 1;
       (row.lyricLabels ??= [])[targets[0] - 1] = cn ? cn[1] + cn[2] : cnMargin ?? targets.map((n) => (dotted ? `${n}.` : `${n}`)).join("");
     }
   }

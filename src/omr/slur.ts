@@ -7,7 +7,7 @@
 //   - 八度上点很小(w,h ≤ 0.45×字号)；增时线 '-' 在数字**中线**、减时线在数字**下方** → 都不在上方，天然不混。
 //   - 数字块 h ≥ 0.55×字号 才算，弧线更矮 → 不会被当成假音符（classify 里已落到 hlines 或被丢弃）。
 import type { Binary, Component, JpNum, Rect, StaffRow } from "./types";
-import { rright, rbottom, rcx, rcy, RHYTHM_DIGIT } from "./types";
+import { rright, rbottom, rcx, rcy, RHYTHM_DIGIT, isRejoinedArc } from "./types";
 import { median, overlapX } from "./geom";
 import { probe } from "./probe";
 
@@ -304,10 +304,19 @@ export function detectSlurs(bin: Binary, comps: Component[], rows: StaffRow[], n
       // （w/h≈0.67）、减时线与增时线又都不在上方带里，放到 1.8 不会把它们放进来。
       if (b.w / b.h < (b.h > numH * 1.05 ? 4 : 1.8)) return false;
       // 底边落在 [数字顶 - 1.2字号, 数字顶 + 0.25字号]：即整体在数字上方、最多略压数字顶缘。
-      if (!between(rbottom(b), rowTop - numH * 1.2, rowTop + numH * 0.25)) return false;
+      if (!between(rbottom(b), rowTop - numH * 1.2, rowTop + numH * (isRejoinedArc(c) ? 0.5 : 0.25))) return false;
       // 落在**别的谱行**数字带里的是那一行自己的东西：四声部谱上下声部挨得近，上一声部的增时线（《圣哉三一歌》
       // Q1 `3 −` 的 − 29×5）正在下一声部的弧带里，只罩一个音，按两端配却配出 `1…ᵇ7`，经歌词裁决补成第二条弧。
       if (rows.some((o) => o !== row && o.nums.length && between(rcy(b), o.topY, o.bottomY))) return false;
+      // 声部行上**直的扁条**不是弧：上一声部的减时线紧贴它的数字带下沿之外，正落在下一声部的弧带里
+      //（78《马槽歌》Q1 `3̲4̲` 的线 102×6、平均厚 3.7，罩住 Q2 的 `1 2`，与那里的真弧叠成两层）。直线的框高≈线厚（略斜也不过 2 倍），
+      // 弧拱起来框高大于线厚（同首扁连音弧两端也够不着 flatTop 的落差，单看它会连真弧一起丢）。
+      // 但**跨过本行小节线**的、**上方隔着低音点**的直条不会是上一声部的减时线（减时线不跨小节、在低音点之上），
+      // 是本声部扁平的连音线（同首 Q4 `5⌒|1`）。
+      const crossesBar = row.barlineXs.some((x) => x > b.x + 2 && x < rright(b) - 2);
+      const underDot = comps.some((o) => o.bbox.w <= numH * 0.45 && o.bbox.h <= numH * 0.45 && rbottom(o.bbox) <= b.y + 1 &&
+        o.bbox.y >= b.y - numH * 0.6 && rcx(o.bbox) >= b.x && rcx(o.bbox) <= rright(b));
+      if (row.voice !== undefined && !crossesBar && !underDot && b.h <= (c.area / b.w) * 2.2 && flatTop(bin, b, numH)) { probe("arc.straightInVoices"); return false; }
       // 和弦字母也在这一带、也够宽够扁：`Em` 连成一块（《切慕》31×15）、`Bm` 的 m（17×9），
       // 条条门都过，凭空多出 `(0 6)` 这样的弧。分开它们靠**底边**：字母立在基线上，横笔与衬线
       // 让大半列的最低墨点都落在块底；弧是拱形，只有两只脚着底，中间各列的最低点都悬在上面。
@@ -377,7 +386,13 @@ export function detectSlurs(bin: Binary, comps: Component[], rows: StaffRow[], n
         // 找弧线横向覆盖的音符（质心落在弧线 x 跨度内，左右各放宽 0.5 字号容端点偏移）。
         // 弧线常画在两音"符头之间"而非正压音符质心，左缘可比首音质心偏右半个字号
         //（实测基督更美行5 `(3_5_)`：弧 x129、首音 3 质心 114，差 15px≈0.3字号，0.3 容差差 0.6px 漏掉）。
-        const covered = row.nums.filter((n) => between(rcx(n.bbox), a.x - numH * 0.5, rright(a) + numH * 0.5));
+        let covered = row.nums.filter((n) => between(rcx(n.bbox), a.x - numH * 0.5, rright(a) + numH * 0.5));
+        // 擦小节线接回来的弧确定是弧，但跨线的连音线常画不到音符中心（78《马槽歌》Q3 行首那条右端 259、右边 5 的中心 275），
+        // 按质心只罩到一个音时，改用按两端配音的结果。
+        if (covered.length < 2 && isRejoinedArc(c)) {
+          const f = fitEnds(row.nums, a, numH);
+          if (f && f.length >= 2) { probe("slur.rejoinedFit"); covered = f; }
+        }
         const key = covered.length ? `${row.nums.indexOf(covered[0]!)}-${row.nums.indexOf(covered[covered.length - 1]!)}` : "";
         if (key && seen.has(key)) { probe("slur.duplicateLayer"); continue; }
         seen.add(key);

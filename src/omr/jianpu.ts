@@ -945,21 +945,23 @@ function classify(comps: Component[], bin: Binary): { c: Classified; numH: numbe
       if (sp) { c.dots.push(sp.dot); c.blocks.push(sp.digit); continue; }
     }
     // 小节线：细高竖条（高 ≳ 字号，宽很窄），但**高不过一个谱行**——真线实测 1.5~2.2 字号
-    // （1801《活水的江河》h48/numH31 = 1.55，基督更美 h118/数字 h55 = 2.15），故上限取 4 字号，
-    // 留足两倍余量。挡的是**贯穿整页的墨**：1801 那张图最右一列 x=1399 整列全黑（扫描边框，
+    // （1801《活水的江河》h48/numH31 = 1.55，基督更美 h118/数字 h55 = 2.15），故上限原取 4 字号；四声部本里两个声部
+    // 共用一根小节线（新编赞美诗·四声部 7：h118、numH≈28，4.2 倍），卡 4 倍整行丢线，放到 6 倍。挡的是**贯穿整页的墨**：1801 那张图最右一列 x=1399 整列全黑（扫描边框，
     // 1977/1977 像素），过了细高竖条这道门进了 barlines，把每个谱行的行内相对门（见 buildRowMeta
     // 的 maxH）顶到 1977，全曲真小节线一根不剩。被挡下的边框列成了未归类块留在 comps 里，
     // 下游哪条通道都够不着（弧要 w ≥ 0.7 字号、波音 ≥0.25 字号、歌词带要 w ≥ 0.4 字宽、
     // 拍号补位池要 h < 0.55 字号），不必另行清理。
     if (h >= numH * 0.85 && w <= Math.max(2, numH * 0.35)) {
-      if (h > numH * 4) { probe("barline.tooTall"); }
+      if (h > numH * 6) { probe("barline.tooTall"); }
       else { c.barlines.push(k); continue; }
     }
     // 终止线/粗小节线：比普通小节线粗（w 可达 ~0.5字号），但仍**明显更瘦长**——高于一个字号且
     // h/w≥3.5。数字 "1"（一条竖笔）恰是"更宽更矮"：实测 w≈0.5字号、h≈1.3字号 → h/w≈2.7，低于
     // 3.5 被排除、落到下面的数字块判据；而粗终止线 ▮（实测 w15 h56 → h/w≈3.7）仍 ≥3.5 保留。
     // 早先用 h/w≥2.2 会把 "1" 当小节线整片丢掉（本行八处 "1" 全失，见「哦愿我有千万舌头」）。
-    if (h >= numH * 1.3 && h <= numH * 4 && w <= numH * 0.6 && h / w >= 3.5) { c.barlines.push(k); continue; }
+    // 上限 6 字号（原 4）：四声部本里两个声部共用一根小节线（新编赞美诗·四声部 7：h118、numH≈28，4.2 倍），卡 4 倍整行丢线；
+    // 这道上限挡的是贯穿整页的扫描边框（上千像素高），6 倍照样挡得住。
+    if (h >= numH * 1.3 && h <= numH * 6 && w <= numH * 0.6 && h / w >= 3.5) { c.barlines.push(k); continue; }
     // 减时线粘着低八度点 / 数字：剥掉线带，各归各类（判据见 stripUnderline）。
     // 脏页只收「剥出 ≥2 个数字」的：一排数字底都压在同一条减时线上（78《马槽歌》Q2 `1̲2̲` 连线成一块 101×42，
     // 读成一个 1），这形是明摆着的，碎渣冒充八度点的顾虑在这里不成立。
@@ -1717,7 +1719,11 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
     const spanning = c.barlines.filter(
       (b) => b.bbox.h <= rowH * 4 &&
         (Math.min(rbottom(b.bbox), botY) - Math.max(b.bbox.y, topY) >= rowH * 0.7 ||
-          Math.min(rbottom(b.bbox), bandBot) - Math.max(b.bbox.y, bandTop) >= (bandBot - bandTop) * 0.7),
+          Math.min(rbottom(b.bbox), bandBot) - Math.max(b.bbox.y, bandTop) >= (bandBot - bandTop) * 0.7 ||
+          // 下两个声部共用一根长线（新编赞美诗·四声部 313：1329~1437，第 3 声部数字带 1315~1352），线头落在上面那个声部的
+          // 中腰，只重叠 0.62——长过数字带两倍的线放到 0.55，免得整行被当成没小节线的歌词行丢掉
+          (b.bbox.h >= (bandBot - bandTop) * 2 &&
+            Math.min(rbottom(b.bbox), bandBot) - Math.max(b.bbox.y, bandTop) >= (bandBot - bandTop) * 0.55)),
     );
     // 真小节线是贯穿整个谱行的高竖线（实测远高于数字行：基督更美 h118 vs 数字 h55）；而数字 "1"
     // 的竖笔、扫描里的细竖纹等"伪小节线"仅约一个字高、且常仅 1px 宽，会撞上面的贯穿判据。它们与真线
@@ -2501,7 +2507,13 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
     const rest = restShare(r.nums);
     // 连谱号括着的行是实打实的声部行：四声部谱的伴奏声部休止多（78《马槽歌》第 2 系统 Q3 `5 5 0 0 | 0 0 6 …`
     // 过半是 0），按单声部的 0.5 会被当成和弦字母伪行删掉，整个系统缺一声部、分组验收失败。
-    const ok = keepBy(r.nums) || (bracedOk && r.system !== undefined && rest < 0.8);
+    // 静默声部：连谱号括着、有两根以上小节线、整行几乎全是 0（新编赞美诗·四声部 76 第 2 系统第 4 声部「0 0 0 0 | 000 0 |…」）。
+    // 和弦字母、汉字凑成的伪行不会既归了系统又有小节线。
+    // 休止 0 是瘦长的椭圆（宽高比 ~0.6）；歌词行被读成一串 0 时核是近方的汉字（~1.0），这页小节线又穿过歌词区（18），要分开
+    const silentVoice = r.system !== undefined && r.barlineXs.length >= 2 && rest >= 0.8 &&
+      median(r.nums.map((n) => n.bbox.w / Math.max(1, n.bbox.h))) <= 0.8;
+    const ok = keepBy(r.nums) || (bracedOk && r.system !== undefined && rest < 0.8) || silentVoice;
+    if (silentVoice && !keepBy(r.nums)) probe("pseudoRow.silentVoice");
     const keep = ok || (r.topY > firstOkTop && trimProse(r));
     probe(!keep ? "pseudoRow.drop" : ok && rest >= 0.5 ? "pseudoRow.keepByAugment" : "row");
     return keep;
@@ -2599,6 +2611,7 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
     const ok = useRows.every((r) => r.system !== undefined) && (bySys.size >= 2 || sizes[0]! >= 3) && sizes.every((n) => n === sizes[0] && n >= 2)
       && [...bySys.values()].every((g) => g.every((r, i) => r.voice === i));
     probe(ok ? "voices" : "voices.reject");
+    if ((globalThis as { __omrDebug?: boolean }).__omrDebug) console.log("[voicedbg]", ok, useRows.map((r) => `${Math.round(r.topY)}-${Math.round(r.bottomY)}:${r.system}/${r.voice}:${r.nums.length}`).join(" "));
     if (!ok) for (const r of useRows) { delete r.system; delete r.voice; }
   }
 

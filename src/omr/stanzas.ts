@@ -109,7 +109,8 @@ async function stanzasOfSegment(
   // 下一调的小标题「(第二调)」「降E调 4/4」也是截断处
   const noteAt = vlines.findIndex((l) => {
     const t = [...l].sort((a, b) => a.bbox.x - b.bbox.x).map((d) => d.text).join("");
-    return /^[(（](?:\d{1,4}[)）]|唱|注)/.test(t) || /[(（]第.{1,3}调[)）]|调\s*\d{1,2}\s*[/／]\s*\d{1,2}/.test(t);
+    // 整行括号括着的说明（25「(“我”可换唱“你”)」）同理
+    return /^[(（](?:\d{1,4}[)）]|唱|注)/.test(t) || /^[(（].*[)）]$/.test(t) || /[(（]第.{1,3}调[)）]|调\s*\d{1,2}\s*[/／]\s*\d{1,2}/.test(t);
   });
   if (noteAt >= 0) { probe("stanza.footnoteCut"); vlines.length = noteAt; }
   const ordered = vlines.flatMap((l) => l.sort((a, b) => a.bbox.x - b.bbox.x).map((d, i) => ({ ...d, lineStart: i === 0, lineLen: l.length })));
@@ -157,18 +158,21 @@ async function stanzasOfSegment(
   const sylls = stanzas.filter((s) => s.lines.length).map((s) => toSyllables(s.lines.map((l) => l.text).join("")));
   const cum: number[] = [];
   rows.reduce((a, r) => { const v = a + r.nums.filter((n) => n.lyrics?.[0]).length; cum.push(v); return v; }, 0);
-  const fits = (S: number) => sylls.every((sy) => Math.abs(sy.length - S) <= COUNT_TOL);
-  const S = !sylls.length ? 0 : fits(slots.length) ? slots.length
-    : [...cum].reverse().find((c) => c >= 8 && c < slots.length && fits(c)) ?? 0;
-  if (!S) {
+  // 每段各自选对得上的范围：整首，或某条谱行界上的第 1 段音位前缀（选本 19：一段只配主歌 54、另一段连副歌整首 68）。
+  // 容差按长度放宽到一成（至少 COUNT_TOL）：OCR 多读漏读、第 1 段偶有叠字（34、45：41 对 45）。散文段落与诗行字数差得远，照样挡得住。
+  const tol = (n: number) => Math.max(COUNT_TOL, Math.round(n * 0.1));
+  const cands = [slots.length, ...[...cum].reverse().filter((c) => c >= 8 && c < slots.length)];
+  const spans = sylls.map((sy) => cands.filter((c) => Math.abs(sy.length - c) <= tol(c))
+    .sort((a, b) => Math.abs(sy.length - a) - Math.abs(sy.length - b) || b - a)[0] ?? 0);
+  if (!sylls.length || spans.some((c) => !c)) {
     if (sylls.length) probe("stanza.rejected");
     return [];
   }
-  if (S < slots.length) probe("stanza.versePrefix");
+  if (spans.some((c) => c < slots.length)) probe("stanza.versePrefix");
 
   const base = Math.max(1, ...rows.flatMap((r) => r.nums.map((n) => n.lyrics?.length ?? 0)));
   sylls.forEach((sy, k) => {
-    const v = base + k;
+    const v = base + k, S = spans[k]!;
     if (sy.length !== S) probe("stanza.countMismatch");
     slots.slice(0, S).forEach((n, i) => { (n.lyrics ??= [])[v] = sy[i] ?? ""; });
   });

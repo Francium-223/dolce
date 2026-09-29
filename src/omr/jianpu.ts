@@ -1935,13 +1935,21 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend): Promise<Rec
   const allDigits = staff.flatMap((m) => m.rd);
   // rec 输入裁剪：连通域偶尔只截到半个字（淡印/断笔的 "1" 竖笔断开，块高≈半个字高 → 送 rec 成半字被
   // 误读，如"1"读成"4"）。据本行数字带统计高度把过矮的块纵向补到整字高（cellOf 按 rect 从二值图裁，
-  // 会把带内断开的另一半笔画一并纳入）。带 [topY,botY] 由数字核算出、不含下划线/八度点 → 补高安全。
+  // 会把带内断开的另一半笔画一并纳入）。带由数字核算出、不含下划线/八度点 → 补高安全。
   // 仅补高、不动 x/w，且只作用于 rec 裁剪；几何(八度/附点/div/缓存键)仍用原 bbox。
+  // 声部行的带按各核上下沿的**中位数**量：个别高块（粘着点、弧的数字）会把 [topY, botY] 撑大，按它补高，正常高度的数字
+  // 也被补到带底、裁进下面的减时线和低音点（新编赞美诗·四声部 78《马槽歌》Q2 `7̲̣`：带被撑到 57px，34px 的 7 补高后读成 1）。
+  // 只在连谱号括着的行上这么量：单声部谱的伪行剔除靠 OCR 把标题/正文汉字读成 0，裁剪一变 2152 的标题带就混成了谱行。
   const recRects = staff.flatMap((m) => {
-    const bandH = m.botY - m.topY;
-    return m.rd.map((k) =>
-      k.bbox.h < bandH * 0.7 ? { x: k.bbox.x, y: m.topY, w: k.bbox.w, h: bandH } : k.bbox,
-    );
+    const voiced = sysOf.has(m);
+    const top = voiced ? median(m.rd.map((k) => k.bbox.y)) : m.topY;
+    const bot = voiced ? median(m.rd.map((k) => rbottom(k.bbox))) : m.botY;
+    const bandH = bot - top;
+    return m.rd.map((k) => {
+      if (k.bbox.h >= bandH * 0.7) return k.bbox;
+      const y = Math.min(k.bbox.y, top);
+      return { x: k.bbox.x, y, w: k.bbox.w, h: Math.max(rbottom(k.bbox), bot) - y };
+    });
   });
   const recog = await ocr.recognizeDigits(bin, recRects, { rhythm: true });
   const digitCache = new Map<Rect, number>();

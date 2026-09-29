@@ -175,8 +175,9 @@ function creditLines(score: JScore): string[] {
     for (const raw of c.text.split(/\r?\n/)) {
       const t = raw.trim();
       if (!t) continue;
-      // 已经自带标签的（「作词：X」「X 词曲」「X 曲」）照原文，不再叠一个
-      const labeled = /[:：]/.test(t) || /(?:词曲|作词|作曲|编曲|译词|制谱)\s*$|(?:^|\s)[词曲]\s*$/.test(t);
+      // 已经自带标签的（「作词：X」「X 词曲」「X 曲」「词 X」）照原文，不再叠一个
+      const labeled = /[:：]/.test(t) || /(?:词曲|作词|作曲|编曲|译词|制谱)\s*$|(?:^|\s)[词曲]\s*$/.test(t) ||
+        /^(?:词曲|作词|作曲|编曲|译词|制谱|[词曲])\s/.test(t);
       out.push(labeled || !c.type ? t : `${LABEL[c.type] ?? c.type}：${t}`);
     }
   }

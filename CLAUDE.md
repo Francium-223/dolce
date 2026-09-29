@@ -25,5 +25,9 @@
 - TS 严格模式 + `noUnusedLocals/Parameters`。
 - **PUA 码位用 `String.fromCharCode(0x...)`**，切勿在源码里写字面 PUA 字符（Write 工具会损坏字节）。
 - 数 XML 元素的正则一律写 `<name[ >]`（否则 `<note>` 会命中 `<notehead>`）。
+- **Bravura（SMuFL）的字体盒不能当墨迹盒用**：它的全局 ascent−descent 约 4 em，按字体度量算高度、
+  或对 `<text>` 调 `getBBox()`（得到的是整行字体盒），一个升降号、三连音数字、力度字形就把行高/裁剪框撑出几个字号的空白。
+  排版期用紧包围盒——`SmuflText` 自带 bound、音乐段 `TextFrame.inkBound`、字形盒走 `smuflMeta.getBBox(glyph)`；
+  DOM 侧量墨迹用 canvas `measureText` 的 `actualBoundingBox*`（文字基线在本地 y=0，见 `editor/help.ts::inkBox`）。
 - `window.__app` / `window.__book` 运行时暴露（`src/main.ts`）供无头校验用。
 - Tauri 新增插件要同改的四处见 [编辑器](docs/模块/编辑器.md)「Tauri 外壳」；其余见各模块页。

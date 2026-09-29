@@ -8,7 +8,8 @@ import { jpwToScoreDoc } from "../model/fromjpw";
 import { jianpuInputOfDoc, jianpuInputOfJpw } from "../model/jianpuinput";
 import { parse123 } from "../j123/parse";
 import type { JScore } from "../layout/input";
-import { LYRIC_STACK_RATIO } from "../layout/options";
+import type { StyleSheet } from "../style/sheet";
+import { THEMES, computeStyleForPaper, themeOfMode } from "../style/themes";
 import { PlayItem } from "../score/playorder";
 import type { MetaData } from "../smufl/smufl";
 import { isTauriRuntime } from "./fileio";
@@ -35,11 +36,7 @@ import {
  * expression layout); otherwise renders the first content page with its
  * footer (running title + page number) stripped so only the music remains.
  */
-export function renderExampleSvg(
-meta: MetaData,
-fontSize: number,
-jpwabc: string, opts: ExampleOpts = {},
-): SVGSVGElement | null {
+export function renderExampleSvg(meta: MetaData, jpwabc: string, opts: ExampleOpts = {}): SVGSVGElement | null {
   let f: JpwFile | null;
   try {
     f = JpwFile.fromString(jpwabc);
@@ -54,16 +51,11 @@ jpwabc: string, opts: ExampleOpts = {},
     return null;
   }
   if (!score) return null;
-  return renderExampleScore(meta, fontSize, score, f.getSection(LayoutSection)?.desc ?? null, opts);
+  return renderExampleScore(meta, score, f.getSection(LayoutSection)?.desc ?? null, opts);
 }
 
 /** 同上，源码是 123：`parse123` → `jianpuInputOfDoc`（与编辑器里 123 的原样档同一条投影）。有 error 诊断即不画。 */
-export function render123ExampleSvg(
-  meta: MetaData,
-  fontSize: number,
-  text: string,
-  opts: ExampleOpts = {},
-): SVGSVGElement | null {
+export function render123ExampleSvg(meta: MetaData, text: string, opts: ExampleOpts = {}): SVGSVGElement | null {
   let score;
   try {
     const doc = parse123(text);
@@ -73,20 +65,27 @@ export function render123ExampleSvg(
     return null;
   }
   if (!score) return null;
-  return renderExampleScore(meta, fontSize, score, null, opts);
+  return renderExampleScore(meta, score, null, opts);
 }
 
 interface ExampleOpts { width?: number; height?: number; titlePage?: boolean }
 
+/** 示例用的样式表：**出厂的原样档**（印刷主题），不带当前文档与用户的纸张、字体层。
+ *  与编辑器原样档同一套预设——多段词叠排、反复不展开、和弦与段落词、标题块排在谱行上方。 */
+let exampleStyle: StyleSheet | null = null;
+function exampleStyleSheet(): StyleSheet {
+  return (exampleStyle ??= computeStyleForPaper([THEMES[themeOfMode("original")]], { mode: "original", engine: "jianpu" }));
+}
+
 /** 一次性 painter 排一份引擎输入、取第一页（不碰实时谱面，共用 App 的 SMuFL 元数据）。 */
 function renderExampleScore(
   meta: MetaData,
-  fontSize: number,
   score: JScore,
   breakDesc: string | null,
   opts: ExampleOpts,
 ): SVGSVGElement | null {
-  const width = opts.width ?? 1600;
+  // 纸宽约等于卡片宽（1:1 显示）：长示例在纸上折行，而不是排成一长条再整体缩小
+  const width = opts.width ?? 760;
   const height = opts.height ?? 540;
   // Lyric-less snippets get pass=0 → empty playData → blank layout. Synthesize
   // a single play pass over all measures so examples without lyrics still render.
@@ -104,16 +103,12 @@ function renderExampleScore(
       view: "original",
       score,
       breakDesc,
-      style: null,
-      fontSize,
-      // 按原谱排一遍（同编辑器原样档）：多段词叠在同一谱行下、反复不展开；不给的话按演唱顺序逐遍排、遍末换页，
-      // 带反复的示例第一页只剩第一遍
-      lyricStack: fontSize * LYRIC_STACK_RATIO,
+      style: exampleStyleSheet(),
       // 示例画在压暗的米白纸上（styles.css 的 --help-paper），墨色也从纯黑收一档，
       // 免得深色界面上黑白对比过硬。真正的谱面预览仍是纯白纸 + 用户设定的颜色。
       ink: 0xff1a1a1a,
       page: { w: width, h: height },
-      // 标题页那一种：第 0 页是独立的标题页；否则只排谱行、取第一页
+      // 带标题的示例排原样档的第一页（标题块 + 谱行）；其余只排谱行
       snippet: !opts.titlePage,
     });
     if (p.pageCount === 0) return null;
@@ -515,8 +510,10 @@ const NOTATION: NoteEx[] = [
     body: [
       "反复记号让一段乐句重复演奏：`|:` 是反复开始、`:|` 是反复结束，中间的小节要唱两遍。",
       "`||` 是双小节线（分句），`|]` 是终止线（曲终）。",
+      "`.jpwabc` 照 JP-Word 的观感排：谱面**不画**反复号与小节线样式，但试听与展开档照样按它们反复。",
     ],
     code: "1 2 3 4 |: 5 6 7 1' :| 1--- |]",
+    render: false,
   },
   {
     title: "演唱顺序（.Repeat 段）",
@@ -530,7 +527,7 @@ const NOTATION: NoteEx[] = [
     ],
     code: ".Repeat\n1-4V1\n1-4V2\n5-8V1",
     render:
-      ".Title\nKeyAndMeters = {1=C,4/4}\n.Voice\n1 2 3 4 |5 6 7 1' |1' 7 6 5 |4 3 2 1 |\n" +
+      ".Title\nKeyAndMeters = {1=C,4/4}\n.Voice\n1 2 3 4 |5 6 7 1' |1' 7 6 5 |4 3 2 1 |$\n" +
       "5 5 5 5 |6 6 6 6 |7 7 7 7 |1'--- |\n.Words\nW1@1,1:\n第一段词/////////////////\nW2@1,1:\n第二段词/////////////////\n" +
       ".Repeat\n1-4V1\n1-4V2\n5-8V1\n",
   },
@@ -558,9 +555,9 @@ const NOTATION: NoteEx[] = [
       "歌词写在 `.Words` 段。前缀 `W1@1,1:` 表示第 1 段歌词、从第 1 小节第 1 个音符开始对齐。",
       "每个字**默认对一个音符**；用 `/` 表示这个音符**不换字**（一字多音的拖腔）。多段歌词用 `W1` `W2` 分别写。",
     ],
-    code: ".Title\nKeyAndMeters = {1=C,4/4}\n.Voice\n1 2 3 4 |5- 5- |\n.Words\nW1@1,1:\n我 们 歌 唱 主/爱/",
+    code: ".Title\nKeyAndMeters = {1=C,4/4}\n.Voice\n1 2 3 4 |5 6 5- |\n.Words\nW1@1,1:\n我 们 歌 唱 主/爱",
     render:
-      ".Title\nTitle = {示例}\nKeyAndMeters = {1=C,4/4}\n.Voice\n1 2 3 4 |5- 5- |\n.Words\nW1@1,1:\n我 们 歌 唱 主/爱/\n",
+      ".Title\nTitle = {示例}\nKeyAndMeters = {1=C,4/4}\n.Voice\n1 2 3 4 |5 6 5- |\n.Words\nW1@1,1:\n我 们 歌 唱 主/爱\n",
   },
   {
     title: "标题信息",
@@ -584,7 +581,7 @@ function buildNotationHelp(app: App): HTMLElement {
     examples: NOTATION,
     render: (ex) => {
       const text = ex.render ?? (ex.code.trimStart().startsWith(".") ? ex.code : wrapVoice(ex.code));
-      return renderExampleSvg(app.meta, app.fontSize, text, { titlePage: ex.titlePage });
+      return renderExampleSvg(app.meta, text, { titlePage: ex.titlePage });
     },
   });
 }
@@ -601,7 +598,7 @@ function build123Help(app: App): HTMLElement {
     examples: EXAMPLES_123,
     render: (ex) => {
       const text = ex.render ?? (has123Header(ex.code) ? ex.code : wrap123(ex.code));
-      return render123ExampleSvg(app.meta, app.fontSize, text, { titlePage: ex.titlePage });
+      return render123ExampleSvg(app.meta, text, { titlePage: ex.titlePage });
     },
   });
   const spec = el("button", "about-link", "完整规范（docs/格式/123格式.md）");
@@ -665,26 +662,59 @@ function buildExamplePane(o: {
   return pane;
 }
 
-/** 渲染出的示例 svg 默认是整页 viewBox；attach 到 DOM 后裁剪到内容紧包围盒。 */
+/** 渲染出的示例 svg 默认是整页 viewBox；attach 到 DOM 后裁剪到**墨迹**的紧包围盒，按 1:1 显示、超宽按比例缩。
+ *  不能直接用 `svg.getBBox()`：`<text>` 的盒是字体的整行盒，Bravura 的行盒有两个字号高，
+ *  一个升降号、三连音数字就把裁出来的一块撑出一大片空白。 */
 function cropExamples(root: HTMLElement): void {
+  const ctx = document.createElement("canvas").getContext("2d");
   for (const svg of Array.from(root.querySelectorAll<SVGSVGElement>("svg.help-svg"))) {
-    let bb: DOMRect;
+    const bb = inkBox(svg, ctx);
+    if (!bb || bb.w <= 0 || bb.h <= 0) continue;
+    const pad = 6;
+    const vw = bb.w + pad * 2;
+    const vh = bb.h + pad * 2;
+    svg.setAttribute("viewBox", `${bb.x - pad} ${bb.y - pad} ${vw} ${vh}`);
+    svg.style.width = `${vw}px`;
+    svg.style.maxWidth = "100%";
+    svg.style.height = "auto";
+    svg.style.aspectRatio = `${vw} / ${vh}`;
+  }
+}
+
+/** 各图元墨迹盒的并集（svg 用户坐标）。文字按 canvas 量出的实际墨迹上下沿，横向仍取字符前进宽度。 */
+function inkBox(svg: SVGSVGElement, ctx: CanvasRenderingContext2D | null): { x: number; y: number; w: number; h: number } | null {
+  const toSvg = svg.getScreenCTM()?.inverse();
+  if (!toSvg) return null;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const e of Array.from(svg.querySelectorAll<SVGGraphicsElement>("text, path, line, rect, polyline, polygon, circle, ellipse, use, image"))) {
+    let b: DOMRect;
     try {
-      // svg.getBBox() gives the union bbox of all descendants in viewBox space,
-      // accounting for their transforms (unlike a child <g>.getBBox()).
-      bb = svg.getBBox();
+      b = e.getBBox();
     } catch {
       continue;
     }
-    if (bb.width <= 0 || bb.height <= 0) continue;
-    const pad = 6;
-    const vw = bb.width + pad * 2;
-    const vh = bb.height + pad * 2;
-    svg.setAttribute("viewBox", `${bb.x - pad} ${bb.y - pad} ${vw} ${vh}`);
-    const dispH = Math.min(96, Math.max(36, vh));
-    svg.style.height = `${dispH}px`;
-    svg.style.width = `${(vw / vh) * dispH}px`;
+    let top = b.y, bottom = b.y + b.height;
+    if (e instanceof SVGTextElement && ctx && e.textContent) {
+      const cs = getComputedStyle(e);
+      ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+      const m = ctx.measureText(e.textContent);
+      // 文字基线在本地 y = 0（layout/render.ts 一律这么画）
+      top = -m.actualBoundingBoxAscent;
+      bottom = m.actualBoundingBoxDescent;
+    }
+    if (b.width <= 0 && bottom - top <= 0) continue;
+    const ctm = e.getScreenCTM();
+    if (!ctm) continue;
+    const m = toSvg.multiply(ctm);
+    for (const [px, py] of [[b.x, top], [b.x + b.width, top], [b.x, bottom], [b.x + b.width, bottom]]) {
+      const q = new DOMPoint(px, py).matrixTransform(m);
+      x0 = Math.min(x0, q.x);
+      y0 = Math.min(y0, q.y);
+      x1 = Math.max(x1, q.x);
+      y1 = Math.max(y1, q.y);
+    }
   }
+  return x0 < x1 ? { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } : null;
 }
 
 // ---- 关于页 ----------------------------------------------------------------

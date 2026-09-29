@@ -494,7 +494,13 @@ function mergeStackedColumns(comps: Component[], numH: number): Component[] {
  *（330「D.F调」、422「B调A调」，前调后转）只留前一个——曲首的调号是前一个。 */
 function normKeyText(t: string): string {
   return t
-    .replace(/(^|\d)([b#♭♯降升]?)[0OopP](?=[b#♭♯]?调)/, "$1$2D")
+    // 音名/升降号与「调」、「调」与拍号之间夹的噪点（76「G调.4/4」、259「D·调」、516「Eb.调」）
+    .replace(/([A-G0OopP口日8εЕ€][b#♭♯h]?)[.·．、](?=调)/, "$1").replace(/调[.·．](?=\d)/, "调")
+    // 读错的音名：D 读成 0/O/p/口，B 读成 日/8，E 读成 ε（1218 1014、110、91、452、462、487、494）；降号读成 h（15「Dh调」）
+    .replace(/(^|\d)([b#♭♯降升]?)[0OopP口](?=[b#♭♯h]?调)/, "$1$2D")
+    .replace(/(^|\d)([b#♭♯降升]?)[日8](?=[b#♭♯h]?调)/, "$1$2B")
+    .replace(/(^|\d)([b#♭♯降升]?)[εЕ€](?=[b#♭♯h]?调)/, "$1$2E")
+    .replace(/([A-G])h(?=调)/, "$1b")
     .replace(/((?:[降升]|[b#♭♯])?[A-G][b#♭♯]?)(?:[.\-、．·]?(?:[降升]|[b#♭♯])?[A-G][b#♭♯]?)?调(?:(?:[降升]|[b#♭♯])?[A-G][b#♭♯]?调)?/, "$1调");
 }
 
@@ -506,7 +512,7 @@ function splitInlineKey(lines: HLine[]): HLine[] {
   const out: HLine[] = [];
   for (const l of lines) {
     // 归一只改调名那几个字、字数可能变（两个调并成一个），所以先在原文上认形、按原文字位切，切出的调号片再归一
-    const m = /^(\d{1,4})?((?:(?:[降升]|[b#♭♯])?[A-G0OopP][b#♭♯]?)?(?:[.\-、．·]?(?:[降升]|[b#♭♯])?[A-G][b#♭♯]?)?调(?:(?:[降升]|[b#♭♯])?[A-G][b#♭♯]?调)?\d{1,2}[.·]?[/／]\d{1,2})(.*)$/.exec(l.text);
+    const m = /^(\d{1,4})?((?:(?:[降升]|[b#♭♯])?[A-G0OopP口日8εЕ€][b#♭♯h]?[.·．、]?)?(?:[.\-、．·]?(?:[降升]|[b#♭♯])?[A-G][b#♭♯]?)?调(?:(?:[降升]|[b#♭♯])?[A-G][b#♭♯]?调)?[.·．]?\d{1,2}[.·]?[/／]\d{1,2})(.*)$/.exec(l.text);
     const cs = l.chars && l.chars.length === l.text.length ? l.chars : undefined;
     if (!m || !cs || (!m[1] && !m[3])) { out.push(l); continue; }
     const cuts = [0, (m[1] ?? "").length, (m[1] ?? "").length + m[2].length, l.text.length];
@@ -610,7 +616,8 @@ export async function recognizeHeader(
   /** 读一组紧挨着的调号块（音名 + 可选升降号，1~3 块）：位置明显偏高、竖长、形状判得出 ♭/♯ 的是升降号
    *  （accidentalOf），其余拼成一条单独送 rec——行高就是音名自己的高度。rec 连着升降号一起读出来
    *  （`bB`、`Eb`）也收；组里连 `1=` 一起读出来（1940 小字 `1=c`）也收，此时音名可小写。读不出 A–G 就放弃。 */
-  async function readKeyGroup(group: Component[]): Promise<{ fifths: number; bbox: Rect } | undefined> {
+  /** `loose`：位置已确定是调号音名（「调」字前那几块）时，把形近的误读认回音名：0/O/口→D、8/日→B、ε→E */
+  async function readKeyGroup(group: Component[], loose = false): Promise<{ fifths: number; bbox: Rect } | undefined> {
     if (!group.length || !ocr.recognizeTexts) return undefined;
     // 升降号：上标印得高——底边比其余块的底边高出两成字高以上，且形状判得出 ♭/♯
     const lowest = Math.max(...group.map((g) => g.bbox.y + g.bbox.h));
@@ -630,7 +637,8 @@ export async function recognizeHeader(
     const read = async (ks: Component[]) => {
       const [text] = await recognizeTexts([buildStrip(surfaceFromBinary(bin), [unionRects(ks.map((g) => g.bbox))])]);
       if ((globalThis as { __omrDebug?: boolean }).__omrDebug) console.log("[header/keyGroup]", JSON.stringify(text), acc, ks.map((g) => `${g.bbox.x},${g.bbox.y} ${g.bbox.w}x${g.bbox.h}`).join(" | "));
-      return /^\s*([1１]\s*[=＝]\s*)?([b#♭♯]?)\s*([A-Ga-g])\s*([b#♭♯]?)\s*$/.exec(text ?? "");
+      const t = loose ? (text ?? "").trim().replace(/^[0O口]/, "D").replace(/^[8日]/, "B").replace(/^[εЕ€]/, "E") : text ?? "";
+      return /^\s*([1１]\s*[=＝]\s*)?([b#♭♯]?)\s*([A-Ga-g])\s*([b#♭♯]?)\s*$/.exec(t);
     };
     let m = await read(letters);
     // 摘错了：组里带着 `1` 时小写音名比它矮一截、底边也略高，会被当成上标升降号（1940 `1=c` 的 c）。
@@ -1166,10 +1174,14 @@ export async function recognizeHeader(
       const ln = ls.find((l) => /^调\d/.test(l.text) && l.chars && l.chars.length === l.text.length);
       if (ln) {
         const tiao = ln.chars![0]!;
+        // 别的框里的墨不要（598 曲号紧挨着「调」，往左放宽会把曲号的 8 读成 B），只有单独一个像音名的字的框例外
+        const others = ls.filter((l) => l !== ln && !/^[A-G0Oo口日8εЕ€pP][b#h♭♯]?$/.test(l.text.trim()));
+        const inOther = (c: Component) => others.some((l) => c.cx >= l.bbox.x && c.cx <= l.bbox.x + l.bbox.w && c.cy >= l.bbox.y && c.cy <= l.bbox.y + l.bbox.h);
         const group = comps
-          .filter((c) => c.cx >= ln.bbox.x && c.bbox.x + c.bbox.w <= tiao.cx - 4 && overlapRatioY(c.bbox, ln.bbox) > 0.3 && c.bbox.h >= 8)
+          // 音名常单独成一框（1218 40：「0」+「调2/4」），往左放宽一个半框高去找
+          .filter((c) => c.cx >= ln.bbox.x - ln.bbox.h * 1.5 && c.bbox.x + c.bbox.w <= tiao.cx - 4 && overlapRatioY(c.bbox, ln.bbox) > 0.3 && c.bbox.h >= 8 && !inOther(c))
           .sort((a, b) => a.bbox.x - b.bbox.x);
-        const k = group.length && group.length <= 4 ? await readKeyGroup(group) : undefined;
+        const k = group.length && group.length <= 4 ? await readKeyGroup(group, true) : undefined;
         if (k) { probe("key.letterBeforeTiao"); meta.fifths = k.fifths; meta.fifthsLine = ln; }
       }
     }

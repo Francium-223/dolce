@@ -58,6 +58,10 @@ The interface is in Chinese.
   score back in this view.
 - **Staff-notation PDFs.** A staff PDF with an intact text layer can be recognized into MusicXML, which opens in
   the staff and mixed views.
+- **Lyrics cross-check.** The command-line recognizer (`omr-cli.mjs image --lyrics lyrics.txt`) can take the
+  song's lyric text as a reference. Look-alike characters are corrected from it and dropped characters filled
+  back in; anything else that disagrees (edition wording, extra or missing syllables, likely missed slurs, repeat
+  order) is listed for review rather than changed.
 
 **Typesetting**
 - **Four views:**

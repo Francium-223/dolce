@@ -12,6 +12,7 @@ import { rright, rbottom, rcx, rcy, RHYTHM_DIGIT, REJOINED_ARC_ID, isRejoinedArc
 import { connectedComponents } from "./ccl";
 import type { OcrBackend } from "./ocr";
 import { recognizeLyrics } from "./lyrics";
+import { applyRefLyrics } from "./reflyrics";
 import { recognizeHeader } from "./header";
 import { recognizeTrailingStanzas } from "./stanzas";
 import { detectSlurs, resolveSlurRefits, tupletCandidates } from "./slur";
@@ -1584,7 +1585,8 @@ function mergeBrokenHlines(comps: Component[], numH: number): Component[] {
   return [...rest, ...out];
 }
 
-export async function recognizeJianpu(bin: Binary, ocr: OcrBackend): Promise<RecognizedScore> {
+/** `refLyrics`：同一首诗歌的歌词文本（已解码），给了就与识别歌词互证纠错（reflyrics.ts），结果在 `lyricCheck`。 */
+export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refLyrics?: string } = {}): Promise<RecognizedScore> {
   // 去连通：把贯穿全高的小节线（常像"桥"把弧/增时线粘成一团）从像素上擦掉重做连通域，
   // 让弧/小节线/数字各自独立、以干净连通块流入下面的 classify 与 detectSlurs。
   const raw = connectedComponents(bin, 4);
@@ -2503,6 +2505,7 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend): Promise<Rec
   let lyricRegions: RecognizedScore["lyricRegions"];
   let chordRegions: RecognizedScore["chordRegions"];
   let stanzaRegions: RecognizedScore["stanzaRegions"];
+  let lyricCheck: RecognizedScore["lyricCheck"];
   if (ocr.recognizeTexts) {
     // 连谱号（多声部谱左侧那道 `[`）竖穿歌词带，它的竖笔与钩会被当成行首的字（《圣哉三一歌》第 1、2 系统
     // 歌词读成 `I///L`）。多声部分组成立时剔掉。右缘不放宽：钩已在连谱号的包围盒里，紧挨着的就是段号（「1圣哉」的 1）。
@@ -2544,6 +2547,12 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend): Promise<Rec
     }
     const st = await recognizeTrailingStanzas(bin, useRows, numH, ocr, lyricRegions);
     if (st.length) stanzaRegions = st;
+    // 参照歌词互证：各段歌词都落位之后、弧裁决与「有词的 0」复原之前——补上的字要喂给那几步。
+    // 演唱顺序要从反复/房号/跳转推，那些此时都已认完；页眉字段也已定（拍号决定小节时值）。
+    if (opts.refLyrics) {
+      lyricCheck = await applyRefLyrics({ key: "C", fifths, beats, beatType, meters, rows: useRows, number, title },
+        opts.refLyrics, lr.hooks);
+    }
     // 弧配音两可的（整体右偏的弧），等各段歌词都落位后按一字多音的形裁决。
     resolveSlurRefits(slurRefits);
   }
@@ -2624,7 +2633,7 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend): Promise<Rec
 
   const dotDiam = dotSizes.length ? median(dotSizes) : undefined;
 
-  return { key: "C", fifths, beats, beatType, meters, meterNote, rows: useRows, number, numberSide, title, subtitle, credits, tempo, tempoBeat, headerRegions, lyricRegions, chordRegions, stanzaRegions, dotDiam };
+  return { key: "C", fifths, beats, beatType, meters, meterNote, rows: useRows, number, numberSide, title, subtitle, credits, tempo, tempoBeat, headerRegions, lyricRegions, chordRegions, stanzaRegions, dotDiam, lyricCheck };
 }
 
 

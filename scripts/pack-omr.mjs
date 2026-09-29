@@ -297,6 +297,7 @@ ${os === "win32" ? `\`\`\`bat
 omr-cli.cmd 图片.jpg                      :: 默认输出诗歌本文本谱到 stdout
 omr-cli.cmd 图片.jpg -f tomato -o 曲.txt  :: 换格式、写文件
 omr-cli.cmd 图片.jpg --profile            :: 附带分段耗时
+omr-cli.cmd 图片.jpg -l 歌词.txt          :: 附同一首的歌词文本，词谱互证纠错（不一致处打到 stderr）
 \`\`\`
 
 ${CRT ? `\`onnxruntime.dll\` 与 \`onnxruntime_binding.node\` 动态链接 VC++ 运行库（\`MSVCP140.dll\` /
@@ -309,6 +310,7 @@ Win10/11 多半已装过，报「找不到 VCRUNTIME140.dll」时到微软官网
 ./omr-cli.mjs 图片.jpg                      # 默认输出诗歌本文本谱到 stdout
 ./omr-cli.mjs 图片.jpg -f tomato -o 曲.txt   # 换格式、写文件
 ./omr-cli.mjs 图片.jpg --profile             # 附带分段耗时
+./omr-cli.mjs 图片.jpg -l 歌词.txt           # 附同一首的歌词文本，词谱互证纠错（不一致处打到 stderr）
 \`\`\``}
 
 格式：\`shige\`（诗歌本文本谱，默认）、\`tomato\`（番茄简谱）、\`123\`（123 简谱）。
@@ -317,9 +319,15 @@ Win10/11 多半已装过，报「找不到 VCRUNTIME140.dll」时到微软官网
 当库用：
 
 \`\`\`js
-import { recognizeImage } from "./omr.js";
+import { recognizeImage, decodeLyricsBytes } from "./omr.js";
 const { text } = await recognizeImage(bytes, { mime: "image/jpeg", format: "shige" });
+// 带参照歌词（decodeLyricsBytes 认 UTF-8 / GBK / UTF-16）：结果在 detail.score.lyricCheck
+const r = await recognizeImage(bytes, { mime: "image/jpeg", lyrics: decodeLyricsBytes(lyricBytes) });
 \`\`\`
+
+参照歌词（\`-l\` / \`--lyrics\`）：一份 .txt / .lrc 对一张图，按演唱顺序写全即可（反复、副歌每段都写），
+段号、\`(副歌)\`、lrc 时间戳自动去掉。形近字按歌词选字、补回漏读的字；版本用字不同、字多字少、
+疑似漏认的弧、反复顺序对不上只报告不改。\`--lyrics-report 核对.json\` 另落结果。
 
 环境变量：\`OMR_MODELS\` 指定模型目录（默认包内 \`models/\`），\`OMR_THREADS\` 调线程数（默认 4）。
 `);

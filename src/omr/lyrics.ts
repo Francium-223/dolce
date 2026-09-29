@@ -362,7 +362,7 @@ function blockRect(b: ProjBlock, k: number): Rect {
  *  有词时，把第 1 段的该行词整行照抄过去（连 melisma 分布一起，下游 `/` 续记号才不错位）。
  *  只补**前缀**、且要求第 1 段在该段自己的区间里也有词——反复房「二房起歌词整体上移」那类
  *  （见 Score.expandVoltaByVerse）第 1 段在分岔行反而是空的，据此排除，不会误补。 */
-function fillLeadingVerses(staff: StaffRow[]): void {
+function fillLeadingVerses(staff: StaffRow[], copied?: (n: JpNum, from: number, to: number) => void): void {
   const nv = Math.max(0, ...staff.map((r) => Math.max(0, ...r.nums.map((n) => n.lyrics?.length ?? 0))));
   if (nv < 2) return;
   const has = (row: number, v: number) => staff[row].nums.some((n) => (n.lyrics?.[v] ?? "") !== "");
@@ -374,7 +374,7 @@ function fillLeadingVerses(staff: StaffRow[]): void {
       if (has(r, v) || !has(r, 0)) continue;
       for (const n of staff[r].nums) {
         const t = n.lyrics?.[0];
-        if (t) (n.lyrics ??= [])[v] = t;
+        if (t) { (n.lyrics ??= [])[v] = t; copied?.(n, 0, v); }
       }
     }
   }
@@ -422,16 +422,32 @@ async function simplifyStrayTraditional(
   });
 }
 
+/** 一个歌词字出自哪条 rec 条（strips 下标）的第几个字（textsPos 下标），及它的叠加定位框。 */
+interface CharSrc { s: number; k: number; region?: TextRegion }
+/** 某个歌词字的 OCR 候选（置信度降序，含首选本身），`scores` 与 alts 同序。 */
+export interface LyricAlts { alts: string[]; scores: number[] }
+/** 歌词字 = (音符, 段, 该段歌词串里第几个汉字)。 */
+export interface LyricCharRef { n: JpNum; verse: number; idx: number }
+/** 参照歌词选字用的回查口（reflyrics.ts）：
+ *  `rankAlts` 取 OCR 候选，取不到（字不是 rec 条里读出来的、run 划分对不上）为 null；
+ *  `regionOf` 取该字的叠加定位框（改字时一并改它的 text）。 */
+export interface LyricHooks {
+  rankAlts(reqs: LyricCharRef[]): Promise<(LyricAlts | null)[]>;
+  regionOf(ref: LyricCharRef): TextRegion | undefined;
+}
+const noHooks: LyricHooks = { rankAlts: async (reqs) => reqs.map(() => null), regionOf: () => undefined };
+
 /** 识别歌词与和弦并写回各音符（lyrics[] / chord）；返回二者各自的源图定位+字号
- *  （识别模式按原位/原字号叠加）。staff 为乐谱行(按出现顺序)，comps 为全图连通块。 */
+ *  （识别模式按原位/原字号叠加）。staff 为乐谱行(按出现顺序)，comps 为全图连通块。
+ *  另返回 `rankAlts`：参照歌词选字时按字重跑 OCR 候选（只重跑被问到的那几条，不问不花钱）。 */
 export async function recognizeLyrics(
   bin: Binary, comps: Component[], staff: StaffRow[], numH: number, ocr: OcrBackend,
   /** 页眉里**已被采纳**的字段区域（标题/词曲/调号/速度/拍号）。第一谱行的上方带与页眉 ROI
    *  几何上重叠，落在这些框里的块一律不进和弦通道——见 jianpu.ts 那处说明。 */
   headerRegions?: TextRegion[],
-): Promise<{ lyrics: TextRegion[]; chords: TextRegion[] }> {
+): Promise<{ lyrics: TextRegion[]; chords: TextRegion[]; hooks: LyricHooks }> {
   const regions: TextRegion[] = [];
-  if (!ocr.recognizeTexts || !staff.length) return { lyrics: regions, chords: [] };
+  if (!ocr.recognizeTexts || !staff.length) return { lyrics: regions, chords: [], hooks: noHooks };
 
   const charMin = numH * 0.5; // 歌词字号下限（约等于音符字号）
   const src = surfaceFromBinary(bin);
@@ -629,7 +645,7 @@ export async function recognizeLyrics(
     });
   }
 
-  if (!strips.length) return { lyrics: regions, chords: [] };
+  if (!strips.length) return { lyrics: regions, chords: [], hooks: noHooks };
   // 优先用**带字位**的 rec：每字带 xFrac → 直接落回源图 x，免去"字数↔连通块格数"按序硬配（错位根源）。
   const posMode = !!ocr.recognizeTextsPos;
   // **上方带的块单独成一批**送 rec：歌词那批的输入必须与「没有上方带」时逐条相同，否则识别结果
@@ -660,7 +676,7 @@ export async function recognizeLyrics(
   // 每块识别字汇总到 (row,verse)，再按 x 单调最近分配给音符。
   // 单元 = 一个汉字 + 紧随其后的尾随标点（，。、；！？等）：简谱标点向左贴前一字、不占音符，
   // 故并入该音节字符串而非另立单元（保持单元↔音符对齐）。段号数字等非汉字非标点 → 直接丢弃、自然不占位。
-  const perLine = new Map<string, Array<{ x: number; ch: string; region?: TextRegion }>>();
+  const perLine = new Map<string, Array<{ x: number; ch: string; region?: TextRegion; src?: CharSrc }>>();
   const rawByKey = new Map<string, string>();   // 每 (row,verse) 的 rec 原文（供和弦/段落标记行判定）
   const lineSeen = new Set<string>();
   // 行首边注块（分块时单独拿出来的那格）读出汉字 → 不进歌词；是单个中文数字就收作段号。
@@ -828,7 +844,7 @@ export async function recognizeLyrics(
         pend = null;
       };
       let at = 0;
-      for (const { ch, xFrac } of textsPos![s]) {
+      for (const [ti, { ch, xFrac }] of textsPos![s].entries()) {
         const pos = at; at += ch.length;
         if (pos < labelEnd) continue;                               // 中文段号
         if (jumpSpan && pos >= jumpSpan[0] && pos < jumpSpan[1]) { flushLatin(); continue; } // 记号不是歌词
@@ -837,7 +853,7 @@ export async function recognizeLyrics(
           flushLatin();
           const text = lead + ch; lead = "";                        // 开引号并入本字前缀（“阿）
           const region: TextRegion = { text, bbox: { x: sx - charW / 2, y: cy0, w: charW, h: cy1 - cy0 } };
-          placed.push({ x: sx, ch: text, region });
+          placed.push({ x: sx, ch: text, region, src: { s, k: ti } });
           regions.push(region);
         } else if (isLatin(ch) || (pend && isApostrophe(ch))) {
           // rec 不吐空格 → 用源图字距断词：间隙明显大于字母间距即另起一个音节单元。
@@ -912,7 +928,7 @@ export async function recognizeLyrics(
         if (!vs) byRow.set(rowIdx, (vs = []));
         vs.push(verse);
       }
-      const renamed = new Map<string, Array<{ x: number; ch: string; region?: TextRegion }>>();
+      const renamed = new Map<string, Array<{ x: number; ch: string; region?: TextRegion; src?: CharSrc }>>();
       for (const [rowIdx, verses] of byRow) {
         verses.sort((a, b) => a - b);
         verses.forEach((v, nv) => renamed.set(`${rowIdx}:${nv}`, perLine.get(`${rowIdx}:${v}`)!));
@@ -1077,6 +1093,14 @@ export async function recognizeLyrics(
 
   if (TR) { TR.placed = {}; for (const [k, p] of perLine) TR.placed[k] = p.map(({ x, ch }) => ({ x, ch })); }
 
+  // 每个音符各段歌词串里逐个汉字的来源（与串里汉字一一对应，没有来源的记 null）。
+  const charSrc = new Map<JpNum, (CharSrc | null)[][]>();
+  const srcsOf = (n: JpNum, v: number): (CharSrc | null)[] => {
+    let per = charSrc.get(n);
+    if (!per) charSrc.set(n, (per = []));
+    return (per[v] ??= []);
+  };
+
   // 投影已在自然上下文里把尾随标点并进字块、由 OCR 直接读出（并折全角）→ 不再需要几何补标点。
   for (const [key, placed] of perLine) {
     const [rowIdx, visual] = key.split(":").map(Number);
@@ -1089,7 +1113,7 @@ export async function recognizeLyrics(
     let ni = 0;
     const restHits: Array<{ ni: number; x: number; ch: string }> = []; // 落到休止上的字（事后复核）
     for (let k = 0; k < M; k++) {
-      const { x, ch } = placed[k];
+      const { x, ch, src } = placed[k];
       // 给后续字各留一个音符的上限：第 k 字最多落到 notes.length-(M-k)。
       // 否则贪心 x-最近会因某字 x 略偏右而跳格(多留一个空白 melisma)，
       // 误差向行尾累积，把末尾两字挤进同一音符（实测「人·心怎能说尽」错位即此）。
@@ -1109,7 +1133,10 @@ export async function recognizeLyrics(
         ni > 0 && !!(notes[ni - 1].lyrics?.[verse] ?? "");
       if (!isStrayMark) {
         if (!nt.lyrics) nt.lyrics = [];
-        for (const p of targets) nt.lyrics[p - 1] = (nt.lyrics[p - 1] || "") + ch;
+        for (const p of targets) {
+          nt.lyrics[p - 1] = (nt.lyrics[p - 1] || "") + ch;
+          for (const c of ch) if (isHanzi(c)) srcsOf(nt, p - 1).push(src ? { ...src, region: placed[k].region } : null);
+        }
         if (nt.digit === 0) restHits.push({ ni, x, ch });
       }
       if (ni < notes.length - 1) ni++;
@@ -1130,11 +1157,32 @@ export async function recognizeLyrics(
       if (targets.some((p) => nx.lyrics?.[p - 1])) continue;
       if (targets.some((p) => rest.lyrics?.[p - 1] !== ch)) continue;  // 只挪整字（休止上只落了这一个字）
       nx.lyrics ??= [];
-      for (const p of targets) { nx.lyrics[p - 1] = ch; rest.lyrics![p - 1] = ""; }
+      for (const p of targets) {
+        nx.lyrics[p - 1] = ch; rest.lyrics![p - 1] = "";
+        srcsOf(nx, p - 1).push(...srcsOf(rest, p - 1).splice(0));
+      }
     }
     if (TR) (TR.aligned ??= {})[key] = notes.map((n) => ({ noteX: rcx(n.bbox), noteBox: n.bbox, lyric: n.lyrics?.[verse] || "" }));
   }
 
-  fillLeadingVerses(staff);
-  return { lyrics: dropped.size ? regions.filter((r) => !dropped.has(r)) : regions, chords: chordRegions };
+  fillLeadingVerses(staff, (n, from, to) => { srcsOf(n, to).splice(0, Infinity, ...srcsOf(n, from)); });
+
+  // 候选按条重跑（与 simplifyStrayTraditional 同一做法：run 划分与原文字数对不上就整条放弃）。
+  const rankAlts = async (reqs: LyricCharRef[]): Promise<(LyricAlts | null)[]> => {
+    const want = reqs.map(({ n, verse, idx }) => charSrc.get(n)?.[verse]?.[idx] ?? null);
+    const ss = [...new Set(want.filter((w): w is CharSrc => !!w).map((w) => w.s))];
+    if (!ocr.rankTextChars || !ss.length) return reqs.map(() => null);
+    const ranked = await ocr.rankTextChars(ss.map((i) => strips[i]!), 10);
+    const byStrip = new Map(ss.map((i, j) => [i, ranked[j]]));
+    return want.map((w) => {
+      if (!w) return null;
+      const r = byStrip.get(w.s);
+      const orig = textsPos?.[w.s];
+      if (!r || !orig || r.length !== orig.length) return null;
+      const c = r[w.k];
+      return c ? { alts: c.alts, scores: c.scores ?? [] } : null;
+    });
+  };
+  return { lyrics: dropped.size ? regions.filter((r) => !dropped.has(r)) : regions, chords: chordRegions,
+    hooks: { rankAlts, regionOf: ({ n, verse, idx }) => charSrc.get(n)?.[verse]?.[idx]?.region } };
 }

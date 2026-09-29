@@ -327,10 +327,10 @@ function digitClassIdx(): number[] {
  * 同口径（一段连续非空标签 run = 一个字），每个 run 里对各类取该区间的最大 logit 排序。
  * 只给「疑似形近误判」的少数条重跑，故按条推理、不批量。
  */
-async function rankCharsOf(cell: Surface, maxW: number, k: number): Promise<{ ch: string; alts: string[] }[]> {
+async function rankCharsOf(cell: Surface, maxW: number, k: number): Promise<{ ch: string; alts: string[]; scores: number[] }[]> {
   const { arr, T, C } = await inferLogits(cell, maxW);
   const chars = _chars!;
-  const out: { ch: string; alts: string[] }[] = [];
+  const out: { ch: string; alts: string[]; scores: number[] }[] = [];
   const argmaxAt = (t: number): number => {
     const base = t * C; let best = 0, bv = -Infinity;
     for (let c = 0; c < C; c++) { const v = arr[base + c]; if (v > bv) { bv = v; best = c; } }
@@ -350,7 +350,8 @@ async function rankCharsOf(cell: Surface, maxW: number, k: number): Promise<{ ch
         if (top.length > k) top.pop();
       }
     }
-    out.push({ ch, alts: top.map((x) => chars[x.c] ?? "").filter((x) => x) });
+    const kept = top.filter((x) => chars[x.c]);
+    out.push({ ch, alts: kept.map((x) => chars[x.c]!), scores: kept.map((x) => x.v) });
   };
   let prev = -1, i0 = 0;
   for (let t = 0; t <= T; t++) {
@@ -477,10 +478,10 @@ export function paddleOcrBackend(): OcrBackend {
       // 全部歌词条一次 IPC（Rust 内部逐条推理=算力最优，往返只 1 次）。
       return (await recognizeCharsPosMany(strips, "auto")).map((cp) => cp.map((c) => c.ch).join(""));
     },
-    async rankTextChars(strips: Surface[], k = 5): Promise<{ ch: string; alts: string[] }[][]> {
+    async rankTextChars(strips: Surface[], k = 5): Promise<{ ch: string; alts: string[]; scores: number[] }[][]> {
       if (!strips.length) return [];
       await ensureSession();
-      const out: { ch: string; alts: string[] }[][] = [];
+      const out: { ch: string; alts: string[]; scores: number[] }[][] = [];
       // maxW 要与 recognizeTexts 的 "auto" 同口径，否则时间步数不同、run 划分对不上
       for (const c of strips) {
         const maxW = Math.min(REC_MAXW_LONG, Math.max(REC_MAXW, Math.ceil(REC_H * (c.width / c.height))));

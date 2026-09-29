@@ -20,8 +20,9 @@ export interface OcrBackend {
   recognizeTextsPos?(strips: Surface[]): Promise<{ ch: string; xFrac: number }[][]>;
   /** 可选：对一批文本表面逐字返回候选字（含 top1 本身，置信度降序）。
    *  与 `recognizeTexts` 同一条 CTC run 划分，只是多取几名——用于上层据上下文改判
-   *  （如整页都是简体时，个别繁体字形多半是形近误判，换成候选里的简体形）。 */
-  rankTextChars?(strips: Surface[], k?: number): Promise<{ ch: string; alts: string[] }[][]>;
+   *  （如整页都是简体时，个别繁体字形多半是形近误判，换成候选里的简体形）。
+   *  `scores` 与 alts 同序：该字那段时间步里各候选的最高分（参照歌词选字据此判「够不够像」）。 */
+  rankTextChars?(strips: Surface[], k?: number): Promise<{ ch: string; alts: string[]; scores?: number[] }[][]>;
   /** 可选：对每个 bbox 返回数字候选 0-7 的置信度降序排列（首位即 recognizeDigits 的次优来源）。
    *  用于上层据上下文（如有歌词的音符不可能是休止 0）剔除误判、取次优候选。 */
   rankDigits?(bin: Binary, rects: Rect[]): Promise<number[][]>;

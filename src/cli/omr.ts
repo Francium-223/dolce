@@ -23,7 +23,21 @@ export { recognizedToDoc } from "../omr/todoc";
 export { recognizedBeatIssues } from "../omr/beats";
 export type { RecognizedBeatIssue } from "../omr/beats";
 export { metaFrom123, metaFromPu } from "../omr/meta";
-export type { RecognizedScore, Binary } from "../omr/types";
+export type { RecognizedScore, Binary, LyricCheck, LyricCheckItem } from "../omr/types";
+export { parseRefLyrics, formatLyricCheckItem } from "../omr/reflyrics";
+
+/** 歌词文件字节 → 文本。歌本配套的歌词编码混杂：带 BOM 的 UTF-16LE/UTF-8，否则先按 UTF-8 严格解码、
+ *  解不了退 GBK（老 .txt / .lrc 多是 GBK）。 */
+export function decodeLyricsBytes(b: Uint8Array): string {
+  if (b[0] === 0xff && b[1] === 0xfe) return new TextDecoder("utf-16le").decode(b.subarray(2));
+  if (b[0] === 0xfe && b[1] === 0xff) return new TextDecoder("utf-16be").decode(b.subarray(2));
+  if (b[0] === 0xef && b[1] === 0xbb && b[2] === 0xbf) return new TextDecoder("utf-8").decode(b.subarray(3));
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(b);
+  } catch {
+    return new TextDecoder("gbk").decode(b);
+  }
+}
 
 export interface RecognizeResult {
   /** 输出原文（123、.jpwabc、ABC 或文本谱原文）。 */
@@ -35,13 +49,15 @@ export interface RecognizeResult {
   detail: Awaited<ReturnType<typeof recognizeMusicppDetailed>>;
 }
 
-/** 图片字节 → 指定格式的谱面原文。format 默认诗歌本文本谱之外的注册表首项，见 OMR_EMITTERS。 */
+/** 图片字节 → 指定格式的谱面原文。format 默认诗歌本文本谱之外的注册表首项，见 OMR_EMITTERS。
+ *  `lyrics`：同一首诗歌的歌词文本（已解码的字符串），给了就词谱互证——形近字按歌词选字、补漏字，
+ *  其余不一致只报告，见 `detail.score.lyricCheck`（逐条可读写法用 `formatLyricCheckItem`）。 */
 export async function recognizeImage(
   bytes: Uint8Array,
-  opts: { mime?: string; format?: OmrFormat } = {},
+  opts: { mime?: string; format?: OmrFormat; lyrics?: string } = {},
 ): Promise<RecognizeResult> {
   const format = opts.format && isOmrFormat(opts.format) ? opts.format : DEFAULT_OMR_FORMAT;
-  const detail = await recognizeMusicppDetailed(bytes, opts.mime);
+  const detail = await recognizeMusicppDetailed(bytes, opts.mime, { refLyrics: opts.lyrics });
   const emitted = omrEmitter(format).emit(detail.score);
   return { text: emitted.text, kind: emitted.kind, format, detail };
 }

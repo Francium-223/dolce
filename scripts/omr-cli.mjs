@@ -6,7 +6,12 @@
 //   node scripts/omr-cli.mjs 图片.jpg --profile             # 附带分段耗时与线程配置
 //   node scripts/omr-cli.mjs a.jpg b.jpg 谱子目录/ -o 出目录/ # 批量：一个进程跑完整批
 //   node scripts/omr-cli.mjs 图.jpg --thread-mode=always --threads=8   # 调线程策略
+//   node scripts/omr-cli.mjs 图.jpg --lyrics 歌词.txt        # 参照歌词互证：形近字按歌词选字、补漏字，不一致处报到 stderr
+//   node scripts/omr-cli.mjs 图.jpg -l 歌词.lrc --lyrics-report 核对.json   # 核对结果另落 JSON
 // 格式清单取自 src/omr/emit.ts::OMR_EMITTERS，加格式不用改本脚本。
+//
+// 参照歌词（--lyrics）只配**单张图**：一份歌词文件对一首歌（.txt / .lrc，编码 UTF-8/GBK/UTF-16 自动认）。
+// 歌词按演唱顺序写全（反复、副歌每段都写）即可，结构行 `1.`、`(副歌)` 与 lrc 时间戳自动去掉。
 //
 // **批量比逐张起进程快得多**：模型 21MB、ONNX 图反序列化 + ORT 初始化 + JIT 预热大约要
 // 2.4s（M5 实测，弱 CPU 上更久），逐张调用等于每张都付一遍；同一进程连跑只付一次。
@@ -26,12 +31,14 @@ const MIME = { ".jpg": "image/jpeg", ".jpeg": "image/jpeg", ".png": "image/png" 
 const IMG_EXT = new Set([".jpg", ".jpeg", ".png", ".webp", ".bmp", ".tif", ".tiff"]);
 
 const argv = process.argv.slice(2);
-const opts = { format: "shige", out: null, profile: false, help: false, imgs: [] };
+const opts = { format: "shige", out: null, profile: false, help: false, imgs: [], lyrics: null, lyricsReport: null };
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
   if (a === "-f" || a === "--format") opts.format = argv[++i];
   else if (a === "-o" || a === "--out") opts.out = argv[++i];
   else if (a === "--profile") opts.profile = true;
+  else if (a === "-l" || a === "--lyrics") opts.lyrics = argv[++i];
+  else if (a === "--lyrics-report") opts.lyricsReport = argv[++i];
   else if (a === "-h" || a === "--help") opts.help = true;
   // 线程开关要在 import 产物**之前**落到 env——那两个是模块顶层常量，import 完再设就晚了。
   else if (a.startsWith("--threads=")) process.env.OMR_THREADS = a.slice(10);
@@ -43,8 +50,11 @@ function usage(emitters) {
   const list = emitters ? emitters.map((e) => `${e.id}（${e.label}）`).join("、") : "shige / tomato / 123";
   console.error(`用法: omr-cli.mjs <图片…|目录…> [-f 格式] [-o 输出] [--profile]
               [--thread-mode=auto|always|single] [--threads=N]
+              [-l 歌词文件 [--lyrics-report 核对.json]]
 格式: ${list}
-批量: 多个图片或目录一起给，同一进程跑完（省掉每张的模型加载）；-o 给目录则逐个写文件。`);
+批量: 多个图片或目录一起给，同一进程跑完（省掉每张的模型加载）；-o 给目录则逐个写文件。
+歌词: -l/--lyrics 给同一首诗歌的歌词文本（.txt/.lrc），只配单张图；形近字按歌词选字、补漏字，
+      两边不一致处打到 stderr，--lyrics-report 另落 JSON。`);
 }
 
 // 两种布局都要认：仓库里是 ../dist-cli/omr.js，打包产物里是同目录的 ./omr.js。
@@ -75,6 +85,13 @@ async function expand(paths) {
 
 const imgs = await expand(opts.imgs);
 if (!imgs.length) { console.error("没有可识别的图片"); process.exit(1); }
+if (opts.lyricsReport && !opts.lyrics) { console.error("--lyrics-report 要和 --lyrics 一起给"); process.exit(1); }
+let refLyrics;
+if (opts.lyrics) {
+  if (imgs.length !== 1) { console.error("--lyrics 只配单张图（一份歌词对一首歌），批量请逐张跑"); process.exit(1); }
+  try { refLyrics = cli.decodeLyricsBytes(new Uint8Array(await readFile(opts.lyrics))); }
+  catch (e) { console.error(`读不了歌词文件 ${opts.lyrics}：${e instanceof Error ? e.message : String(e)}`); process.exit(1); }
+}
 
 // -o 是目录（多图，或路径本身就是已存在的目录）时逐个写文件，否则当单个输出文件。
 const outIsDir = opts.out != null && (imgs.length > 1 || (existsSync(opts.out) && (await stat(opts.out)).isDirectory()));
@@ -91,7 +108,7 @@ for (const img of imgs) {
   let r;
   try {
     r = await cli.recognizeImage(new Uint8Array(await readFile(img)), {
-      mime: MIME[extname(img).toLowerCase()], format: opts.format,
+      mime: MIME[extname(img).toLowerCase()], format: opts.format, lyrics: refLyrics,
     });
   } catch (e) {
     console.error(`✗ ${basename(img)}: ${e instanceof Error ? e.message : String(e)}`);
@@ -110,6 +127,22 @@ for (const img of imgs) {
   } else {
     if (imgs.length > 1) process.stdout.write(`# ===== ${basename(img)} =====\n`);
     process.stdout.write(r.text.endsWith("\n") ? r.text : r.text + "\n");
+  }
+
+  if (refLyrics !== undefined) {
+    const lc = r.detail.score.lyricCheck;
+    if (!lc) console.error("[歌词核对] 没有识别到歌词，未核对");
+    else {
+      const cnt = (k) => lc.items.filter((x) => x.kind === k).length;
+      console.error(`[歌词核对] 按${lc.order === "expanded" ? "演唱顺序" : "谱面顺序"}对齐：同字 ${lc.matched}/${lc.ocrChars}（参照 ${lc.refChars} 字）`
+        + ` ｜ 已改 ${cnt("fixed")}、已补 ${cnt("filled")}、待核 ${lc.items.length - cnt("fixed") - cnt("filled")}`);
+      for (const x of lc.items) console.error("  " + cli.formatLyricCheckItem(x));
+      for (const u of lc.unmatchedRef) console.error(`  [参照未对上] 第 ${u.from + 1}–${u.to} 字「${u.text}」`);
+    }
+    if (opts.lyricsReport) {
+      await writeFile(opts.lyricsReport, JSON.stringify(lc ?? null, null, 2));
+      console.error(`已写入 ${opts.lyricsReport}`);
+    }
   }
 
   if (opts.profile) {

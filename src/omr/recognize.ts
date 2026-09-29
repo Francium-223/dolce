@@ -13,12 +13,12 @@ export interface MusicppDetail {
 }
 
 /** musicpp 本地管线：图片字节 → 二值图 + RecognizedScore。完全本地（PaddleOCR PP-OCRv4）。 */
-export async function recognizeMusicppDetailed(bytes: Uint8Array, mime?: string): Promise<MusicppDetail> {
+export async function recognizeMusicppDetailed(bytes: Uint8Array, mime?: string, opts: { refLyrics?: string } = {}): Promise<MusicppDetail> {
   const _t0 = performance.now();
   const bin = await decodeToBinary(bytes, mime);
   const _tDecode = performance.now();
   omrProfileReset();
-  const score = await recognizeJianpu(bin, paddleOcrBackend());
+  const score = await recognizeJianpu(bin, paddleOcrBackend(), opts);
   // 分阶段计时诊断：设 globalThis.__omrDebug=true 打印（decode / infer(IPC+推理) / CTC / 预处理+几何）。
   if ((globalThis as { __omrDebug?: boolean }).__omrDebug) {
     const p = omrProfile();

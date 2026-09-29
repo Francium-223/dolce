@@ -1,46 +1,78 @@
 # jpeditor
 
-> 开源的简谱（JP-Word / `.jpwabc`）在线排版与编辑器，同时原生支持「文本谱」——番茄简谱脚本
-> 与诗歌本文本谱（《诗歌本》app 里称「动态谱」）。左侧高亮代码编辑、右侧实时预览，
-> 支持简谱图片识别（OMR）、ABC 记谱导入、简谱与五线谱混排、MusicXML 导入与导出，
-> 导出 PDF / PNG / MIDI / 矢量 PPTX，并可在线试听。
+> 开源的简谱编辑与排版器。左侧源码、右侧实时简谱，也能直接在谱面上改音符。
+> 支持 123 简谱格式（本项目的简谱主格式，简谱的 ABC 方言）、JP-Word `.jpwabc`、
+> 「文本谱」（番茄简谱脚本 / 诗歌本文本谱，《诗歌本》app 里称「动态谱」）、ABC 与 MusicXML。
+> 本地离线识别简谱照片与 PDF（含四声部）以及五线谱 PDF；展开 / 原样 / 五线谱 / 混排四档排版，
+> 按乐句重排，在线试听，另存为互转，导出 PPTX / MIDI / MusicXML / PDF / PNG。
 > 既有浏览器在线版（即开即用），也有 Windows / macOS 桌面版（Tauri 2 打包）。
 >
-> An open-source jianpu (numbered musical notation) editor and typesetter for the
-> `.jpwabc` (JP-Word) format, with native support for plain-text jianpu scripts
-> (Fanqie / Shigeben, a.k.a. "dynamic score"). Live code-editor on the left, real-time
-> SVG score preview on the right; optical music recognition (OMR) of jianpu images,
-> ABC notation import, mixed jianpu + staff notation from MusicXML, MusicXML import
-> and export, playback, and export to PDF / PNG / MIDI / vector PPTX.
+> An open-source editor and typesetter for jianpu (Chinese numbered musical notation). Source text on the
+> left, live SVG score on the right, plus visual editing directly on the score. Formats: 123 (the project's
+> plain-text jianpu format, an ABC dialect), JP-Word `.jpwabc`, plain-text jianpu scripts (Fanqie / Shigeben,
+> a.k.a. "dynamic score"), ABC and MusicXML. Offline optical music recognition of jianpu photos and PDFs
+> (including four-part scores) and of staff-notation PDFs; expanded / original / staff / mixed staff+jianpu
+> layouts; phrase-aware re-layout; playback; format conversion; export to PPTX / MIDI / MusicXML / PDF / PNG.
 > Runs in the browser and as a Windows/macOS desktop app.
 
 ## 核心功能 / Features
 
-- 实时编辑 `.jpwabc` 数字谱，编辑即重排重渲染（CodeMirror 6 + 语法高亮）。
-- **文本谱（番茄简谱 / 诗歌本动态谱）**：两套纯文本简谱语言作为第一等源格式，打开即编原文
-  （自动嗅探方言、语法高亮、诊断），出「原版」连续长图与「PPT」16:9 分页两种版面，
-  支持四声部并排、和弦与力度；可导出 MusicXML / `.jpwabc` / MIDI / PPTX，并可试听。
-- **简谱图片识别（OMR）**：拖入照片、截图或 PDF 即识别成乐谱再排版。可完全本地离线运行
-  （连通域几何启发 + PaddleOCR PP-OCRv6_small 识别数字与歌词，含逐音节↔音符对齐）。
-- **ABC 记谱导入**：`.abc` 自动转 MusicXML 再排版为简谱（忠实移植自 abc2xml）。
-- 简谱与五线谱**混排**：加载 MusicXML 排版谱表系统，含连音线、连谱号、力度、踏板、和弦记号等。
-- MusicXML 导入并转换为简谱；MusicXML 导出（有底本时做增量 patch，不重生成）。
-- **乐谱播放**：光标跟随当前音符，按谱面标注速度演奏，可 ×0.5～×2 调速。
-- **乐句分析排版**：按歌词标点与音乐信号在小节边界断行，凑成疏密适中的行长。
-- 导出 PDF、PNG、MIDI、矢量 PPTX。
-- 点选音符/歌词高亮，自动分页（16:9 / 4:3 / A4），可设每页行数。
-- SVG 矢量渲染，分辨率无关；浏览器在线版无需安装。
+- **源码编辑 + 实时排版**：123、`.jpwabc`、文本谱、ABC 四种文本格式，编辑即重排，语法高亮与诊断。
+- **谱面可视化编辑**：直接在谱面上选中、插入、修改唱名、八度、升降号、时值、增时线、小节线、圆滑线 / 延音线、
+  延长号、重音与换行换页；键盘、右键菜单、记号面板三种入口，改动落回源码、共用撤销。
+- **简谱图片识别（OMR）**：拖入照片、截图或扫描 PDF 即识别成 123 简谱再排版；歌词逐字对位、页眉标题 / 词曲 / 调号识别、
+  四声部分声部。完全本地离线运行（连通域几何判据 + PaddleOCR 模型识别数字与歌词），图片不上传。
+- **原图对照**：识别结果按源图坐标叠加在二值图上逐音核对，点选定位源码，可直接试听。
+- **五线谱 PDF 识别**：文字层完整的五线谱 PDF 转 MusicXML，进五线谱 / 混排视图。
+- **文本谱（番茄简谱 / 诗歌本动态谱）**：第一等源格式，打开即编原文（自动识别方言），「原样」与「展开」两种版面，
+  支持四声部并排、和弦与力度。
+- **ABC 记谱**：原生解析，可直接编辑存回，多声部、反复 / 房号、和弦、装饰音、歌词。
+- **MusicXML**：单声部可转成 123 等格式编辑，或保持 MusicXML 看五线谱 / 混排；导出 MusicXML 给 MuseScore 等软件。
+- **四档排版**：展开（反复与多段歌词逐遍展开，投影用）、原样（印刷用）、五线谱、简谱与五线谱混排。
+- **按乐句重排**：综合歌词标点与音乐信号在小节边界重新断行，可一键还原。
+- **乐谱播放**：光标跟随，暂停 / 拖进度 / 点音符定位，×0.5～×2 调速，各声部音量。
+- **另存为**：123 / JPWABC / ABC / 文本谱互转，转换前列出目标格式装不下的内容。
+- **导出**：矢量 PPTX、MIDI、MusicXML；五线谱 / 混排导出 PDF、PNG。
+- 简繁转换、纸张与页眉字体设置、诗集样式表 `.ss`。
+
+## 123 格式 / The 123 format
+
+123 是 jpeditor 的简谱主格式（扩展名 `.123`，UTF-8 纯文本）：简谱的 ABC 方言。字段头（`X:` `T:` `C:` `K:` `M:` `Q:` `w:` `V:` `P:`）、
+反复、房号、多声部、演唱顺序沿用 ABC 记谱；音乐体换成简谱数字。
+
+123 is jpeditor's primary jianpu format (`.123`, UTF-8 plain text), a jianpu dialect of ABC notation: ABC's
+header fields, repeats, endings, voices and play order, with jianpu digits as the note body.
+
+```
+X:1
+T:奇异恩典
+K:1=F
+M:3/4
+Q:1/4=76
+5, | 1 - 3_ 1_ | 3 - 2 | 1 - 6, | 5, - $
+w:奇异恩_典，何等甘甜，
+```
+
+- `1`–`7` 唱名、`0` 休止、`x` 不可见休止；`'` / `,` 高 / 低八度；`#` `b` `n` 前置升 / 降 / 还原。
+- `_` 减时线（每条减半，符杠按拍自动连）、`-` 增时线（每条加一拍）、`.` 附点。
+- `|` `||` `|]` `|:` `:|` 小节线族；`[1` `[2` 房号；`( … )` 圆滑线 / 延音线；后置 `~` 连到下一个音；`(3: … )` 三连音。
+- `w:` 歌词：一行曲后紧跟它的各段词，汉字连写每字一音，`_` 一字多音、`/` 跳过音符，标点不占格；`<1.>` 印段号。
+- 和弦写在音符前（`F 1`）；记号 `!fermata!` / `!延长!` / `!yc!` 等几种写法都认；`{2_}` 倚音。
+- `$` 换行、`$$` 换页；`V:1` `V:2` 多声部；`I:playorder` 精确演唱顺序。
+- 完整规范 / Full spec: https://github.com/lodebar2026/jpeditor/blob/main/docs/%E6%A0%BC%E5%BC%8F/123%E6%A0%BC%E5%BC%8F.md
 
 ## 技术栈 / Tech
 
-- 外壳 Tauri 2（Rust）；前端 TypeScript + Vite；编辑器 CodeMirror 6。
-- `.jpwabc` 用 ANTLR 4 解析；乐谱以原生 SVG DOM 渲染；音乐字体 Bravura（SMuFL）。
+- 外壳 Tauri 2（Rust，只做原生加速）；排版、渲染、模型、编辑全在前端 TypeScript + Vite；编辑器 CodeMirror 6。
+- 各格式用手写词法器与解析器读入同一个语义模型；乐谱以原生 SVG DOM 渲染；音乐字体 Bravura（SMuFL）。
 - OMR 用 onnxruntime-web 跑 PaddleOCR 模型；PDF 页面经 pdf.js 栅格化。
 
 ## 链接 / Links
 
 - 在线试用 / Live demo: https://lodebar2026.github.io/jpeditor/
 - 代码仓库 / Repository: https://github.com/lodebar2026/jpeditor
+- 说明（中文）/ README (Chinese): https://github.com/lodebar2026/jpeditor/blob/main/README.md
+- README (English): https://github.com/lodebar2026/jpeditor/blob/main/README.en.md
 - 下载桌面版 / Releases: https://github.com/lodebar2026/jpeditor/releases
 
 ## 许可 / License

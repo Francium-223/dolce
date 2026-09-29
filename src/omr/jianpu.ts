@@ -2479,6 +2479,17 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
         r.system = prev.system; r.voice = (prev.voice ?? 0) + 1;
         cnt.set(prev.system, (cnt.get(prev.system) ?? 0) + 1);
       });
+      // 同一毛病的另一种样子：那一行被**下一个**连谱号的上钩罩了进去（85 第 3 系统 3 行、第 4 系统 5 行）。
+      // 相邻两系统一少一多、多的那个首行紧贴少的那个末行时挪回去。
+      byY.forEach((r, i) => {
+        const prev = byY[i - 1];
+        if (!prev || prev.system === undefined || r.system === undefined || r.system === prev.system) return;
+        const a = cnt.get(prev.system) ?? 0, b = cnt.get(r.system) ?? 0;
+        if (a >= b || b - a !== 2 || r.topY - prev.bottomY >= numH * 1.5) return;
+        probe("voices.moveUp");
+        cnt.set(r.system, b - 1); cnt.set(prev.system, a + 1);
+        r.system = prev.system; r.voice = (prev.voice ?? 0) + 1;
+      });
     }
     const bySys = new Map<number, StaffRow[]>();
     for (const r of useRows) if (r.system !== undefined) (bySys.get(r.system) ?? bySys.set(r.system, []).get(r.system)!).push(r);

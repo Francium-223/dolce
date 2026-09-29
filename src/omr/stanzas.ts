@@ -81,10 +81,10 @@ export async function recognizeTrailingStanzas(
   }
   vlines.sort((a, b) => Math.min(...a.map((d) => d.bbox.y)) - Math.min(...b.map((d) => d.bbox.y)));
   // 页脚注释从这里起就不是诗了：选本诗歌712 通本在附段下面印「(337)1.生命的饼：指主的话语。…」，
-  // 行首是括号括着的曲号。混进末段就字数对不上、整块被拒。
-  const noteAt = vlines.findIndex((l) => /^[(（]\d{1,4}[)）]/.test([...l].sort((a, b) => a.bbox.x - b.bbox.x)[0].text));
+  // 行首是括号括着的曲号。混进末段就字数对不上、整块被拒。演唱说明「(唱至第五、六节的“和”时…)」同理（304）
+  const noteAt = vlines.findIndex((l) => /^[(（](?:\d{1,4}[)）]|唱|注)/.test([...l].sort((a, b) => a.bbox.x - b.bbox.x)[0].text));
   if (noteAt >= 0) { probe("stanza.footnoteCut"); vlines.length = noteAt; }
-  const ordered = vlines.flatMap((l) => l.sort((a, b) => a.bbox.x - b.bbox.x).map((d, i) => ({ ...d, lineStart: i === 0 })));
+  const ordered = vlines.flatMap((l) => l.sort((a, b) => a.bbox.x - b.bbox.x).map((d, i) => ({ ...d, lineStart: i === 0, lineLen: l.length })));
 
   // 切段：段号开新段；没段号时按空行（行距明显大于常规行距）断开。
   const lineH = median(dets.map((d) => d.bbox.h)) || numH;
@@ -93,14 +93,19 @@ export async function recognizeTrailingStanzas(
   let prevBottom = -Infinity;
   // 下一个段号（上一段是「二」就等「三」）：段号与正文粘成一框又不带分隔符的（选本诗歌712 246
   //「三世界虽然充满鬼魅…」）只在视觉行首、且正是顺下来的那个号时才切——裸「一面运行」这种不会碰上。
+  // 还没切出任何段时等的是「二」——谱下配的就是第 1 段（选本 167「二由死而生—何等奇妙的复活！」）
+  // 段号漏检的段（408「二」没检出来）按段数往下推
   const nextLabel = () => {
-    const k = cur?.label ? CN_NUM.indexOf(cur.label) : -1;
+    if (!stanzas.length) return CN_NUM[1];
+    const k = cur?.label ? CN_NUM.indexOf(cur.label) : stanzas.length;
     return k >= 0 && k + 1 < CN_NUM.length ? CN_NUM[k + 1] : undefined;
   };
   const labeled = ordered.some((d) => d.lineStart && (LABEL_ONLY_RE.test(d.text) || LABEL_PREFIX_RE.test(d.text)));
   for (const d of ordered) {
-    const only = LABEL_ONLY_RE.exec(d.text);
     const nl = nextLabel();
+    // 段号读错了字（684「西」= 四、「三卷」）：视觉行首单独一个 1–2 字的小框、同一行后面还跟着正文，照样是段号
+    const only = LABEL_ONLY_RE.exec(d.text) ??
+      (labeled && d.lineStart && d.lineLen > 1 && [...d.text].length <= 2 && nl ? ([d.text, nl] as unknown as RegExpExecArray) : null);
     const glued = !only && d.lineStart && nl && d.text.length > 1 && d.text[0] === nl ? ([nl, nl] as unknown as RegExpExecArray) : null;
     const pre = only ? null : LABEL_PREFIX_RE.exec(d.text) ?? glued;
     if (glued && pre === glued) probe("stanza.gluedLabel");

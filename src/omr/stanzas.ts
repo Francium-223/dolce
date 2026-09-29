@@ -160,10 +160,14 @@ async function stanzasOfSegment(
   rows.reduce((a, r) => { const v = a + r.nums.filter((n) => n.lyrics?.[0]).length; cum.push(v); return v; }, 0);
   // 每段各自选对得上的范围：整首，或某条谱行界上的第 1 段音位前缀（选本 19：一段只配主歌 54、另一段连副歌整首 68）。
   // 容差按长度放宽到一成（至少 COUNT_TOL）：OCR 多读漏读、第 1 段偶有叠字（34、45：41 对 45）。散文段落与诗行字数差得远，照样挡得住。
-  const tol = (n: number) => Math.max(COUNT_TOL, Math.round(n * 0.1));
+  const tol = (n: number) => Math.max(COUNT_TOL, Math.round(n * 0.15));   // 15%：副歌里的叠句附段不重印（113：44 对 50）
   const cands = [slots.length, ...[...cum].reverse().filter((c) => c >= 8 && c < slots.length)];
   const spans = sylls.map((sy) => cands.filter((c) => Math.abs(sy.length - c) <= tol(c))
     .sort((a, b) => Math.abs(sy.length - a) - Math.abs(sy.length - b) || b - a)[0] ?? 0);
+  // 只有末尾几段对不上（末段后面还连着没截住的说明文字，195 末段 93 对 61）：丢掉那几段，前面对得上的照收
+  while (spans.length > 1 && !spans[spans.length - 1] && spans.slice(0, -1).some((c) => c)) {
+    probe("stanza.dropTail"); spans.pop(); sylls.pop();
+  }
   if (!sylls.length || spans.some((c) => !c)) {
     if (sylls.length) probe("stanza.rejected");
     return [];

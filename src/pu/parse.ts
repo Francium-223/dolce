@@ -871,8 +871,12 @@ const METADATA_KEYS = new Set([
 
 /** `1=Cb4/4 3/4 可跟文字`：有谱把调号与（多个）拍号写在一行。 */
 function parseShigeKeyLine(meta: Metadata, value: string, tonic = "1"): void {
-  const m = /^([A-Ga-g])([b#$♭♯]?)/.exec(value.trim());
-  if (m) {
+  // 升降号前后都有人写：`1=Eb`，也有 `1=bE`、`1=♭E`（诗歌本手工谱库里两种都常见）。前缀式要求
+  // 后面紧跟**大写**音名——`1=Bb` 的 `B` 是音名、`b` 是后缀。
+  const pre = /^([b#$♭♯])([A-G])/.exec(value.trim());
+  const m = pre ?? /^([A-Ga-g])([b#$♭♯]?)/.exec(value.trim());
+  if (pre) meta.mode = `${pre[1]}${pre[2]}`;
+  else if (m) {
     const letter = m[1]!.toUpperCase();
     meta.mode = m[2] ? `${m[2]}${letter}` : letter;
   }

@@ -229,13 +229,16 @@ function parseMeta(lines: HLine[]): MetaInfo {
   }
   // 用中文写调名、不写 `1=` 的：「D 大调」（8085《祭司的国度》）、「♭E 调」。小调按简谱首调唱名
   // 记作关系大调（「A 小调」即 6=A → 1=C）。音名前后只许有升降号，整片须短——歌词、标题里
-  // 碰巧带「调」字的长句不认。
+  // 碰巧带「调」字的长句不认。拍号紧跟着印在「调」后的（赞美诗歌1218 通本 `E♭调 4/4`，det 并成
+  // 一片 "Eb调4/4"）先剥掉拍号再认。
   if (res.fifths === undefined) {
     for (const l of lines) {
-      const t = l.text.replace(/\s+/g, "");
-      const m = t.length <= 6 && t.match(/^([b#♭♯]?)([A-G])([b#♭♯]?)(大调|小调|调)$/);
+      const t = l.text.replace(/\s+/g, "").replace(/(调)\d{1,2}[/／]\d{1,2}$/, "$1");
+      // 升降号也有写成汉字的：「降E调」「升F调」（选本诗歌712 通本）
+      const m = t.length <= 6 && t.match(/^([b#♭♯降升]?)([A-G])([b#♭♯]?)(大调|小调|调)$/);
       if (!m) continue;
-      const f = toFifths(m[2], m[1] || m[3]);
+      const a = m[1] === "降" ? "b" : m[1] === "升" ? "#" : m[1];
+      const f = toFifths(m[2], a || m[3]);
       if (f === undefined) continue;
       const g = m[4] === "小调" ? f - 3 : f;
       if (g < -7 || g > 7) continue;
@@ -486,6 +489,30 @@ function mergeStackedColumns(comps: Component[], numH: number): Component[] {
   return boxes.filter((_, i) => alive[i]).map((b, id) => ({ id, bbox: b, area: b.w * b.h, cx: b.x + b.w / 2, cy: b.y + b.h / 2 }));
 }
 
+/** 页眉一行连印「曲号 调号 拍号 标题」（赞美诗歌1218 通本：`203 E♭调 4/4 与主同忧`），det 常并成一片
+ *  （"304E调4/4这是耶和华所定的日子"、"G调3/4敬虔的奥秘"）：调号认不出、标题带着一串前缀。
+ *  按逐字位切成曲号 / 调号拍号 / 标题几片，后面各归各类。要整串「音名 + 调 + 拍号」（中间只许升降号）
+ *  才切——标题里碰巧有「调」字的凑不出后面的拍号。逐字位与文本对不上就不切。 */
+function splitInlineKey(lines: HLine[]): HLine[] {
+  const out: HLine[] = [];
+  for (const l of lines) {
+    const m = /^(\d{1,4})?((?:[降升]|[b#♭♯])?[A-G][b#♭♯]?调\d{1,2}[/／]\d{1,2})(.*)$/.exec(l.text);
+    const cs = l.chars && l.chars.length === l.text.length ? l.chars : undefined;
+    if (!m || !cs || (!m[1] && !m[3])) { out.push(l); continue; }
+    const cuts = [0, (m[1] ?? "").length, (m[1] ?? "").length + m[2].length, l.text.length];
+    const edge = (i: number) => (i <= 0 ? l.bbox.x : i >= cs.length ? l.bbox.x + l.bbox.w : ((cs[i - 1].x1 ?? cs[i - 1].cx) + cs[i].cx) / 2);
+    for (let k = 0; k < 3; k++) {
+      const [a, b] = [cuts[k], cuts[k + 1]];
+      if (a >= b) continue;
+      const x0 = edge(a), x1 = edge(b);
+      const bbox = { x: x0, y: l.bbox.y, w: Math.max(1, x1 - x0), h: l.bbox.h };
+      out.push({ ...l, text: l.text.slice(a, b), chars: cs.slice(a, b), bbox, cx: x0 + bbox.w / 2 });
+    }
+    probe("header.splitInlineKey");
+  }
+  return out;
+}
+
 /** 识别页眉信息。firstStaffTopY = 第一乐谱行顶部 y；只看其上方区域。 */
 export async function recognizeHeader(
   bin: Binary, comps: Component[], firstStaffTopY: number, numH: number, ocr: OcrBackend,
@@ -501,7 +528,7 @@ export async function recognizeHeader(
   if (ocr.recognizeRegion && (globalThis as { __headerDet?: boolean }).__headerDet !== false) {
     const dets = await ocr.recognizeRegion(bin, { x: 0, y: 0, w: bin.w, h: Math.round(firstStaffTopY - numH * 0.1) });
     if (dets.length) {
-      const lines: HLine[] = dets.map((d) => ({ text: d.text, charH: d.bbox.h, cx: d.bbox.x + d.bbox.w / 2, cy: d.bbox.y + d.bbox.h / 2, n: 1, bbox: d.bbox, chars: d.chars }));
+      const lines: HLine[] = splitInlineKey(dets.map((d) => ({ text: d.text, charH: d.bbox.h, cx: d.bbox.x + d.bbox.w / 2, cy: d.bbox.y + d.bbox.h / 2, n: 1, bbox: d.bbox, chars: d.chars })));
       if ((globalThis as { __omrDebug?: boolean }).__omrDebug) console.log("[header/det]", lines.map((l) => `${Math.round(l.charH)}px@${Math.round(l.cx)},${Math.round(l.cy)}=${JSON.stringify(l.text)}`).join("  "));
       probe("header.det");
       await classify(lines);
@@ -602,7 +629,11 @@ export async function recognizeHeader(
     // 小写音名只在带着 `1=` 读出来时收：单独一个 `b` 多半是降号本身
     if (!m || (!m[1] && m[3] !== m[3].toUpperCase())) return undefined;
     const a = acc || m[2] || m[4];
-    const f = NAT_FIFTHS[m[3].toUpperCase()] + (a === "b" || a === "♭" ? -7 : a === "#" || a === "♯" ? 7 : 0);
+    const nat = NAT_FIFTHS[m[3].toUpperCase()];
+    let f = nat + (a === "b" || a === "♭" ? -7 : a === "#" || a === "♯" ? 7 : 0);
+    // 形状判出来的上标升降号可能看反：小号粗体 ♭（新编赞美诗 378《近乎上帝之心歌》`1=♭E`）被 accidentalOf
+    // 判成 ♯。调号本身是强先验——升号调只有 ♯F、♯C，降号调没有 ♭F：出了五度圈就是看反了，翻过来。
+    if (acc && (f < -7 || f > 7)) { probe("key.accFlipped"); f = nat + (acc === "b" ? 7 : -7); }
     return f >= -7 && f <= 7 ? { fifths: f, bbox: unionRects(group.map((g) => g.bbox)) } : undefined;
   }
 
@@ -662,6 +693,9 @@ export async function recognizeHeader(
     const group: Component[] = [];
     let cur = edge;
     for (const k of cands) {
+      // 拍号的分数线比 `=` 的横宽得多（补充本 112：52×5，字号 31），isBar 不收它；不在这儿停，
+      // 链子就把拍号上下的数字一并吞进来、超块数整组作废
+      if (k.bbox.w >= k.bbox.h * 2.5 && k.bbox.h <= numH * 0.25) break;
       const gap = dir > 0 ? k.bbox.x - cur : cur - (k.bbox.x + k.bbox.w);
       const gh = group.length ? Math.max(...group.map((g) => g.bbox.h)) : 0;
       if (gap > (group.length ? Math.max(4, gh * 0.6) : firstGap)) break;
@@ -789,7 +823,9 @@ export async function recognizeHeader(
     const pool = glyphPool(xMax, yMin);
     const dbg = (globalThis as { __omrDebug?: boolean }).__omrDebug;
     /** 从 `from` 起沿 dir 方向取紧挨着的块（1~3 块），碰到横线、拍号块或比字宽还大的空当就停。 */
-    const chain = (edge: number, dir: 1 | -1, band: Rect, firstGap: number) => chainFrom(pool, edge, dir, band, firstGap, 3, inMeter);
+    // 至多 4 块：衬线体的 E 在小图上常断成三块（新编赞美诗 34《称颂崇拜歌》`1=♭E`：竖笔连上横、中横、下横），
+    // 再加一个上标 ♭ 就是四块；多出来的读不成音名会被 readKeyGroup 挡掉。
+    const chain = (edge: number, dir: 1 | -1, band: Rect, firstGap: number) => chainFrom(pool, edge, dir, band, firstGap, 4, inMeter);
 
     // 锚点一：`1` `=`（音名在右）；也有反着印的 `C=1`（从前所珍爱，音名在左、`1` 在右）
     for (const eq of eqSigns(pool)) {
@@ -801,8 +837,10 @@ export async function recognizeHeader(
           .sort((p, q) => gapTo(p) - gapTo(q))[0];
         if (dbg) console.log("[header/keyEq]", dir > 0 ? "1=" : "=1", `eq ${eq.x},${eq.y} ${eq.w}x${eq.h}`, one ? `one ${one.bbox.x},${one.bbox.y} ${one.bbox.w}x${one.bbox.h}` : "no-one", `numH ${numH.toFixed(1)}`);
         if (!one) continue;
+        // 衬线体的 `1` 只是一根带脚的细竖（补充本 112《使万民作门徒》12×35），数字模型常读不成 1；
+        // 紧贴 `=` 的一根细竖笔本身就够说明问题（后面还要读得出音名才算数）。
         const [d] = await ocr.recognizeDigits(bin, [one.bbox]);
-        if (d !== 1) continue;
+        if (d !== 1 && one.bbox.w > one.bbox.h * 0.4) continue;
         const group = dir > 0 ? chain(eq.x + eq.w, 1, one.bbox, Math.max(numH, one.bbox.h))
           : chain(eq.x, -1, one.bbox, Math.max(numH, one.bbox.h));
         const k = await readKeyGroup(group);
@@ -885,6 +923,36 @@ export async function recognizeHeader(
     for (let i = 0; i < cands.length; i++) {
       const t = texts[i].trim();
       if (/^\d{1,4}$/.test(t)) return { text: t, bbox: cands[i].bbox };
+    }
+    return undefined;
+  }
+
+  /** 中文调名「E调」读丢了**上标**升降号（1218 通本 `E♭调`，小号 ♭ 贴在音名右上角，det/rec 时读时丢）：
+   *  回源图在音名与「调」字之间（含音名左侧一个字宽）找一块矮小、落在行上半截、`accidentalOf` 判得出
+   *  ♭/♯ 的连通块。只在文本本身没有升降号时找。 */
+  function superscriptAccidental(ln: HLine | undefined): "flat" | "sharp" | undefined {
+    if (!ln) return undefined;
+    const t = ln.text.replace(/\s+/g, "");
+    const m = /^([A-G])调/.exec(t);
+    const cs = ln.chars && ln.chars.length === ln.text.length ? ln.chars : undefined;
+    if (!m || !cs) return undefined;
+    const iTiao = ln.text.indexOf("调");
+    // 尺度取音名那一块的墨高（det 框按同排大号标题撑高，行高不可用）
+    const inLine = (b: Rect) => b.x >= ln.bbox.x - 1 && b.x + b.w <= ln.bbox.x + ln.bbox.w + 1 && overlapRatioY(b, ln.bbox) > 0.5;
+    // CTC 字位只是大致位置（304：音名字位 249，E 的墨在 250–274），取中心落在本片左缘到「音名/调」两字位中点之间最高的一块
+    const mid = (cs[0].cx + cs[1].cx) / 2;
+    const letter = comps.filter((c) => inLine(c.bbox) && c.cx >= ln.bbox.x && c.cx <= mid)
+      .sort((p, q) => q.bbox.h - p.bbox.h)[0];
+    if (!letter) return undefined;
+    const L = letter.bbox, lh = L.h;
+    const x0 = Math.max(ln.bbox.x, L.x - lh * 0.6), x1 = cs[iTiao].cx - lh * 0.3;
+    for (const c of comps) {
+      const b = c.bbox;
+      if (c === letter || b.x < x0 || b.x + b.w > x1 || b.h > lh * 0.9 || b.h < lh * 0.3 || b.w > lh * 0.5 || b.h < b.w) continue;
+      // 上标：顶在音名顶附近、中线高过音名中线
+      if (b.y + b.h / 2 > L.y + L.h / 2 || b.y > L.y + lh * 0.3) continue;
+      const kind = accidentalOf(bin, b);
+      if (kind === "flat" || kind === "sharp") return kind;
     }
     return undefined;
   }
@@ -1083,7 +1151,11 @@ export async function recognizeHeader(
     const g = await keyByGlyphs(titleLine, slashes);
     const glyphKeyBox = g?.bbox;
     if (g) { probe("key.glyphs"); meta.fifths = g.fifths; }
-    else if (meta.fifths !== undefined) probe("key.text");
+    else if (meta.fifths !== undefined) {
+      probe("key.text");
+      const acc = superscriptAccidental(meta.fifthsLine);
+      if (acc) { probe("key.text.superAcc"); meta.fifths += acc === "flat" ? -7 : 7; }
+    }
     // 探针：两路并排打日志（核对判据用，dev/scripts/key-layout.mjs）
     if ((globalThis as { __keyGlyphProbe?: boolean }).__keyGlyphProbe) {
       console.log("[keyProbe]", JSON.stringify({ text: textFifths ?? null, glyph: g?.fifths ?? null, bbox: g?.bbox ?? null, numH }));

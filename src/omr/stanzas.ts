@@ -71,18 +71,42 @@ export async function recognizeTrailingStanzas(
     console.log("[stanzas/det]", dets.map((d) => `${Math.round(d.bbox.h)}px@${Math.round(d.bbox.y)}=${JSON.stringify(d.text)}`).join("  "));
   }
   if (!dets.length) return [];
-  dets.sort((a, b) => a.bbox.y - b.bbox.y || a.bbox.x - b.bbox.x);
+  // 先按纵向重叠聚成视觉行、行内按 x 排：一行诗常分两半印（选本诗歌712「我乃天上的人，　暂居世间，」），
+  // 段号「二」也单独成框——各框顶端参差几个像素，只按 y 排，右半句、段号就会插到左半句前面，切段全乱。
+  dets.sort((a, b) => a.bbox.y - b.bbox.y);
+  const vlines: (typeof dets)[] = [];
+  for (const d of dets) {
+    const ln = vlines.find((l) => l.some((o) => Math.min(rbottom(o.bbox), rbottom(d.bbox)) - Math.max(o.bbox.y, d.bbox.y) >= Math.min(o.bbox.h, d.bbox.h) * 0.5));
+    if (ln) ln.push(d); else vlines.push([d]);
+  }
+  vlines.sort((a, b) => Math.min(...a.map((d) => d.bbox.y)) - Math.min(...b.map((d) => d.bbox.y)));
+  // 页脚注释从这里起就不是诗了：选本诗歌712 通本在附段下面印「(337)1.生命的饼：指主的话语。…」，
+  // 行首是括号括着的曲号。混进末段就字数对不上、整块被拒。
+  const noteAt = vlines.findIndex((l) => /^[(（]\d{1,4}[)）]/.test([...l].sort((a, b) => a.bbox.x - b.bbox.x)[0].text));
+  if (noteAt >= 0) { probe("stanza.footnoteCut"); vlines.length = noteAt; }
+  const ordered = vlines.flatMap((l) => l.sort((a, b) => a.bbox.x - b.bbox.x).map((d, i) => ({ ...d, lineStart: i === 0 })));
 
   // 切段：段号开新段；没段号时按空行（行距明显大于常规行距）断开。
   const lineH = median(dets.map((d) => d.bbox.h)) || numH;
   const stanzas: Stanza[] = [];
   let cur: Stanza | null = null;
   let prevBottom = -Infinity;
-  for (const d of dets) {
+  // 下一个段号（上一段是「二」就等「三」）：段号与正文粘成一框又不带分隔符的（选本诗歌712 246
+  //「三世界虽然充满鬼魅…」）只在视觉行首、且正是顺下来的那个号时才切——裸「一面运行」这种不会碰上。
+  const nextLabel = () => {
+    const k = cur?.label ? CN_NUM.indexOf(cur.label) : -1;
+    return k >= 0 && k + 1 < CN_NUM.length ? CN_NUM[k + 1] : undefined;
+  };
+  const labeled = ordered.some((d) => d.lineStart && (LABEL_ONLY_RE.test(d.text) || LABEL_PREFIX_RE.test(d.text)));
+  for (const d of ordered) {
     const only = LABEL_ONLY_RE.exec(d.text);
-    const pre = only ? null : LABEL_PREFIX_RE.exec(d.text);
-    const gapBreak = d.bbox.y - prevBottom > lineH * 1.2;
-    prevBottom = rbottom(d.bbox);
+    const nl = nextLabel();
+    const glued = !only && d.lineStart && nl && d.text.length > 1 && d.text[0] === nl ? ([nl, nl] as unknown as RegExpExecArray) : null;
+    const pre = only ? null : LABEL_PREFIX_RE.exec(d.text) ?? glued;
+    if (glued && pre === glued) probe("stanza.gluedLabel");
+    // 有段号就按段号切，不再按空行断：行距宽的版面（选本诗歌712 637，行间空当超过一个框高）段内也像空行
+    const gapBreak = !labeled && d.lineStart && d.bbox.y - prevBottom > lineH * 1.2;
+    prevBottom = d.lineStart ? rbottom(d.bbox) : Math.max(prevBottom, rbottom(d.bbox));
     if (only) { stanzas.push(cur = { label: only[1], lines: [] }); continue; }
     if (pre) {
       stanzas.push(cur = { label: pre[1], lines: [{ text: d.text.slice(pre[0].length), bbox: d.bbox }] });
@@ -90,22 +114,30 @@ export async function recognizeTrailingStanzas(
     }
     // 段号行后面紧跟的第一行不算空行断开（段号与正文之间本来就隔着点距离）
     if (!cur || (gapBreak && cur.lines.length)) stanzas.push(cur = { lines: [] });
-    cur.lines.push(d);
+    cur.lines.push({ text: d.text, bbox: d.bbox });
   }
 
   // 逐段对音位数；一段对不上，整块当正文丢掉（散文碰巧有一段字数对上的概率不值得冒险）。
-  const S = slots.length;
+  // 带副歌的：附段只配主歌那几行，副歌每段照唱、不重印（选本诗歌712 529：二三四段各两行诗，只对前两谱行，
+  // 后两行「和」领起的副歌不在附段里）。所以音位数不必等于整首，可以等于**到某一谱行为止**的前缀——
+  // 各段须落在同一条行界上。整首对得上优先。
   const sylls = stanzas.filter((s) => s.lines.length).map((s) => toSyllables(s.lines.map((l) => l.text).join("")));
-  if (!sylls.length || sylls.some((sy) => Math.abs(sy.length - S) > COUNT_TOL)) {
+  const cum: number[] = [];
+  rows.reduce((a, r) => { const v = a + r.nums.filter((n) => n.lyrics?.[0]).length; cum.push(v); return v; }, 0);
+  const fits = (S: number) => sylls.every((sy) => Math.abs(sy.length - S) <= COUNT_TOL);
+  const S = !sylls.length ? 0 : fits(slots.length) ? slots.length
+    : [...cum].reverse().find((c) => c >= 8 && c < slots.length && fits(c)) ?? 0;
+  if (!S) {
     if (sylls.length) probe("stanza.rejected");
     return [];
   }
+  if (S < slots.length) probe("stanza.versePrefix");
 
   const base = Math.max(1, ...rows.flatMap((r) => r.nums.map((n) => n.lyrics?.length ?? 0)));
   sylls.forEach((sy, k) => {
     const v = base + k;
     if (sy.length !== S) probe("stanza.countMismatch");
-    slots.forEach((n, i) => { (n.lyrics ??= [])[v] = sy[i] ?? ""; });
+    slots.slice(0, S).forEach((n, i) => { (n.lyrics ??= [])[v] = sy[i] ?? ""; });
   });
   probe("stanza");
   return stanzas.flatMap((s) => s.lines.map((l) => ({ text: l.text, bbox: l.bbox })));

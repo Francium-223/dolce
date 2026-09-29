@@ -34,6 +34,9 @@ interface Classified {
   barlines: Component[]; // 小节线（高瘦竖条）
   hlines: Component[];   // 独立横线（增时线 '-' / 分隔线）
   dots: Component[];     // 小点（八度点/附点）
+  /** 又短又厚的实心横块：尺寸上分不清是增时线还是压扁的点，先放在 dots 里；buildJpNums 里落在数字右侧、
+   *  与数字中线对齐的挪去 hlines 当增时线（八度点、波音不在中线上），见 classify「更短的 '-'」 */
+  dashLike: Component[];
   clean: boolean;        // 干净谱面（isCleanPage）：几条专治翻拍件毛病的判据在这种页上不开
 }
 
@@ -925,7 +928,7 @@ function classify(comps: Component[], bin: Binary): { c: Classified; numH: numbe
   // 只有干净页才做下面的「减时线+八度点」粘连切分：脏页上碎渣挂在减时线下沿时长得跟八度点
   // 一模一样，切开就是凭空多一个八度。
   const pageClean = isCleanPage(comps, numH);
-  const c: Classified = { blocks: [], barlines: [], hlines: [], dots: [], clean: pageClean };
+  const c: Classified = { blocks: [], barlines: [], hlines: [], dots: [], dashLike: [], clean: pageClean };
   const lineH = strokeLineH(comps, numH);
   // 高瘦竖块可能是"八度点 + 窄数字"粘连体（数字不含点）：优先切开、把点与数字笔各归其类，
   // 否则会被下面的小节线判据整块吞掉而丢音（实测高八度 "1̇" 在单行简谱里 h 恰同真小节线）。
@@ -988,6 +991,13 @@ function classify(comps: Component[], bin: Binary): { c: Classified; numH: numbe
     // 高 ≤0.2 字号（附点再扁也不会只有这么薄）。
     if (w >= numH * 0.28 && w >= (k.area / w) * 1.8 && h <= numH * 0.2) {
       probe("hline.shortDash"); c.hlines.push(k); continue;
+    }
+    // 再厚一点的：雅歌通本的 '-' 实测 13×7（字号 33，高 0.21、扁度 2.0），同页真附点 7×8（扁度 1.1），
+    // 卡在上面 0.2 那道门外，全本 `5 - -` 读成 `5.`。但尺寸上它和小号粗印本里压扁的八度点、短波音分不开
+    //（一概收成横线，1940、714、我今来就你 的八度点成了第三道减时线）——那两种不在数字中线上，增时线在。
+    // 所以只记成候选、先当点，到 buildJpNums 按位置裁决（resolveDashLike）。
+    if (w >= numH * 0.28 && w >= (k.area / w) * 1.8 && h <= numH * 0.25 && k.area >= w * h * 0.75) {
+      c.dots.push(k); c.dashLike.push(k); continue;
     }
     // 小点：八度点/附点
     if (w <= numH * 0.45 && h <= numH * 0.45) { c.dots.push(k); continue; }
@@ -1271,6 +1281,25 @@ function inkBelow(bin: Binary, r: Rect, numH: number): number {
   return tot ? ink / tot : 0;
 }
 
+/** 厚短横候选（`Classified.dashLike`）按位置裁决：落在本行某个数字**右侧**、与数字纵向重叠且中线对齐
+ * （|Δcy| ≤ 0.25 字号，同增时线判据）的挪进 hlines 当增时线；其余留在 dots（八度点在数字上下方、波音在头顶）。 */
+function resolveDashLike(cls: Classified, rowCores: DigitCore[], numH: number): void {
+  if (!cls.dashLike.length) return;
+  for (const k of [...cls.dashLike]) {
+    const kb = k.bbox;
+    // 比的是它**左边最近**的那个数字（同一行、纵向相交）：`5 - -` 的第二根离 5 有两个多字宽
+    const d = rowCores.map((c) => c.bbox)
+      .filter((b) => kb.x >= rright(b) - 1 && kb.y < rbottom(b) + numH * 0.5 && rbottom(kb) > b.y - numH * 0.5)
+      .sort((a, b) => rright(b) - rright(a))[0];
+    const onMid = !!d && kb.y < rbottom(d) && rbottom(kb) > d.y && Math.abs(rcy(kb) - rcy(d)) <= numH * 0.25;
+    if (!onMid) continue;
+    probe("hline.shortDashThick");
+    cls.dots.splice(cls.dots.indexOf(k), 1);
+    cls.dashLike.splice(cls.dashLike.indexOf(k), 1);
+    cls.hlines.push(k);
+  }
+}
+
 function buildJpNums(
   bin: Binary, rowCores: DigitCore[], numH: number, cls: Classified, ocrDigit: (b: Rect) => number,
   arcs: Component[], barlineXs: number[], dotSizes: number[],
@@ -1285,6 +1314,7 @@ function buildJpNums(
   // **只在干净谱面上判**：翻拍件的点边缘发毛、形状不规整，填充率常不到六成（抽检十来页掉了真点，
   // 其中 1600《南非之行》、17《不失足》都有 GT）。
   const dotSized = (kb: Rect) => !cls.clean || inkFill(bin, kb) >= 0.6;
+  resolveDashLike(cls, rowCores, numH);
   for (let i = 0; i < rowCores.length; i++) {
     const d = rowCores[i].bbox;
     const next = rowCores[i + 1]?.bbox;
@@ -1715,9 +1745,27 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
   //     topY 1432 距下方谱行 1461 只 0.94 字号，OCR 读成 `2. 0. 5`）。真谱行之间隔着一整条歌词带，
   //     挨不了这么近。
   const flatCore = (k: DigitCore) => k.bbox.w >= k.bbox.h * 1.5 && k.bbox.h < numH * 0.7;
+  //   · **调号行**：`1=♭E 4/4` 单印一行、字号与谱行相当时，1、E、拍号数字凑够了核，♭ 的竖笔又被收成小节线
+  //    （补充本 71《义仆君王》：读成 `1 | 7 1`、页眉 ROI 随之只剩一行）。认法：行首核右边一个字宽内有 `=`——
+  //     两道上下叠、横向对齐、都落在该核腰部的短横。简谱里增时线从不上下叠，减时线在数字下方，凑不出这个形。
+  const keyLineRow = (rd: DigitCore[]): boolean => {
+    const first = rd.reduce((a, b) => (b.bbox.x < a.bbox.x ? b : a)).bbox;
+    const bars = c.hlines.map((k) => k.bbox).filter((b) => b.x >= rright(first) - 1 && b.x - rright(first) <= numH &&
+      b.w <= numH * 1.2 && rcy(b) >= first.y + first.h * 0.2 && rcy(b) <= first.y + first.h * 0.8);
+    return bars.some((a) => bars.some((b) => b !== a && rcy(b) > rcy(a) && rcy(b) - rcy(a) <= numH * 0.5 &&
+      Math.min(rright(a), rright(b)) - Math.max(a.x, b.x) >= Math.min(a.w, b.w) * 0.6));
+  };
+  const pageRowH = median(rowMetaAll.filter((m) => m.rd.length >= 3).map((m) => median(m.rd.map((k) => k.bbox.h))));
   const rowMeta = rowMetaAll.filter((m) => {
     if (m.rd.length < 3) return false;
     if (m.rd.filter(flatCore).length * 2 > m.rd.length) { probe("pseudoRow.flat"); return false; }
+    if (keyLineRow(m.rd)) { probe("pseudoRow.keyLine"); return false; }
+    // **大字行**：核的中位高超过 1.4 字号——音符数字都在一个字号上下，大一号的是标题/曲号那一排
+    //（补充本 71：「受难」小字 + 大号曲号「71」（59×46、60×26，字号 36）凑成一行，读成 `1 | 7 1`）。
+    // 还要比**全页各行**的中位高高出 1.4 倍：numH 估小了的页（补充本 155，数字核连着八度点）正经谱行也过得了
+    // 前一道门，只按字号判整页谱行全丢。
+    const rowH = median(m.rd.map((k) => k.bbox.h));
+    if (rowH >= numH * 1.4 && rowH >= pageRowH * 1.4) { probe("pseudoRow.tall"); return false; }
     if (m.rd.length < 4 && rowMetaAll.some((o) => o !== m && o.rd.length >= m.rd.length * 2 &&
       o.topY - m.botY > -numH * 0.3 && o.topY - m.botY < numH * 1.2)) {
       probe("pseudoRow.deco"); return false;
@@ -2416,8 +2464,30 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
   // 多声部分组验收：每条谱行都归了系统、≥2 个系统、各系统行数相同且声部号连续——缺一条就当单声部
   //（连谱号认错、伪行剔掉了其中一条，硬分声部会把音乐次序整个打乱）。
   if (useRows.some((r) => r.system !== undefined)) {
+    // 连谱号下钩没够着的末声部行（新编赞美诗·四声部 34 第 1 系统第 4 行，下钩只画到它上沿）：紧贴在某系统
+    // 末行下面（中间没隔歌词，间隔 <1.5 字号）、且那个系统比别的系统少一行，就并进去。
+    {
+      const cnt = new Map<number, number>();
+      for (const r of useRows) if (r.system !== undefined) cnt.set(r.system, (cnt.get(r.system) ?? 0) + 1);
+      const mode = Math.max(0, ...cnt.values());
+      const byY = [...useRows].sort((a, b) => a.topY - b.topY);
+      byY.forEach((r, i) => {
+        const prev = byY[i - 1];
+        if (r.system !== undefined || !prev || prev.system === undefined) return;
+        if ((cnt.get(prev.system) ?? 0) >= mode || r.topY - prev.bottomY >= numH * 1.5) return;
+        probe("voices.adoptBelow");
+        r.system = prev.system; r.voice = (prev.voice ?? 0) + 1;
+        cnt.set(prev.system, (cnt.get(prev.system) ?? 0) + 1);
+      });
+    }
     const bySys = new Map<number, StaffRow[]>();
     for (const r of useRows) if (r.system !== undefined) (bySys.get(r.system) ?? bySys.set(r.system, []).get(r.system)!).push(r);
+    // 声部号按剔完伪行后剩下的行重排：连谱号括进来的一行歌词（新编赞美诗·四声部 201 第 2 系统，歌词行
+    // 几何上凑成了谱行）先占了一个声部号，OCR 后才被当伪行剔掉，剩下 0、1、3、4——号不连续就整页退回单声部。
+    for (const g of bySys.values()) {
+      g.sort((a, b) => a.topY - b.topY);
+      g.forEach((r, i) => { if (r.voice !== i) { probe("voices.renumber"); r.voice = i; } });
+    }
     const sizes = [...bySys.values()].map((g) => g.length);
     const ok = useRows.every((r) => r.system !== undefined) && bySys.size >= 2 && sizes.every((n) => n === sizes[0] && n >= 2)
       && [...bySys.values()].every((g) => g.every((r, i) => r.voice === i));

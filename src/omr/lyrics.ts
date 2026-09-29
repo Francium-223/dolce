@@ -914,7 +914,15 @@ export async function recognizeLyrics(
   // （保持各行 W1/W2 对齐；无注记行时是恒等变换）。
   const dropped = new Set<TextRegion>();
   {
-    const dropKeys = [...perLine.keys()].filter((k) => chordKeys.has(k) || isFooterNoticeLine(rawByKey.get(k) ?? ""));
+    // 汉字页里几乎不含汉字的一行：下一谱行音符上方的小连音弧够上了歌词行的字高门，rec 读出
+    // `C///////O：/l z///一` 这类杂字（选本诗歌712 537），占掉一个段位，谱后附段随之整体错后一段。
+    // 只数汉字与字母数字（标点、续记号不算）
+    const sig = (t: string) => [...t].filter((c) => isHanzi(c) || /[A-Za-z0-9]/.test(c));
+    const allSig = [...rawByKey.values()].flatMap(sig);
+    const hanPage = allSig.length >= 20 && allSig.filter(isHanzi).length >= allSig.length * 0.6;
+    const junkLine = (t: string) => { const cs = sig(t); return cs.length >= 3 && cs.filter(isHanzi).length < cs.length * 0.3; };
+    const dropKeys = [...perLine.keys()].filter((k) => chordKeys.has(k) || isFooterNoticeLine(rawByKey.get(k) ?? "") ||
+      (hanPage && junkLine(rawByKey.get(k) ?? "") && (probe("lyrics.junkLine"), true)));
     for (const k of dropKeys) {
       for (const p of perLine.get(k)!) if (p.region) dropped.add(p.region);
       perLine.delete(k);

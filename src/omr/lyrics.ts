@@ -19,12 +19,14 @@ const isHanzi = (c: string) => /[一-鿿]/.test(c);
 // 歌词里贴在字尾的标点。简谱印刷用全角，但 PP-OCR 常把 ，；：！？ 识成半角 , ; : ! ? ——
 // 一并收下、统一折成全角（与 GT 一致；半角句点 . 不收，避免撞段号 "1." / 小数点）。
 export const LYRIC_PUNCT = /[，。、；：！？…—,;:!?]/;
-const PUNCT_FULL: Record<string, string> = { ",": "，", ";": "；", ":": "：", "!": "！", "?": "？" };
+// 括号反过来折成半角：四声部本子「(阿 们)」印的是半角括号，rec 常读成全角（参考谱、GT 都写半角）。
+const PUNCT_FULL: Record<string, string> = { ",": "，", ";": "；", ":": "：", "!": "！", "?": "？", "（": "(", "）": ")" };
 export const normPunct = (ch: string) => PUNCT_FULL[ch] ?? ch;
 // 引号（都不占音符）：开引号 “‘ **领起后一字**（如 “阿门”里的 “ 贴 阿），闭引号 ”’ **贴前一字**。
 // PP-OCR 对中文引号输出全角（实测 rec 已能读出 “ ”），故一并收下；半/全角开闭都认。
-export const LYRIC_QUOTE_OPEN = /[“‘"']/;
-export const LYRIC_QUOTE_CLOSE = /[”’]/;
+// 括号同理：左括号领起后一字、右括号贴前一字（四声部本子末尾的「(阿 们)」，阿、们各占一个阿们音）。
+export const LYRIC_QUOTE_OPEN = /[“‘"'(（]/;
+export const LYRIC_QUOTE_CLOSE = /[”’)）]/;
 // 英文歌词：一个音节 = 一串字母(可含撇号 don't)，音节间以连字符相连（"How-awe-some-you-are"），
 // 词间以空白相隔。故拉丁串按 **连字符** 与 **空白**(rec 不吐空格 → 按源图字距)切成音节单元，
 // 每个音节占一个音符，与汉字单元同等对待。
@@ -845,7 +847,7 @@ export async function recognizeLyrics(
         } else if (isHyphen(ch)) {
           if (pend) { pend.text += "-"; pend.x1 = sx; flushLatin(); } // 连字符=音节边界，随音节保留
         } else if (LYRIC_QUOTE_OPEN.test(ch) && !pend) {
-          lead += ch;                                               // 开引号：领起后一字，不另立单元
+          lead += normPunct(ch);                                               // 开引号：领起后一字，不另立单元
         } else if (LYRIC_PUNCT.test(ch) || LYRIC_QUOTE_CLOSE.test(ch)) {
           const p = normPunct(ch);
           if (pend) { pend.text += p; pend.x1 = sx; }               // 贴在当前英文音节尾
@@ -870,7 +872,7 @@ export async function recognizeLyrics(
         if (isHanzi(ch)) { flushLatin(); toks.push(lead + ch); lead = ""; }
         else if (isLatin(ch) || (pend && isApostrophe(ch))) pend += ch;
         else if (isHyphen(ch)) { if (pend) { pend += "-"; flushLatin(); } }
-        else if (LYRIC_QUOTE_OPEN.test(ch) && !pend) lead += ch;
+        else if (LYRIC_QUOTE_OPEN.test(ch) && !pend) lead += normPunct(ch);
         else if (LYRIC_PUNCT.test(ch) || LYRIC_QUOTE_CLOSE.test(ch)) {
           if (pend) pend += normPunct(ch);
           else if (toks.length) toks[toks.length - 1] += normPunct(ch);
@@ -1050,7 +1052,9 @@ export async function recognizeLyrics(
       const targets = versesOf(visual);
       const row = staff[rowIdx];
       const cn = CN_LABEL_RE.exec(raw);
-      (row.lyricLabels ??= [])[targets[0] - 1] = cn ? cn[1] + cn[2] : cnMargin ?? targets.map((n) => `${n}.`).join("");
+      // 谱面的号**不带点**（新编赞美诗·四声部「1圣哉」「2恳求」号紧贴首字）就照印写，不补点。
+      const dotted = !/^\s*\d(?![\d.．、,，])/.test(raw) || targets.length > 1;
+      (row.lyricLabels ??= [])[targets[0] - 1] = cn ? cn[1] + cn[2] : cnMargin ?? targets.map((n) => (dotted ? `${n}.` : `${n}`)).join("");
     }
   }
 

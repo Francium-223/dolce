@@ -173,6 +173,50 @@ function placeChords(n: JpNum, ch: Chord, fullDivisions: number): void {
 /** @param numOf 可选：记下每个和弦来自哪个识别符号（小节时值自检要按源图坐标标出问题小节，`omr/beats.ts`） */
 export function recognizedToDoc(score: RecognizedScore, numOf?: Map<ElementId, JpNum>): ScoreDoc {
   const ids = new IdGen();
+  const marks: Mark[] = [];
+  // 多声部（`StaffRow.voice`，四声部诗歌本）：每个声部各取自己那几行建一个 part，行序即谱面系统序；
+  // 弧、换行、跨行小节都在声部内部算。歌词挂在歌词带上方那一行（第 2 声部），与文本谱 `Q2` 后跟 `C1:` 一致。
+  const voices = [...new Set(score.rows.map((r) => r.voice ?? 0))].sort((a, b) => a - b);
+  const parts = voices.map((v, pi) => ({
+    id: `P${pi + 1}`,
+    measures: measuresOfRows(score.rows.filter((r) => (r.voice ?? 0) === v), score, ids, marks, numOf),
+  }));
+  const title = score.title;
+  const song: Song = {
+    work: { subtitles: score.subtitle ? [score.subtitle] : [] },
+    key: { fifths: score.fifths },
+    time: { beats: score.beats, beatType: score.beatType },
+    parts,
+    marks,
+  };
+  if (title !== undefined) song.work.title = title;
+  if (score.number) song.work.number = score.number;
+  // 印在标题右侧的曲号（新编赞美诗·四声部「圣哉三一歌 … 1」）：文本谱写 `XR:`、123 另记 `I:indexright`；
+  // 左侧的不用另记（写出端缺省就写 `XL:`）。
+  if (score.number && score.numberSide === "right") {
+    song.pageText = { indexRight: score.number, topLeft: [], topRight: [], bottomLeft: [], bottomCenter: [], bottomRight: [] };
+  }
+  // 页眉并排印着的其余拍号（混合拍）与拍号后面那段说明文字（「混合拍」）
+  if (score.meters && score.meters.length > 1) {
+    song.extraTimes = score.meters.slice(1).map((mt) => ({ beats: mt.beats, beatType: mt.beatType }));
+  }
+  if (score.meterNote) song.timeNote = score.meterNote;
+  // 著作者整行（作词：…/作曲：…）：按行首标签定类型，没有标签的记 composer
+  const creators = (score.credits ?? [])
+    .map((c) => c.replace(/\n/g, " ").trim())
+    .filter((c) => c && c !== title?.trim())
+    .map(creatorOf);
+  if (creators.length) song.identification = { creators };
+  if (score.tempo) song.tempos = [score.tempo];
+  if (score.tempo && score.tempoBeat) song.tempoBeat = score.tempoBeat;
+
+  const doc = emptyDoc("omr");
+  doc.songs.push(song);
+  return doc;
+}
+
+/** 一个声部的谱行 → 小节序列。`marks` 由各声部共用（元素 id 全局唯一）。 */
+function measuresOfRows(rows: readonly StaffRow[], score: RecognizedScore, ids: IdGen, marks: Mark[], numOf?: Map<ElementId, JpNum>): Measure[] {
   // 遵照图片小节线：行末无小节线时（开口收尾），本行末小节与下一行行首小节实为同一跨行小节，合并，
   // 不在换行处凭空补小节线。行末有小节线（如终止线）才各自成节。
   // 记录每个 row 在 allMeasures 中「干净起始」的小节下标（>0 才记），供换行（`Print.newSystem`）
@@ -184,8 +228,9 @@ export function recognizedToDoc(score: RecognizedScore, numOf?: Map<ElementId, J
   const doubleIdx = new Set<number>();     // 右边界是复纵线（细细双线 ‖）的小节
   // 行首段号（`1.`）挂到该行每段第一个有词的音符上（`Lyric.verseLabel`）
   const labelOf = new Map<JpNum, string[]>();
+  const breakAfterNum = new Set<JpNum>();
   let openTail = false;
-  for (const row of score.rows) {
+  for (const row of rows) {
     if (row.lyricLabels?.length) {
       row.lyricLabels.forEach((label, v) => {
         const first = row.nums.find((n) => n.lyrics?.[v]);
@@ -195,10 +240,15 @@ export function recognizedToDoc(score: RecognizedScore, numOf?: Map<ElementId, J
     const ms = measuresOfRow(row);
     if (!ms.length) continue;
     const doubleXs = new Set(row.doubleBarXs ?? []);
+    const endXs = new Set(row.endBarXs ?? []);
     const markDouble = (m: RowMeasure, idx: number) => {
       if (m.rightX !== null && doubleXs.has(m.rightX)) doubleIdx.add(idx);
+      if (m.rightX !== null && endXs.has(m.rightX)) endStyleIdx.add(idx);
     };
     if (openTail && allMeasures.length) {
+      // 跨行小节：原图换行落在小节中间，记在上一行最后一个音上（`Chord.lineBreakAfter`），写出时原位断行
+      const prev = allMeasures[allMeasures.length - 1];
+      if (prev.length) breakAfterNum.add(prev[prev.length - 1]);
       const first = ms.shift()!;
       allMeasures[allMeasures.length - 1].push(...first.notes);
       markDouble(first, allMeasures.length - 1);
@@ -210,13 +260,12 @@ export function recognizedToDoc(score: RecognizedScore, numOf?: Map<ElementId, J
 
   // 弧线配对要按**谱面顺序**在全曲范围内做（跨小节的弧才配得上）。
   const arcs = pairArcs(allMeasures.flat(), score.fifths);
-  const marks: Mark[] = [];
   const openSlurs = new Map<number, number>(); // slur number → 起点元素 id
   const openTies: number[] = [];
   let tupletStart: number | null = null;
 
   let curBeats = score.beats, curBeatType = score.beatType;
-  const measures: Measure[] = allMeasures.map((notes, idx) => {
+  return allMeasures.map((notes, idx) => {
     const m: Measure = { number: String(idx + 1), elements: [] };
     if (rowStartIdx.has(idx)) m.print = { newSystem: true };
     // 曲中转拍号：识别时锚在该小节头一个音符上（JpNum.timeChange），提升为本小节的 `attrs.time`。
@@ -320,6 +369,10 @@ export function recognizedToDoc(score: RecognizedScore, numOf?: Map<ElementId, J
           m.elements.push({ kind: "chord", id: ids.next(), notes: [], rest: {}, duration: { divisions: Q, dots: 0 }, voice: 1, staff: 1 });
         }
       }
+      if (breakAfterNum.has(n)) {
+        const last = m.elements[m.elements.length - 1];
+        if (last?.kind === "chord") last.lineBreakAfter = "system";
+      }
     }
 
     // 反复与一/二房：识别阶段锚到边界相邻音符，这里提升成小节左右线。
@@ -362,34 +415,6 @@ export function recognizedToDoc(score: RecognizedScore, numOf?: Map<ElementId, J
     if (barlines.length) m.barlines = barlines;
     return m;
   });
-
-  const title = score.title;
-  const song: Song = {
-    work: { subtitles: score.subtitle ? [score.subtitle] : [] },
-    key: { fifths: score.fifths },
-    time: { beats: score.beats, beatType: score.beatType },
-    parts: [{ id: "P1", measures }],
-    marks,
-  };
-  if (title !== undefined) song.work.title = title;
-  if (score.number) song.work.number = score.number;
-  // 页眉并排印着的其余拍号（混合拍）与拍号后面那段说明文字（「混合拍」）
-  if (score.meters && score.meters.length > 1) {
-    song.extraTimes = score.meters.slice(1).map((mt) => ({ beats: mt.beats, beatType: mt.beatType }));
-  }
-  if (score.meterNote) song.timeNote = score.meterNote;
-  // 著作者整行（作词：…/作曲：…）：按行首标签定类型，没有标签的记 composer
-  const creators = (score.credits ?? [])
-    .map((c) => c.replace(/\n/g, " ").trim())
-    .filter((c) => c && c !== title?.trim())
-    .map(creatorOf);
-  if (creators.length) song.identification = { creators };
-  if (score.tempo) song.tempos = [score.tempo];
-  if (score.tempo && score.tempoBeat) song.tempoBeat = score.tempoBeat;
-
-  const doc = emptyDoc("omr");
-  doc.songs.push(song);
-  return doc;
 }
 
 /** 房号原文 "1,2,3,5" → `Ending` */

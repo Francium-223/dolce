@@ -37,6 +37,27 @@ export function accidentalOf(bin: Binary, b: Rect): "sharp" | "flat" | "natural"
   if (rt < rb * 0.62 && lt > rt && lb >= rb * 0.7) return "flat";      // 右上空、左竖到底 → ♭
   const lc = centerY(b.x, mx), rc = centerY(mx, rright(b));
   if (lc !== null && rc !== null && rc - lc > 0.18) return "natural";  // 左竖高、右竖低 → ♮
+  // 小号粗印的 ♭（新编赞美诗·四声部《圣哉三一歌》`ᵇ7`，14×18）四格墨量几乎一样（.65/.56/.56/.54），
+  // 上面几条分不开，看轮廓：♭ 顶上只有一根竖笔（每行一段窄墨）、底下是肚子（宽）；♯ 顶上两根竖笔（每行两段，
+  // 同书的 ♯ 26×24 顶三行有两行是两段）；♮ 底下只剩右竖（窄）。顶带只看最上 12%：从弧下拆出来的记号
+  // 顶上常残着一两点弧墨。
+  const rowRuns = (y: number): { span: number; runs: number } => {
+    let lo = -1, hi = -1, runs = 0, prev = false;
+    for (let x = Math.round(b.x); x < Math.round(rright(b)); x++) {
+      const on = !!bin.data[y * bin.w + x];
+      if (on) { if (lo < 0) lo = x; hi = x; if (!prev) runs++; }
+      prev = on;
+    }
+    return { span: lo < 0 ? 0 : (hi - lo + 1) / b.w, runs };
+  };
+  const band = (y0: number, y1: number) => {
+    const rs: { span: number; runs: number }[] = [];
+    for (let y = Math.round(y0); y < Math.max(Math.round(y0) + 1, Math.round(y1)); y++) rs.push(rowRuns(y));
+    return rs;
+  };
+  const top = band(b.y, b.y + b.h * 0.12), bottom = band(rbottom(b) - b.h * 0.25, rbottom(b));
+  const avg = (rs: { span: number }[]) => rs.reduce((a, r) => a + r.span, 0) / Math.max(1, rs.length);
+  if (top.every((r) => r.runs === 1 && r.span < 0.4) && avg(bottom) >= 0.6) return "flat";
   if (Math.min(lt, rt, lb, rb) >= 0.12) return "sharp";                // 四格都有墨 → ♯
   return null;
 }

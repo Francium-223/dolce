@@ -30,7 +30,7 @@ export function inlineBreakOf(el: Element): BreakKind | null {
  * 按声部的换行切出系统。最后一段开到无穷，别的声部小节多出来的也归它。
  * **小节中间换行**照原位切（同 `.jpwabc`，读入端 `j123/parse.ts` 记在 `Chord.lineBreakAfter`）；
  * 同一处换行在下一小节上还有一份小节级的 `print`（「这一小节之后」），那一份就不再切第二次。
- * 原位切只对这个声部（第一声部）有意义，别的声部照小节归系统。
+ * 切点按这个声部（第一声部）算；别的声部的小节中间切点由 `partRanges` 按拍位对过去。
  */
 export function systemRanges(part: Part | undefined): SystemRange[] {
   const out: SystemRange[] = [];
@@ -56,6 +56,31 @@ export function systemRanges(part: Part | undefined): SystemRange[] {
   }
   out.push({ from, to: Number.MAX_SAFE_INTEGER, fromEl, toEl: Infinity });
   return out;
+}
+
+/** 第一声部切出来的系统（`systemRanges`）套到别的声部上：**小节中间**的切点按拍位对过去——同一拍位
+ *  在别的声部是第几个元素（取拍位不早于切点的第一个）。四声部简谱的弱起曲（78《马槽歌》）谱行末不收
+ *  小节线，每条谱行都切在小节中间；别的声部只按整小节归系统的话，行尾那半小节全挤到上一行，
+ *  各声部的行就对不齐了。 */
+export function partRanges(ranges: readonly SystemRange[], lead: Part, part: Part): SystemRange[] {
+  if (part === lead) return [...ranges];
+  const onsetAt = (p: Part, mi: number, el: number): number => {
+    let t = 0;
+    const els = p.measures[mi]?.elements ?? [];
+    for (let j = 0; j < Math.min(el, els.length); j++) {
+      const e = els[j]!;
+      if (e.kind === "chord" && !e.grace) t += e.duration.divisions;
+    }
+    return t;
+  };
+  const indexAt = (mi: number, t: number): number => {
+    const els = part.measures[mi]?.elements ?? [];
+    for (let j = 0; j <= els.length; j++) if (onsetAt(part, mi, j) >= t) return j;
+    return els.length;
+  };
+  const map = (mi: number, el: number): number =>
+    el === 0 || !Number.isFinite(el) ? el : indexAt(mi, onsetAt(lead, mi, el));
+  return ranges.map((r) => ({ ...r, fromEl: map(r.from, r.fromEl), toEl: map(r.to, r.toEl) }));
 }
 
 /** 本声部里写得出来的元素 id（含增时线）。`emits` 判哪些元素写（123 只写简谱印的那一路）。 */

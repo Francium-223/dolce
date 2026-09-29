@@ -35,7 +35,7 @@ export function toSyllables(text: string): string[] {
     else if (isLatin(ch)) pend += ch;
     else if (ch === "-") { if (pend) { pend += "-"; flush(); } }
     else if (/\s/.test(ch)) flush();
-    else if (LYRIC_QUOTE_OPEN.test(ch) && !pend) lead += ch;
+    else if (LYRIC_QUOTE_OPEN.test(ch) && !pend) lead += normPunct(ch);
     else if (LYRIC_PUNCT.test(ch) || LYRIC_QUOTE_CLOSE.test(ch)) {
       if (pend) pend += normPunct(ch);
       else if (out.length) out[out.length - 1] += normPunct(ch);

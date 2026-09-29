@@ -26,7 +26,7 @@ import type {
 } from "../model/doc";
 import { breakAfter, lyricOfVerse, type BreakKind } from "../model/helpers";
 import { lyricSlots, type LyricSlotRule } from "./lyricslot";
-import { isLatinEnd, isLatinStart, isOneCjkWithPunct, nestArcsInTuplets, ownIds, ownMarks, systemRanges, type SystemRange } from "../model/emitutil";
+import { isLatinEnd, isLatinStart, isOneCjkWithPunct, nestArcsInTuplets, ownIds, ownMarks, partRanges, systemRanges, type SystemRange } from "../model/emitutil";
 import { harmonyText } from "../model/jianpu";
 import { ORNAMENT_TAG } from "../model/xmlproject";
 import { BARLINE_ORNAMENT_NAME } from "./jumpmarks";
@@ -622,16 +622,17 @@ export abstract class AbcFamilyEmitter {
 
     // **一行曲一行词**：按第一个声部的换行切系统，每个系统依次写各声部的音乐行与它的 `w` 行。
     // 读入端把「上一批 `w` 行之后的音乐行」当一个歌词块、`w` 从块首对位（规范 §5.1），与这里一一对应。
+    // 别的声部的小节中间切点按拍位对到第一声部的切点上（`partRanges`）
     const ranges = systemRanges(song.parts[0]);
-    const bodies = song.parts.map((part, pi) => this.partSystems(part, song, ranges, pi === 0));
+    const pranges = song.parts.map((part) => partRanges(ranges, song.parts[0]!, part));
+    const bodies = song.parts.map((part, pi) => this.partSystems(part, song, pranges[pi]!, true));
     for (let r = 0; r < ranges.length; r++) {
       for (let i = 0; i < song.parts.length; i++) {
         const text = bodies[i]![r]!;
         if (text === "") continue;
         if (song.parts.length > 1) L.push(`V:${i + 1}`);
         L.push(text);
-        // 原位切只对第一声部成立，别的声部按整小节取词
-        const sys = i === 0 ? ranges[r]! : { ...ranges[r]!, fromEl: 0, toEl: Infinity };
+        const sys = pranges[i]![r]!;
         for (const line of lyricLines(song.parts[i]!, this.lyricSeparator, this.lyricSkip, sys, this.lyricSlotRule)) L.push(line);
       }
     }

@@ -120,11 +120,19 @@ export interface StaffRow {
   // → 右线 `style: "light-light"`（123 `||`）、文本谱 `||`。反复线 `:‖` 的两根也会落进来，
   // 下游一律让 repeatBackward 优先，两者不叠。
   doubleBarXs?: number[];
+  // 本行**中间**的终止线（细+粗 ‖）位置，取右侧粗线的 x。只在多声部谱（连谱号括着的声部行）里认：
+  // 四声部本子在「阿们」前印一道。→ 右线 `style: "light-heavy"`（123 `|]`、文本谱 `|||`）。
+  endBarXs?: number[];
   // 本行歌词行首印着的**段号**（`1.`、`3.5.`），下标 = 段号所属的 verse（0 基）。
   // 段号在装配时本就被丢弃、不占音符位，这里另存一份原样输出：文本谱写成歌词行前置说明
   // `C1:<1.>…`（pu/parse.ts::stripLyricAnnotation，排在细竖线与首字之间）。
   // 只在段号成套可信时才填（见 lyrics.ts 的 verseLabels）；模型那路记在该段首字的 `Lyric.verseLabel`（123 `w:<1.>`）。
   lyricLabels?: string[];
+  // 多声部谱（四声部诗歌本）：本行属第几个系统、是其中第几声部（都 0 基，自上而下）。
+  // 左侧连谱号括起来的几条谱行是一个系统（jianpu.ts 认），全曲分组齐整才填；缺省 = 单声部。
+  // → 模型里每个声部一个 part（todoc.ts），文本谱 `Q1:`…`Q4:`、123 `V:1`…`V:4`。
+  system?: number;
+  voice?: number;
 }
 
 /** 一处带源图坐标的识别文本（页眉/歌词），供识别模式按原位、原字号叠加。 */

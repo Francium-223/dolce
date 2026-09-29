@@ -7,7 +7,7 @@
 //   - 八度上点很小(w,h ≤ 0.45×字号)；增时线 '-' 在数字**中线**、减时线在数字**下方** → 都不在上方，天然不混。
 //   - 数字块 h ≥ 0.55×字号 才算，弧线更矮 → 不会被当成假音符（classify 里已落到 hlines 或被丢弃）。
 import type { Binary, Component, JpNum, Rect, StaffRow } from "./types";
-import { rright, rbottom, rcx, RHYTHM_DIGIT } from "./types";
+import { rright, rbottom, rcx, rcy, RHYTHM_DIGIT } from "./types";
 import { median, overlapX } from "./geom";
 import { probe } from "./probe";
 
@@ -305,6 +305,9 @@ export function detectSlurs(bin: Binary, comps: Component[], rows: StaffRow[], n
       if (b.w / b.h < (b.h > numH * 1.05 ? 4 : 1.8)) return false;
       // 底边落在 [数字顶 - 1.2字号, 数字顶 + 0.25字号]：即整体在数字上方、最多略压数字顶缘。
       if (!between(rbottom(b), rowTop - numH * 1.2, rowTop + numH * 0.25)) return false;
+      // 落在**别的谱行**数字带里的是那一行自己的东西：四声部谱上下声部挨得近，上一声部的增时线（《圣哉三一歌》
+      // Q1 `3 −` 的 − 29×5）正在下一声部的弧带里，只罩一个音，按两端配却配出 `1…ᵇ7`，经歌词裁决补成第二条弧。
+      if (rows.some((o) => o !== row && o.nums.length && between(rcy(b), o.topY, o.bottomY))) return false;
       // 和弦字母也在这一带、也够宽够扁：`Em` 连成一块（《切慕》31×15）、`Bm` 的 m（17×9），
       // 条条门都过，凭空多出 `(0 6)` 这样的弧。分开它们靠**底边**：字母立在基线上，横笔与衬线
       // 让大半列的最低墨点都落在块底；弧是拱形，只有两只脚着底，中间各列的最低点都悬在上面。
@@ -314,8 +317,10 @@ export function detectSlurs(bin: Binary, comps: Component[], rows: StaffRow[], n
       // 29×13、字号 36），正落在本行弧带里罩住两个音，凭空多一条 tie。真弧**正上方是空的**，汉字部件头上
       // 却紧贴着同一个字的其余部分——一块字号大小、近方形的墨（拱得高的长外弧扁而宽，不算），横向罩住它大半、
       // 底边压到或贴近它的顶。
+      // 「紧贴」收在 0.1 字号：部件与字身总是压着或贴着（1790 两处实测 −6、−2px）；四声部谱第 3 声部头顶就是歌词，
+      // `4⌒5` 这条弧（《圣哉三一歌》58×11）离「权」字底 7px（0.19 字号），按 0.2 字号会被当成字的部件。
       const hanzi = comps.some((o) => o !== c && o.bbox.h >= numH * 0.5 && o.bbox.w < o.bbox.h * 1.8 && o.bbox.y < b.y &&
-        rbottom(o.bbox) >= b.y - numH * 0.2 && overlapX(o.bbox, b) >= b.w * 0.5);
+        rbottom(o.bbox) >= b.y - numH * 0.1 && overlapX(o.bbox, b) >= b.w * 0.5);
       if (hanzi) probe("arc.hanziReject");
       return !hanzi;
     });
@@ -364,18 +369,26 @@ export function detectSlurs(bin: Binary, comps: Component[], rows: StaffRow[], n
     // 交脚正压在点上，点那一坨让「下面那一段」又厚又跳，整块拆不开。
     const dotsIn = (b: Rect) => comps.filter((o) => o.bbox.w <= numH * 0.45 && o.bbox.h <= numH * 0.45 &&
       o.bbox.x >= b.x && rright(o.bbox) <= rright(b) && o.bbox.y >= b.y && rbottom(o.bbox) <= rbottom(b)).map((o) => o.bbox);
-    for (const a of perRow[ri].filter((c) => !crossed.has(c)).flatMap((c) => splitNestedArcs(bin, c.bbox, numH, dotsIn(c.bbox)))) {
-      // 找弧线横向覆盖的音符（质心落在弧线 x 跨度内，左右各放宽 0.5 字号容端点偏移）。
-      // 弧线常画在两音"符头之间"而非正压音符质心，左缘可比首音质心偏右半个字号
-      //（实测基督更美行5 `(3_5_)`：弧 x129、首音 3 质心 114，差 15px≈0.3字号，0.3 容差差 0.6px 漏掉）。
-      const covered = row.nums.filter((n) => between(rcx(n.bbox), a.x - numH * 0.5, rright(a) + numH * 0.5));
-      // 另按两端配一遍；两种读法的起止音不同，记下来等歌词裁决（resolveSlurRefits），此处仍按质心法。
-      const fit = fitEnds(row.nums, a, numH);
-      if (fit && (fit[0] !== covered[0] || fit[fit.length - 1] !== covered[covered.length - 1])) {
-        refits.push({ nums: row.nums, covered, fit });
+    // 同一块拆出来的几条弧罩住的起止音完全相同，是一条弧印成了双线（新编赞美诗·四声部《圣哉三一歌》`1⌒ᵇ7`
+    // 弧左半两层，拆成 59×11 与 44×5 两条），只记一条——真的内外弧罩的音必然不同。
+    for (const c of perRow[ri].filter((c) => !crossed.has(c))) {
+      const seen = new Set<string>();
+      for (const a of splitNestedArcs(bin, c.bbox, numH, dotsIn(c.bbox))) {
+        // 找弧线横向覆盖的音符（质心落在弧线 x 跨度内，左右各放宽 0.5 字号容端点偏移）。
+        // 弧线常画在两音"符头之间"而非正压音符质心，左缘可比首音质心偏右半个字号
+        //（实测基督更美行5 `(3_5_)`：弧 x129、首音 3 质心 114，差 15px≈0.3字号，0.3 容差差 0.6px 漏掉）。
+        const covered = row.nums.filter((n) => between(rcx(n.bbox), a.x - numH * 0.5, rright(a) + numH * 0.5));
+        const key = covered.length ? `${row.nums.indexOf(covered[0]!)}-${row.nums.indexOf(covered[covered.length - 1]!)}` : "";
+        if (key && seen.has(key)) { probe("slur.duplicateLayer"); continue; }
+        seen.add(key);
+        // 另按两端配一遍；两种读法的起止音不同，记下来等歌词裁决（resolveSlurRefits），此处仍按质心法。
+        const fit = fitEnds(row.nums, a, numH);
+        if (fit && (fit[0] !== covered[0] || fit[fit.length - 1] !== covered[covered.length - 1])) {
+          refits.push({ nums: row.nums, covered, fit });
+        }
+        if (covered.length < 2) continue;
+        markArc(row.nums, covered, 1);
       }
-      if (covered.length < 2) continue;
-      markArc(row.nums, covered, 1);
     }
   });
   return refits;

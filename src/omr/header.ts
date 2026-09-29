@@ -87,7 +87,8 @@ function gapWideAt(bin: Binary, bbox: Rect, chars: { text: string; cx: number }[
 
 /** 中文标题的分句空当：「不怕劳累 不怕饥寒」「天不蓝了 水不清了」两半之间印着整整一字宽的白，
  *  rec 不吐空格。两道门：
- *  - **≥0.6 字高**：汉字的字间白本就只有 0.1~0.2 字高，这么宽只可能是有意排的空当；
+ *  - **≥0.5 框高**：汉字的字间白本就只有 0.1~0.2 字高，这么宽只可能是有意排的空当（门按 det 框高量，
+ *    框比字身松：新编赞美诗·四声部「刘廷芳 杨荫浏合译」的空当 28px、框高 49，按 0.6 差一点）；
  *  - **≥2 倍于本行字间白的中位数**：有的歌本整行拉开字距排（「赞 美 一 神」「因 有 主 同 在」），
  *    每道字间白都过得了第一道门，但它们彼此一样宽，不是分句——只有明显宽出一截的那道才算。
  *  「字间白」取每对相邻汉字之间最宽的那一道（字内偏旁之间的窄白不算）。
@@ -105,7 +106,7 @@ function recoverHanziGaps(bin: Binary, text: string, bbox: Rect, chars?: { text:
   }
   if (pairGap.size < 3) return text;
   const med = median([...pairGap.values()]);
-  const after = new Set([...pairGap].filter(([, w]) => w >= bbox.h * 0.6 && w >= med * 2).map(([i]) => i));
+  const after = new Set([...pairGap].filter(([, w]) => w >= bbox.h * 0.5 && w >= med * 2).map(([i]) => i));
   return cs.map((c, i) => (after.has(i) ? c + " " : c)).join("");
 }
 
@@ -141,6 +142,24 @@ function recoverSpacesByInk(bin: Binary, text: string, bbox: Rect, chars?: { tex
     if (bw < thr) continue;
     spaceAfter.add(leftOf(bx, bw));
   }
+  // 半角句读之后接字母：英文排版逗号贴着前词、后面空一格（2075 副标题「Heal, O Lord, and restore
+  // this land」读成了 `Heal,O Lord,and`）。句读本身窄，它右边那道白就是词间空白，同一道门量。
+  // 半角句读**贴着前词**，左边那道白只有字母间距（2075 实测 ≤3px，右边 21px、门 9px）。全角「、」
+  // 左右都留着白（圣哉三一歌副标题 `Holy、holy、holy、Lord God、almighty`，rec 读成 `,`；实测左 6~8px、
+  // 右 6~8px、门 7px），那不是英文逗号、后面也不该有空格——左白够 0.6 门的 `,` 照谱面改回「、」。
+  // 只有逗号有这层歧义：缩写点左边也常留白（「(william J. Kirkpatrick)」的 `J.`），右边照样补空格。
+  const gapAfter = new Map<number, number>(); // 左字下标 → 与右字之间最宽的白
+  for (const [bx, bw] of blanks) {
+    const i = leftOf(bx, bw);
+    if (i >= 0) gapAfter.set(i, Math.max(gapAfter.get(i) ?? 0, bw));
+  }
+  const ideoComma = new Set<number>();
+  for (let i = 1; i + 1 < cs.length; i++) {
+    if (!/[,;:!?.]/.test(cs[i]) || !isLetter(cs[i + 1])) continue;
+    if (cs[i] === "," && (gapAfter.get(i - 1) ?? 0) >= thr * 0.6) ideoComma.add(i);
+    else if ((gapAfter.get(i) ?? 0) >= thr) spaceAfter.add(i);
+  }
+  ideoComma.forEach((i) => { cs[i] = "、"; });
   return cs.map((c, i) => (spaceAfter.has(i) ? c + " " : c)).join("");
 }
 
@@ -900,7 +919,13 @@ export async function recognizeHeader(
     // 名字里还可能带生卒/出版年份与括号（"Felice de Giardini (1769) 曲"），故收数字与括号；
     // 但**必须以字母打头**——纯数字/符号的短碎块（页码、调号）不会被当成人名。
     const latinNameRe = /^[A-Za-z][A-Za-z0-9 .,'’&·()（）\-]*$/;
+    // 名字 + 职能 + 年份（新编赞美诗·四声部：「希伯词 1826」「刘廷芳 杨荫浏合译 1932」「柯克帕特里克曲 1838 – 1921」
+    // 「据传马丁·路德词 1530」）。上面那条名字只收 2~4 字、不收「译」、行尾也不许带年份，一条都认不出。
+    const creditYearRe = /^\s*[一-鿿·]{2,10}?\s*(?:合译|[作編编]?[詞词曲譯译])\s*\d{4}(?:\s*[-–—]\s*\d{4})?\s*$/;
+    // 署名下一行括号里的原文名（「(Reginald Heber)」「(John B. Dykes)」），单独成行。
+    const latinParenRe = /^\s*[(（][A-Za-z][A-Za-z .'’\-]*[)）]\s*$/;
     const maxCharH = Math.max(0, ...ls.map((l) => l.charH));
+    const creditAt: Rect[] = [];   // 本函数收下的每条署名所在行框（与 out.credits 同序），末尾按栏重排用
     let titleLine: HLine | null = null;
     const rest: HLine[] = [];
     for (const ln of ls) {
@@ -911,7 +936,7 @@ export async function recognizeHeader(
         // 沧海一声笑是「黄 霑作词、作曲」——一个有一个没有，只能按墨列判。
         const at = txt.length - sm[2].length;                 // 职能词组的起始字符下标
         const cr = spaceIfGap(txt, at, ln);
-        out.credits.push(cr);
+        out.credits.push(cr); creditAt.push(ln.bbox);
         out.regions.push({ text: cr, bbox: ln.bbox, chars: charsForText(cr, ln.chars) });
         continue;
       }
@@ -928,10 +953,27 @@ export async function recognizeHeader(
           // 下标要换算回**没补空格前**的字符序，才对得上 chars（补出来的空格没有字形）。
           const at = [...lm.input.slice(0, lm.index)].filter((c) => c !== " ").length;
           const cr = spaceIfGap(lm.input, lm.index, ln, at);
-          out.credits.push(cr);
+          out.credits.push(cr); creditAt.push(ln.bbox);
           out.regions.push({ text: cr, bbox: ln.bbox, chars: charsForText(cr, ln.chars) });
           continue;
         }
+      }
+      if (ln.charH < maxCharH && creditYearRe.test(txt)) {
+        // 名字之间的空当（「刘廷芳 杨荫浏」）按字间白补；年份前那道白按墨列量（rec 从不吐空格）。
+        const t = recoverHanziGaps(bin, txt, ln.bbox, ln.chars);
+        const yi = t.search(/\d/);
+        const cr = spaceIfGap(t, yi, ln, [...t.slice(0, yi)].filter((c) => c !== " ").length);
+        probe("header.creditYear");
+        out.credits.push(cr); creditAt.push(ln.bbox);
+        out.regions.push({ text: cr, bbox: ln.bbox, chars: charsForText(cr, ln.chars) });
+        continue;
+      }
+      if (ln.charH < maxCharH && latinParenRe.test(txt)) {
+        const cr = recoverSpacesByInk(bin, txt, ln.bbox, ln.chars);
+        probe("header.creditLatinParen");
+        out.credits.push(cr); creditAt.push(ln.bbox);
+        out.regions.push({ text: cr, bbox: ln.bbox, chars: charsForText(cr, ln.chars) });
+        continue;
       }
       if (creditRe.test(txt)) {
         // "作曲：王丽玲1=bB4" → "作曲：王丽玲"：取 冒号前缀 + 紧随的中文名（英文名则整行保留）。
@@ -941,7 +983,7 @@ export async function recognizeHeader(
         // 著作者前缀的冒号统一成全角 `：`（.jpwabc 约定；中文名行 OCR 多已全角，英文名行常落半角）。
         const credit = (m ? m[1] + m[2] : recoverSpacesByInk(bin, txt, ln.bbox, ln.chars))
           .replace(/\s*[:：]\s*/, "：");
-        out.credits.push(credit);
+        out.credits.push(credit); creditAt.push(ln.bbox);
         out.regions.push({ text: credit, bbox: ln.bbox, chars: charsForText(credit, ln.chars) });
         continue;
       }
@@ -959,6 +1001,15 @@ export async function recognizeHeader(
       if (!titleLine) titleLine = ln;
       else if (ln.charH > titleLine.charH * 1.25) titleLine = ln;
       else if (ln.charH >= titleLine.charH * 0.85 && ln.bbox.w > titleLine.bbox.w) titleLine = ln;
+    }
+    // 署名按「左栏自上而下、再右栏」排：det 出框的先后不是阅读序（78《马槽歌》右栏的「柯克帕特里克曲」
+    // 框顶比左栏第二行还高 1px，按 y 排就插到了左栏中间）。同一排左右各一条（作词在左、作曲在右）照旧左先。
+    if (creditAt.length > 1) {
+      const base = out.credits.length - creditAt.length;
+      const col = (b: Rect) => (b.x + b.w / 2 > bin.w / 2 ? 1 : 0);
+      const order = creditAt.map((b, i) => ({ b, i })).sort((p, q) => col(p.b) - col(q.b) || p.b.y - q.b.y || p.i - q.i);
+      const cs = out.credits.slice(base);
+      order.forEach(({ i }, k) => { out.credits[base + k] = cs[i]!; });
     }
     let numberBox: Rect | undefined;
     if (titleLine) {

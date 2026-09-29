@@ -35,7 +35,7 @@ import { STEPS, keyAlter, tonicStep } from "../score/jppitch";
 import { PU_LYRIC_PUNCTUATION } from "../common/cjkpunct";
 import { projectForJianpu } from "./jianpuproject";
 import { fillDegreesFromPitch, harmonyText, keySpelling, melodyLane, quarterTempos, topNote } from "./jianpu";
-import { ownIds, ownMarks, systemRanges, type SystemRange } from "./emitutil";
+import { ownIds, ownMarks, partRanges, systemRanges, type SystemRange } from "./emitutil";
 import { relayoutDocBreaks } from "./relayout";
 import { decoKey } from "./deconames";
 
@@ -926,10 +926,12 @@ export function emitPuSong(src: Song, dialect: Dialect, opts: EmitPuOptions = {}
   });
 
   const ranges = systemRanges(song.parts[0]);
-  ranges.forEach((range, ri) => {
+  // 别的声部的小节中间切点按拍位对到第一声部的切点上（`partRanges`）
+  const pranges = song.parts.map((part) => partRanges(ranges, song.parts[0]!, part));
+  ranges.forEach((_, ri) => {
     const group: string[] = [];
     song.parts.forEach((part, pi) => {
-      const sys: SystemRange = pi === 0 ? range : { ...range, fromEl: 0, toEl: Infinity };
+      const sys: SystemRange = pranges[pi]![ri]!;
       const st = states[pi]!;
       const last = Math.min(sys.to, part.measures.length - 1);
       if (sys.from > last) return;

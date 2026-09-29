@@ -725,7 +725,12 @@ function estimateNumH(comps: Component[]): number {
     const r = k.bbox.w / k.bbox.h;
     return r > 0.35 && r < 1.6 && k.bbox.h >= 6;
   });
-  return median(squarish.map((k) => k.bbox.h)) || 16;
+  const est = median(squarish.map((k) => k.bbox.h)) || 16;
+  // 多段歌词的页上汉字拆成的偏旁碎块压低了中位（补充本 155：21，数字实高 33）。数字是瘦高的（宽高比 0.35~0.85），
+  // 只拿瘦高块再估一次；明显更大（>1.3 倍）且瘦高块够多才改用——歌词少的页两者本来就差不多，不动
+  const tall = squarish.filter((k) => k.bbox.w / k.bbox.h <= 0.85);
+  const est2 = tall.length >= 20 ? median(tall.map((k) => k.bbox.h)) : 0;
+  return est2 > est * 1.3 ? est2 : est;
 }
 
 /** 矩形内的墨迹占比。 */

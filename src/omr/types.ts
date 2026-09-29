@@ -193,6 +193,12 @@ export interface LyricCheckItem {
   /** 参照里所在的那一句，供人对照 */
   context?: string;
   bbox?: Rect;
+  /** 该字自己的源图框（音符框下方那个字；补字没有） */
+  charBox?: Rect;
+  /** 参照字在 OCR 候选里的名次（0 基）与得分、首选得分：选字门槛看的就是 score / top */
+  cand?: { rank: number; score: number; top: number };
+  /** 已改/已补但可疑、建议人工复查的原因（识别本来读得很有把握、歌词文本自相矛盾……）；不可疑为空 */
+  review?: string;
   detail?: string;
 }
 

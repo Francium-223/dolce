@@ -134,8 +134,9 @@ for (const img of imgs) {
     if (!lc) console.error("[歌词核对] 没有识别到歌词，未核对");
     else {
       const cnt = (k) => lc.items.filter((x) => x.kind === k).length;
+      const review = lc.items.filter((x) => x.review).length;
       console.error(`[歌词核对] 按${lc.order === "expanded" ? "演唱顺序" : "谱面顺序"}对齐：同字 ${lc.matched}/${lc.ocrChars}（参照 ${lc.refChars} 字）`
-        + ` ｜ 已改 ${cnt("fixed")}、已补 ${cnt("filled")}、待核 ${lc.items.length - cnt("fixed") - cnt("filled")}`);
+        + ` ｜ 已改 ${cnt("fixed")}、已补 ${cnt("filled")}${review ? `（其中待复查 ${review}）` : ""}、待核 ${lc.items.length - cnt("fixed") - cnt("filled")}`);
       for (const x of lc.items) console.error("  " + cli.formatLyricCheckItem(x));
       for (const u of lc.unmatchedRef) console.error(`  [参照未对上] 第 ${u.from + 1}–${u.to} 字「${u.text}」`);
     }

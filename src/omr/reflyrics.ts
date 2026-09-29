@@ -66,8 +66,9 @@ export function parseRefLyrics(text: string): RefToken[] {
     if (!l || /^\[[a-z]+:.*\]$/i.test(l) || META_RE.test(l)) continue;
     // 括起来的结构标注整个去掉；括号里是词（`(阿们)`）的保留
     l = l.replace(/[(（【[<《]\s*([^)）】\]>》]{1,8}?)\s*[)）】\]>》]/g,
-      (m, inner: string) => (LABEL_RE.test(inner.trim()) || /^\d+$/.test(inner.trim()) ? "" : m));
-    l = l.replace(/^(?:副歌|副|和|合|chorus|refrain)\s*[:：]\s*/i, "");
+      (m, inner: string) => (LABEL_RE.test(inner.trim()) || /^(?:\d+|[一二三四五六七八九十]+)$/.test(inner.trim()) ? "" : m));
+    // 行首的结构标注：`副歌：` `副)` `副）`（只有半边括号，上面那条配不上）
+    l = l.replace(/^[（(]?\s*(?:副歌|副|和|合|chorus|refrain)\s*[:：)）]\s*/i, "");
     l = l.replace(/^\s*(?:\d{1,2}|[一二三四五六七八九十])\s*[.．、:：)）]\s*/, "");   // 行首段号 `1.` `一、`
     l = l.replace(/^\s*\d{1,2}\s+(?=[一-鿿])/, "");                                   // `1 我主…`
     l = l.trim();
@@ -265,12 +266,54 @@ const matchedOf = (a: readonly Item[], b: readonly RefToken[], pairs: readonly P
 // 版本用字（各歌本编辑取舍不同，不是识别错）：只报、不按参照改
 const VARIANT_GROUPS = ["他祂她牠它", "你祢妳您", "那哪", "阿啊", "于於与", "像象", "的得地", "惟唯", "藉借", "着著", "么吗嘛", "哦喔噢", "耶爷"];
 const isVariant = (x: string, y: string) => VARIANT_GROUPS.some((g) => g.includes(x) && g.includes(y));
-/** 参照字在该字 OCR 候选里、且得分不低于首选的这个比例，才算「形近」、按参照改 */
+/** 参照字在该字 OCR 候选里、且得分不低于首选的这个比例，才算「形近」、按参照改。
+ *  按歌词库 787 首里 336 处「参照字在候选里」逐个看图定的（见 docs/实现/OMR-简谱识别.md）：0.05 是拐点——
+ *  往下立刻混进歌词文本自己的错字（態→熊 0.040、人→入 0.043），往上提到 0.1 白丢 11 处改对。 */
 const ALT_SCORE_RATIO = 0.05;
+/** 人称代词组：谱面用不用「祂/祢」（称神的特殊字形）以谱面为准，参照的写法常与谱面不同 */
+const PRONOUN_GROUPS = ["他祂", "你祢"];
+const PRONOUN_SPECIAL = "祂祢";
+/** OCR 把「祂/祢」读成的形近字。「他/你」是常用字、很少被读成这些字，所以识别出它们、参照又作他/你/祂/祢时，
+ *  图上几乎一定是「祂/祢」——哪怕本页的「祂/祢」全被读错、按页计数数不出来（《人若渴了》通篇读成「池」） */
+const SPECIAL_MISREADS: Record<string, string> = { 祂: "池袍袖施社弛祀衪地", 祢: "称袮弥" };
 /** 本页一字多音的音里印了弧的至少占这么多，才把没弧的报「疑漏弧」 */
 const SLUR_PAGE_RATIO = 0.8;
 /** 整首同字率低于此值：词不对题（选错了歌词文件、版本差太多），不做任何改动 */
 const MIN_MATCH_RATIO = 0.5;
+
+/**
+ * 形近又常被歌词文件写错的几组字，按常见词组定字：「己 / 已 / 巳」「人 / 入」「儆 / 做」「瞎 / 唐」。
+ * 歌词库里这几处参照常是错字（「舍已」「自已」「他巳」「出死人生」「进人他的门」「做醒」「唐眼」），
+ * 只能看上下文。判不出来返回 undefined（交给候选与参照）。
+ * `prev2 prev [本字] next`，`end` = 本字后面紧跟标点或到了行尾。
+ */
+const PHRASE_CHARS = "己已巳人入儆做瞎唐徬傍";
+export function charByPhrase(ch: string, prev2: string, prev: string, next: string, end: boolean): string | undefined {
+  if ("己已巳".includes(ch)) return jiYiByPhrase(prev2, prev, next, end) ?? (ch === "巳" ? "已" : undefined);
+  if ("人入".includes(ch)) {
+    if (prev === "死" && next === "生") return "入";                  // 出死入生
+    if (prev2 + prev === "免得") return "入";                         // 免得入了迷惑
+    if ("进深陷投加侵涌纳渗步归流".includes(prev) && prev) return "入";   // 进入、深入、陷入、投入、加入、归入、流入……
+    if ("世众罪爱敌外穷圣义恶女男别旁凡个每".includes(prev) && prev) return "人";
+    if ("们类".includes(next) && next) return "人";
+    return undefined;
+  }
+  if ("儆做".includes(ch)) return next === "醒" ? "儆" : undefined;   // 儆醒
+  if ("瞎唐".includes(ch)) return "眼子".includes(next) && next ? "瞎" : undefined;   // 瞎眼、瞎子
+  if ("徬傍".includes(ch)) return next === "徨" ? "徬" : undefined;   // 徬徨（「傍徨」不成词）
+  return undefined;
+}
+
+function jiYiByPhrase(prev2: string, prev: string, next: string, end: boolean): "己" | "已" | undefined {
+  if (next === "经") return "已";                                    // 已经
+  if (prev === "自") return (prev2 === "能" || prev2 === "不") && end ? "已" : "己";   // 不能自已、情不自已；其余自己
+  if ("舍克律知利异虚".includes(prev) && prev) return "己";          // 舍己、克己、律己、知己、利己、异己、虚己
+  if ("身任意".includes(next) && next) return "己";                  // 己身、己任、己意（不收「见」：「我已见」也常见）
+  if ("然往久".includes(next) && next) return "已";                  // 已然、已往、已久
+  if ("早而业".includes(prev) && prev) return "已";                  // 早已、而已、业已
+  if (prev === "不" && end) return "已";                             // 不已
+  return undefined;
+}
 
 /** 在一段歌词串里把第 idx 个汉字换成 ch（开引号前缀、尾随标点原样保留）。 */
 function replaceHanzi(text: string, idx: number, ch: string): string {
@@ -331,6 +374,10 @@ export async function applyRefLyrics(score: RecognizedScore, refText: string, ho
   // 不一致的「段」= 连续的非同字对（空位夹在中间不断段）。段里至多两处、且两头都贴着同字，才逐字处理（改/补/报）——
   // 左右都对上了，中间这一两个字才可信地一一对应；否则是整句对不上（版本不同、识别大错），整段合成一条报告、不改。
   const anchored = new Uint8Array(pairs.length);
+  // 锚定段编号：一段里改了一个字、却还有别的字对不上（参照多出、识别多出、改不了的异字），说明歌词在这里本身可能写乱了，
+  // 改动标「待复查」（「是我们」对「是捌门」：们→门 改了，我↔捌 改不了）
+  const runOf = new Int32Array(pairs.length).fill(-1);
+  let runN = 0;
   const segItems = new Map<string, LyricCheckItem>();
   const hanziOf = (t0: number, t1: number) => pairs.slice(t0, t1).filter(([i]) => i >= 0 && a[i]!.ch !== null).map(([i]) => a[i]!.ch!).join("");
   const refOf = (t0: number, t1: number) => pairs.slice(t0, t1).filter(([, j]) => j >= 0).map(([, j]) => ref[j]!.ch).join("");
@@ -343,7 +390,7 @@ export async function applyRefLyrics(score: RecognizedScore, refText: string, ho
     let end = u;
     while (end > t && kinds[end - 1] === "E") end--;
     const ks = kinds.slice(t, end).filter((x) => x !== "E");
-    if (ks.length <= 2 && seenM && u < pairs.length) { anchored.fill(1, t, end); t = u; continue; }
+    if (ks.length <= 2 && seenM && u < pairs.length) { anchored.fill(1, t, end); runOf.fill(runN++, t, end); t = u; continue; }
     if (ks.every((x) => x === "G")) {
       const js = pairs.slice(t, end).map(([, j]) => j);
       result.unmatchedRef.push({ from: js[0]!, to: js[js.length - 1]! + 1, text: clip(refOf(t, end)) });
@@ -366,6 +413,54 @@ export async function applyRefLyrics(score: RecognizedScore, refText: string, ho
   // 同一 (音符, 段, 字) 在展开序列里可出现多次（副歌回唱）：各次对到的参照字汇总后再判；有一次落在整句不对的段里就不逐字处理
   const keyOf = (it: Item): string => `${locs.get(it.n)?.row}:${locs.get(it.n)?.note}:${it.verse}:${it.idx}`;
   const hits = new Map<string, { it: Item; refs: number[]; inSeg: boolean }>();
+
+  // 形近又常被歌词写错的几组字先按词组定（见 charByPhrase）；定下来的不再走下面的逐字判定
+  const phraseDone = new Set<string>();
+  const resolved = new Map<string, LyricCheckItem>();              // 已改/已补的字 → 那一条
+  const runKeys = new Map<number, { keys: Set<string>; hasG: boolean }>();
+  const inRun = (t: number, key: string | null) => {
+    const id = runOf[t]!;
+    if (id < 0) return;
+    const r = runKeys.get(id) ?? { keys: new Set<string>(), hasG: false };
+    if (key === null) r.hasG = true; else r.keys.add(key);
+    runKeys.set(id, r);
+  };
+  {
+    const refAt = new Map<number, number>();
+    for (const [i, j] of pairs) if (i >= 0 && j >= 0) refAt.set(i, j);
+    const hzIdx = a.map((x, i) => (x.ch !== null ? i : -1)).filter((i) => i >= 0);
+    hzIdx.forEach((ai, q) => {
+      const it = a[ai]!;
+      if (!PHRASE_CHARS.includes(it.ch!)) return;
+      const key = keyOf(it);
+      if (phraseDone.has(key)) return;
+      const chAt = (d: number) => { const x = hzIdx[q + d]; return x !== undefined ? a[x]!.ch! : ""; };
+      const text = it.n.lyrics?.[it.verse] ?? "";
+      let k = -1, after = "";
+      for (const c of text) { if (isHanzi(c)) k++; else if (k === it.idx) after += c; }
+      const end = /[，。、；：！？…,;:!?]/.test(after) || q === hzIdx.length - 1;
+      const want = charByPhrase(it.ch!, chAt(-2), chAt(-1), chAt(1), end);
+      if (!want) return;
+      phraseDone.add(key);
+      const j = refAt.get(ai);
+      const refCh = j !== undefined ? ref[j]! : undefined;
+      const phrase = `${chAt(-1)}${want}${chAt(1)}`;
+      if (want !== it.ch) {
+        probe("refLyrics.phrase");
+        it.n.lyrics![it.verse] = replaceHanzi(text, it.idx, want);
+        const region = hooks.regionOf({ n: it.n, verse: it.verse, idx: it.idx });
+        if (region) region.text = replaceHanzi(region.text, 0, want);
+        const x: LyricCheckItem = { kind: "fixed", verse: it.verse, ...at(it.n), ocr: it.ch!, ref: want, context: refCh?.line,
+          charBox: region?.bbox, detail: `按词组「${phrase}」定字${refCh && refCh.ch !== want ? `（歌词作「${refCh.ch}」）` : ""}` };
+        items.push(x);
+        resolved.set(key, x);
+      } else if (refCh && refCh.norm !== want) {
+        items.push({ kind: "mismatch", verse: it.verse, ...at(it.n), ocr: it.ch!, ref: refCh.ch, context: refCh.line,
+          detail: `按词组「${phrase}」保留「${want}」，歌词这处多是错字` });
+        resolved.set(key, items[items.length - 1]!);   // 已按词组定了，不算「还有别的字对不上」
+      }
+    });
+  }
   // 参照多出的一两个字（锚定的 G）：挂到前一个识别项上报「谱上没地方落」
   let pendG: number[] = [];
   let lastA = -1;
@@ -381,9 +476,9 @@ export async function applyRefLyrics(score: RecognizedScore, refText: string, ho
   const slurSeen = new Set<JpNum>();
   let melHeld = 0, melFree = 0;
   for (const r of rows) {
-    if (!r.nums.some((n) => (n.lyrics ?? []).some((t) => [...t].some(isHanzi)))) continue;
+    if (!r.nums.some((n) => (n.lyrics ?? []).some((t) => [...(t ?? "")].some(isHanzi)))) continue;
     r.nums.forEach((n, ni) => {
-      if (ni === 0 || n.digit === 0 || (n.lyrics ?? []).some((t) => [...t].some(isHanzi))) return;
+      if (ni === 0 || n.digit === 0 || (n.lyrics ?? []).some((t) => [...(t ?? "")].some(isHanzi))) return;
       const prev = r.nums[ni - 1]!;
       if (prev.digit === n.digit && prev.octave === n.octave && !held.has(n)) return;   // 同音延续归 tie，不算
       if (held.has(n)) melHeld++; else melFree++;
@@ -392,7 +487,7 @@ export async function applyRefLyrics(score: RecognizedScore, refText: string, ho
   const pageSlurs = melHeld + melFree >= 4 && melHeld >= (melHeld + melFree) * SLUR_PAGE_RATIO;
   pairs.forEach(([i, j], t) => {
     const kd = kinds[t]!;
-    if (kd === "G") { if (anchored[t]) pendG.push(j); return; }
+    if (kd === "G") { if (anchored[t]) { pendG.push(j); inRun(t, null); } return; }
     flushG();
     lastA = i;
     const it = a[i]!;
@@ -406,12 +501,13 @@ export async function applyRefLyrics(score: RecognizedScore, refText: string, ho
       const loc = locs.get(it.n);
       const prev = loc && loc.note > 0 ? loc.rowRef.nums[loc.note - 1] : undefined;
       if (!prev || prev.digit === 0 || (prev.digit === it.n.digit && prev.octave === it.n.octave)) return;
-      if ((it.n.lyrics ?? []).some((x) => [...x].some(isHanzi))) return;
+      if ((it.n.lyrics ?? []).some((x) => [...(x ?? "")].some(isHanzi))) return;
       slurSeen.add(it.n);
       items.push({ kind: "slurSuspect", verse: it.verse, ...at(it.n), detail: "各段在这个音上都没字、也不在弧里：一字多音的弧可能漏认（谱面本就没印弧的可忽略）" });
       return;
     }
     const key = keyOf(it);
+    if (kd !== "M") inRun(t, key);
     const h = hits.get(key) ?? { it, refs: [], inSeg: false };
     if (kd !== "M" && !anchored[t]) h.inSeg = true;
     h.refs.push(j);
@@ -420,9 +516,9 @@ export async function applyRefLyrics(score: RecognizedScore, refText: string, ho
   flushG();
 
   // 逐字判定
-  const fixReqs: { it: Item; r: RefToken }[] = [];
-  for (const { it, refs, inSeg } of hits.values()) {
-    if (inSeg) continue;
+  const fixReqs: { it: Item; r: RefToken; key: string }[] = [];
+  for (const [key, { it, refs, inSeg }] of hits) {
+    if (inSeg || phraseDone.has(key)) continue;
     const aligned = refs.filter((j) => j >= 0);
     const refChars = [...new Set(aligned.map((j) => ref[j]!.norm))];
     if (it.ch !== null) {
@@ -440,7 +536,7 @@ export async function applyRefLyrics(score: RecognizedScore, refText: string, ho
         items.push({ kind: "variant", verse: it.verse, ...at(it.n), ocr: it.ch, ref: r.ch, context: r.line });
         continue;
       }
-      fixReqs.push({ it, r });
+      fixReqs.push({ it, r, key });
     } else {
       // 空位：参照在这里有字（各次都对到同一个字）→ 补；弧/连音线里的空位不补，报出来
       if (!aligned.length || refChars.length !== 1 || aligned.length !== refs.length) continue;
@@ -453,36 +549,87 @@ export async function applyRefLyrics(score: RecognizedScore, refText: string, ho
       const lyr = (it.n.lyrics ??= []);
       for (let v = lyr.length; v < it.verse; v++) lyr[v] = "";
       lyr[it.verse] = r.ch;
-      items.push({ kind: "filled", verse: it.verse, ...at(it.n), ref: r.ch, context: r.line });
+      const x: LyricCheckItem = { kind: "filled", verse: it.verse, ...at(it.n), ref: r.ch, context: r.line };
+      items.push(x);
+      resolved.set(key, x);
     }
   }
 
+  // 本页识别歌词里各代词字形出现几次（选字前统计，不含参照）
+  const pageCount = new Map<string, number>();
+  for (const r of rows) for (const n of r.nums) for (const t of n.lyrics ?? []) for (const c of t ?? "") {
+    if (PRONOUN_GROUPS.some((g) => g.includes(c))) pageCount.set(c, (pageCount.get(c) ?? 0) + 1);
+  }
   // 形近字：参照字要在该字的 OCR 候选里才改
   if (fixReqs.length) {
     const reqs: LyricCharRef[] = fixReqs.map(({ it }) => ({ n: it.n, verse: it.verse, idx: it.idx }));
     const alts = await hooks.rankAlts(reqs);
-    fixReqs.forEach(({ it, r }, q) => {
+    fixReqs.forEach(({ it, r, key }, q) => {
       const al = alts[q];
-      const k = al ? al.alts.findIndex((c) => normCh(c) === r.norm) : -1;
+      // 参照字是人称代词（他/祂、你/祢）时按谱面取字形：候选里有过门槛的「祂/祢」，且参照本身就写它、或本页已用过它
+      // 两次以上，就取它（图上印「祂」、歌词作「他」，OCR 读成「池」「袍」——该改成祂）；否则取参照字。
+      // 不按「你/他」的出现次数比：「你们」「他们」里的你、他会把计数拉高（「因为祢的慈爱」被改成「你」）。
+      const pro = PRONOUN_GROUPS.find((g) => g.includes(r.norm));
       const top = al?.scores[0] ?? 0;
-      const ok = al && k >= 0 && (al.scores.length === 0 || (al.scores[k] ?? 0) >= top * ALT_SCORE_RATIO);
+      const ratioAt = (i: number) => (al && al.scores.length ? (al.scores[i] ?? 0) / Math.max(1e-9, top) : 1);
+      let k = -1;
+      if (al) {
+        const idxOf = (c: string) => al.alts.findIndex((x) => normCh(x) === c);
+        if (pro) {
+          const special = [...pro].find((c) => PRONOUN_SPECIAL.includes(c))!;
+          const ks = idxOf(special), kr = idxOf(r.norm);
+          const okAt = (i: number) => i >= 0 && ratioAt(i) >= ALT_SCORE_RATIO;
+          const misread = SPECIAL_MISREADS[special]!.includes(it.ch!);
+          k = ks >= 0 && misread ? ks
+            : okAt(ks) && (r.norm === special || (pageCount.get(special) ?? 0) >= 2) ? ks
+            : okAt(kr) ? kr
+            : [...pro].map(idxOf).filter(okAt).sort((x, y) => (al.scores[y] ?? 0) - (al.scores[x] ?? 0))[0] ?? -1;
+        } else k = idxOf(r.norm);
+      }
+      // 形近误读定下来的「祂/祢」不看得分比（「池」读得再有把握，图上也不会是「他」）
+      const byMisread = !!pro && k >= 0 && PRONOUN_SPECIAL.includes(normCh(al!.alts[k]!)) && SPECIAL_MISREADS[normCh(al!.alts[k]!)]!.includes(it.ch!);
+      const ratio = k >= 0 ? (byMisread ? 1 : ratioAt(k)) : 1;
+      // 参照多半是歌词文本的错字、不照改的几种：
+      //  「巳」歌词里几乎用不到，是「已」的错字；「己」→「已」是把「舍己」「自己」写错（歌词库里没有一例是真的）；
+      //  识别出的是本页常用的代词字形（整页的「祢」），参照换成别的字（「求称」）
+      const ownPronoun = PRONOUN_GROUPS.some((g) => g.includes(it.norm!)) && (pageCount.get(it.ch!) ?? 0) >= 3 && !pro;
+      // 「入」→「人」同理：歌词库把「入」写成「人」极常见（投葡萄入酢、归入天仓），而这一对没有一例是真改对；
+      // 该是「人」的由上面的词组判出来（众人、世人），轮不到这里
+      const refTypo = r.norm === "巳" || (it.norm === "己" && r.norm === "已") || (it.norm === "入" && r.norm === "人") || ownPronoun;
+      const ok = al && k >= 0 && !refTypo && ratio >= ALT_SCORE_RATIO;
+      const charBox = hooks.regionOf(reqs[q]!)?.bbox;
+      const cand = al && k >= 0 ? { rank: k, score: al.scores[k] ?? 0, top } : undefined;
       if (!ok) {
-        items.push({ kind: "mismatch", verse: it.verse, ...at(it.n), ocr: it.ch!, ref: r.ch, context: r.line,
+        items.push({ kind: "mismatch", verse: it.verse, ...at(it.n), ocr: it.ch!, ref: r.ch, context: r.line, charBox, cand,
           detail: !al ? "取不到识别候选（字来自谱后附段等）"
             : k < 0 ? `参照字不在识别候选里（字形不像；候选 ${al.alts.slice(0, 5).join("")}）`
+            : refTypo ? (ownPronoun ? `谱面通篇用「${it.ch}」，参照这处多是错字，不照改` : "参照这个字多是歌词文本的错字（巳/已/己、人/入），不照改")
             : `参照字在候选第 ${k + 1} 位但得分太低（${(al.scores[k] ?? 0).toFixed(4)} / 首选 ${top.toFixed(3)}）` });
         return;
       }
-      // 用候选里那个字形（谱面是繁体就留繁体），候选与参照同形时就是参照字
+      // 用候选里那个字形（谱面是繁体就留繁体、印的是祂就取祂），候选与参照同形时就是参照字
       const ch = al.alts[k]!;
       probe("refLyrics.fixed");
       const text = it.n.lyrics?.[it.verse];
       if (text) it.n.lyrics![it.verse] = replaceHanzi(text, it.idx, ch);
       const region = hooks.regionOf(reqs[q]!);
       if (region) region.text = replaceHanzi(region.text, 0, ch);
-      items.push({ kind: "fixed", verse: it.verse, ...at(it.n), ocr: it.ch!, ref: ch, context: r.line,
-        detail: `候选第 ${k + 1} 位（得分 ${(al.scores[k] ?? 0).toFixed(3)}，首选 ${top.toFixed(3)}）` });
+      const x: LyricCheckItem = { kind: "fixed", verse: it.verse, ...at(it.n), ocr: it.ch!, ref: ch, context: r.line, charBox: region?.bbox, cand,
+        detail: `候选第 ${k + 1} 位（得分 ${(al.scores[k] ?? 0).toFixed(3)}，首选 ${top.toFixed(3)}）`
+          + (normCh(ch) !== r.norm ? `；歌词作「${r.ch}」，按谱面取「${ch}」` : "") };
+      items.push(x);
+      resolved.set(key, x);
     });
+  }
+
+  // 待复查：改动所在的锚定段里还有没解释掉的不一致（参照多出的字、改不了的异字、识别多出的字）
+  for (const { keys, hasG } of runKeys.values()) {
+    const open = hasG || [...keys].some((k) => !resolved.has(k));
+    if (!open) continue;
+    for (const k of keys) {
+      const x = resolved.get(k);
+      if (x && (x.kind === "fixed" || x.kind === "filled")) x.review = "同一处还有别的字对不上，歌词这里可能写乱了";
+    }
   }
 
   const order2 = (x: LyricCheckItem) => [x.row ?? -1, x.verse ?? -1, x.note ?? -1];
@@ -501,6 +648,6 @@ export function formatLyricCheckItem(x: LyricCheckItem): string {
   };
   const where = x.row !== undefined ? `第${x.row + 1}行 第${(x.verse ?? 0) + 1}段 第${(x.note ?? 0) + 1}音（小节${x.bar}）` : "全曲";
   const what = x.ocr !== undefined || x.ref !== undefined ? `：谱面「${x.ocr ?? ""}」→ 歌词「${x.ref ?? ""}」` : "";
-  return `[${LABEL[x.kind]}] ${where}${what}${x.detail ? `  ${x.detail}` : ""}${x.context ? `  〔${x.context}〕` : ""}`;
+  return `[${LABEL[x.kind]}${x.review ? "·待复查" : ""}] ${where}${what}${x.detail ? `  ${x.detail}` : ""}${x.review ? `  ⚠ ${x.review}` : ""}${x.context ? `  〔${x.context}〕` : ""}`;
 }
 

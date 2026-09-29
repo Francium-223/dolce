@@ -475,6 +475,10 @@ export async function recognizeLyrics(
   // i 从 **-1** 起：第 i 行的「下方带」就是第 i+1 行的「上方带」，是同一条带；唯独第 0 行的
   // 上方带原先没有任何一条带覆盖，那里的和弦（多数带和弦的谱子第一行就有）落进页眉 ROI 后
   // 被 header.ts 的 `hanziCount<2` 静默丢掉。i=-1 即那条补上的带，只走和弦/段落标记通道。
+  // 通栏细线（过半页宽）：谱后注释的分界（选本诗歌712 通本），歌词带不越过谱行下方最近的那一条——注释首行的「(36)」
+  // 读丢了就认不出是注释，占掉一个段位，fillLeadingVerses 再把第 1 段抄满全页。
+  const noteRules = comps.filter((c) => c.bbox.w >= bin.w * 0.5 && c.bbox.h <= Math.max(3, numH * 0.3)).map((c) => c.bbox.y);
+  const capRows = new Set<number>();   // 按假想下一行封底的行（末谱行、段末行）：附段可能挤进这些行的歌词带
   for (let i = -1; i < staff.length; i++) {
     const row = staff[Math.max(0, i)];   // i=-1 时以第 0 行作 cov/房号的参照
     if (!row.nums.length) continue;
@@ -492,13 +496,22 @@ export async function recognizeLyrics(
     // 故照「假想的下一谱行上缘」封顶（口径与上面那支完全一致）。不留余量——正文的头一行离
     // 末段词只有三个多字高，放宽一成就又漏进来了。封顶后一条 verse 行都不剩（末行歌词排得
     // 特别靠下）就退回不封顶，宁可多收也别把真词丢了。
+    // 一页两调（选本诗歌712「(第一调)」谱 + 二三四段附段 +「(第二调)」谱）：第一调末行与第二调首行之间隔着整块附段，
+    // 行距是平常的五倍上下。这种**段末行**同末谱行一样按假想的下一行封底，附段留给 stanzas.ts。门开在三倍行距：
+    // 多段词的行与单段词的行混排时行距也就差两倍多。
+    const nextTop = i + 1 < staff.length && staff[i + 1].nums.length ? dTop(staff[i + 1].nums) : undefined;
+    // 多声部页（行上带系统号）不开：同系统的声部行挨得近，行距中位数很小，系统之间隔着歌词就过了三倍
+    const segEnd = row.system === undefined && nextTop !== undefined && rowPitch > 0 && nextTop - dTop(row.nums) > rowPitch * 3;
+    if (!above && (segEnd || nextTop === undefined)) capRows.add(i);
     const yBot = above ? dTop(row.nums) - numH * 0.15
-      : i + 1 < staff.length && staff[i + 1].nums.length
-        ? dTop(staff[i + 1].nums) - numH * 0.15
+      : nextTop !== undefined && !segEnd
+        ? nextTop - numH * 0.15
         : rowPitch > 0 ? dTop(row.nums) + rowPitch - numH * 0.15 : Infinity;
-    if (yBot - yTop < charMin) continue;
+    const rule = above ? undefined : noteRules.filter((y) => y > row.bottomY).sort((a, b) => a - b)[0];
+    const yBotR = rule !== undefined && rule < yBot + numH * 3 ? Math.min(yBot, rule - numH * 0.15) : yBot;
+    if (yBotR - yTop < charMin) continue;
 
-    const inBand = (c: Component) => { const y = dcy(c); return y >= yTop && y <= yBot; };
+    const inBand = (c: Component) => { const y = dcy(c); return y >= yTop && y <= yBotR; };
     const band = comps.filter((c) => { const b = c.bbox; return inBand(c) && b.h >= charMin && b.w >= charMin * 0.4; });
     if (!band.length) continue;
 
@@ -927,7 +940,20 @@ export async function recognizeLyrics(
     const allSig = [...rawByKey.values()].flatMap(sig);
     const hanPage = allSig.length >= 20 && allSig.filter(isHanzi).length >= allSig.length * 0.6;
     const junkLine = (t: string) => { const cs = sig(t); return cs.length >= 3 && cs.filter(isHanzi).length < cs.length * 0.3; };
-    const dropKeys = [...perLine.keys()].filter((k) => chordKeys.has(k) || isFooterNoticeLine(rawByKey.get(k) ?? "") ||
+    // 附段挤进了末谱行/段末行的歌词带（选本 36：每调只两行谱，「二 纵我双手不罢休…」离第二行很近，封底线以内）：
+    // 该行第 1 段不带段号、后面某一段以「二」起头，从那段起都是附段，交给 stanzas.ts。
+    // 只认汉字段号：谱下多段词用「1.」「2.」，第 1 段的号 OCR 读丢时「2.」就像附段开头（哦，愿我有千万舌头、日光之下）
+    const LABEL_HEAD = /^[\s/]*[(（]?([一二])[)）]?[.、．]?/;
+    const stanzaFrom = new Map<number, number>();
+    for (const r of capRows) {
+      if (LABEL_HEAD.test(rawByKey.get(`${r}:0`) ?? "")) continue;
+      for (let v = 1; rawByKey.has(`${r}:${v}`); v++) {
+        const m = LABEL_HEAD.exec(rawByKey.get(`${r}:${v}`)!);
+        if (m && m[1] !== "一") { stanzaFrom.set(r, v); probe("lyrics.stanzaInBand"); break; }
+      }
+    }
+    const inStanza = (k: string) => { const [r, v] = k.split(":").map(Number); return stanzaFrom.has(r!) && v! >= stanzaFrom.get(r!)!; };
+    const dropKeys = [...perLine.keys()].filter((k) => chordKeys.has(k) || inStanza(k) || isFooterNoticeLine(rawByKey.get(k) ?? "") ||
       (hanPage && junkLine(rawByKey.get(k) ?? "") && (probe("lyrics.junkLine"), true)));
     for (const k of dropKeys) {
       for (const p of perLine.get(k)!) if (p.region) dropped.add(p.region);

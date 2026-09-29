@@ -47,24 +47,48 @@ export function toSyllables(text: string): string[] {
 
 interface Stanza { label?: string; lines: { text: string; bbox: TextRegion["bbox"] }[] }
 
-/** 识别谱后附段并按第 1 段的音位骨架写进各音符的 `lyrics[v]`。返回收下的诗文行（识别模式叠加用）。 */
+/** 识别谱后附段并按第 1 段的音位骨架写进各音符的 `lyrics[v]`。返回收下的诗文行（识别模式叠加用）。
+ *  一页两调的（选本诗歌712「(第一调)」谱 + 附段 +「(第二调)」谱）按谱行间的大间隔（>3 倍行距，同 lyrics.ts 的段末行）
+ *  切成几段，每段在它与下一段之间找附段、按本段第 1 段的音位骨架填。 */
 export async function recognizeTrailingStanzas(
   bin: Binary, staff: StaffRow[], numH: number, ocr: OcrBackend, lyricRegions: TextRegion[] | undefined,
 ): Promise<TextRegion[]> {
   if (!ocr.recognizeRegion) return [];
   const rows = staff.filter((r) => r.nums.length);
+  if (!rows.length) return [];
+  const tops = rows.map((r) => r.topY);
+  const pitch = tops.length >= 2 ? median(tops.slice(1).map((t, j) => t - tops[j]!)) : 0;
+  const segs: StaffRow[][] = [[]];
+  rows.forEach((r, i) => {
+    // 多声部页不切（同 lyrics.ts 段末行）
+    if (i > 0 && pitch > 0 && r.system === undefined && r.topY - rows[i - 1]!.topY > pitch * 3) segs.push([]);
+    segs[segs.length - 1]!.push(r);
+  });
+  if (segs.length > 1) probe("stanza.segments");
+  const out: TextRegion[] = [];
+  for (let k = 0; k < segs.length; k++) {
+    const next = segs[k + 1]?.[0];
+    const y1 = next ? Math.round(next.topY - numH * 0.5) : bin.h;
+    out.push(...await stanzasOfSegment(bin, segs[k]!, numH, ocr, lyricRegions, y1));
+  }
+  return out;
+}
+
+async function stanzasOfSegment(
+  bin: Binary, rows: StaffRow[], numH: number, ocr: OcrBackend, lyricRegions: TextRegion[] | undefined, yEnd: number,
+): Promise<TextRegion[]> {
   const last = rows[rows.length - 1];
-  if (!last) return [];
+  if (!last || !ocr.recognizeRegion) return [];
 
   // 第 1 段的起字音位：谱下有字的音，按谱面顺序。
   const slots = rows.flatMap((r) => r.nums.filter((n) => n.lyrics?.[0]));
   if (slots.length < 8) return [];
 
-  // 区域：末谱行歌词下缘 → 图底。末行下没配词（器乐尾奏）就从谱行底下一个字高起。
-  const below = (lyricRegions ?? []).filter((r) => r.bbox.y >= last.bottomY - numH * 0.2);
+  // 区域：末谱行歌词下缘 → 下一段首行（没有就到图底）。末行下没配词（器乐尾奏）就从谱行底下一个字高起。
+  const below = (lyricRegions ?? []).filter((r) => r.bbox.y >= last.bottomY - numH * 0.2 && r.bbox.y < yEnd);
   const y0 = Math.round((below.length ? Math.max(...below.map((r) => rbottom(r.bbox))) : last.bottomY + numH) + numH * 0.3);
-  if (bin.h - y0 < numH * 2) return [];
-  const dets = (await ocr.recognizeRegion(bin, { x: 0, y: y0, w: bin.w, h: bin.h - y0 }))
+  if (yEnd - y0 < numH * 2) return [];
+  const dets = (await ocr.recognizeRegion(bin, { x: 0, y: y0, w: bin.w, h: yEnd - y0 }))
     .map((d) => ({ text: d.text.trim(), bbox: d.bbox }))
     .filter((d) => d.text);
   if ((globalThis as { __omrDebug?: boolean }).__omrDebug) {
@@ -82,7 +106,11 @@ export async function recognizeTrailingStanzas(
   vlines.sort((a, b) => Math.min(...a.map((d) => d.bbox.y)) - Math.min(...b.map((d) => d.bbox.y)));
   // 页脚注释从这里起就不是诗了：选本诗歌712 通本在附段下面印「(337)1.生命的饼：指主的话语。…」，
   // 行首是括号括着的曲号。混进末段就字数对不上、整块被拒。演唱说明「(唱至第五、六节的“和”时…)」同理（304）
-  const noteAt = vlines.findIndex((l) => /^[(（](?:\d{1,4}[)）]|唱|注)/.test([...l].sort((a, b) => a.bbox.x - b.bbox.x)[0].text));
+  // 下一调的小标题「(第二调)」「降E调 4/4」也是截断处
+  const noteAt = vlines.findIndex((l) => {
+    const t = [...l].sort((a, b) => a.bbox.x - b.bbox.x).map((d) => d.text).join("");
+    return /^[(（](?:\d{1,4}[)）]|唱|注)/.test(t) || /[(（]第.{1,3}调[)）]|调\s*\d{1,2}\s*[/／]\s*\d{1,2}/.test(t);
+  });
   if (noteAt >= 0) { probe("stanza.footnoteCut"); vlines.length = noteAt; }
   const ordered = vlines.flatMap((l) => l.sort((a, b) => a.bbox.x - b.bbox.x).map((d, i) => ({ ...d, lineStart: i === 0, lineLen: l.length })));
 

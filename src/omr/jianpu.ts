@@ -2492,12 +2492,22 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
         for (const r of useRows) if (r.system !== undefined) cnt.set(r.system, (cnt.get(r.system) ?? 0) + 1);
         return cnt;
       };
+      // ⓪ 系统里夹着的碎行（94 第 1 系统第 3、4 声部之间一条 4 个音的碎行；313 每个系统都夹着几条 4~6 个音的）：
+      //    音数不到同系统中位数四成的剔掉，剔完至少还剩 3 行才剔。先剔再数众数，否则众数被碎行抬高
+      const drop = new Set<StaffRow>();
+      for (const [sys, n] of countOf()) {
+        const g = useRows.filter((r) => r.system === sys);
+        const med = median(g.map((r) => r.nums.length));
+        const thin = g.filter((r) => r.nums.length < med * 0.4);
+        if (thin.length && n - thin.length >= 3) { probe("voices.dropThin"); for (const r of thin) drop.add(r); }
+      }
+      for (const r of drop) { delete r.system; delete r.voice; }
       let cnt = countOf();
       const freq = new Map<number, number>();
       for (const n of cnt.values()) freq.set(n, (freq.get(n) ?? 0) + 1);
       const mode = [...freq].sort((x, y) => y[1] - x[1] || y[0] - x[0])[0]?.[0] ?? 0;
       let nextSys = Math.max(-1, ...cnt.keys()) + 1;
-      const byY = [...useRows].sort((x, y) => x.topY - y.topY);
+      const byY = useRows.filter((r) => !drop.has(r)).sort((x, y) => x.topY - y.topY);
       // ① 两个系统的连谱号上下挨着连成了一道（336：8 行）：正好两倍就从中间劈开
       for (const [sys, n] of cnt) {
         if (mode < 2 || n !== mode * 2) continue;
@@ -2543,16 +2553,6 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
         cnt.set(r.system, b - 1); cnt.set(prev.system, a + 1);
         r.system = prev.system;
       });
-      // ⑤ 系统里夹着一条杂行（94 第 1 系统第 3、4 声部之间一条 4 个音的碎行）：多出一行、且恰有一行音数
-      //    不到同系统中位数的四成，剔掉
-      const drop = new Set<StaffRow>();
-      for (const [sys, n] of cnt) {
-        if (n !== mode + 1) continue;
-        const g = byY.filter((r) => r.system === sys);
-        const med = median(g.map((r) => r.nums.length));
-        const thin = g.filter((r) => r.nums.length < med * 0.4);
-        if (thin.length === 1) { probe("voices.dropThin"); drop.add(thin[0]!); }
-      }
       if (drop.size) useRows = useRows.filter((r) => !drop.has(r));
       // 系统号按纵向位置重排（①② 新开的号排在后面）
       const order = [...new Set(byY.filter((r) => !drop.has(r) && r.system !== undefined).map((r) => r.system!))];
@@ -2568,7 +2568,8 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
       g.forEach((r, i) => { if (r.voice !== i) { probe("voices.renumber"); r.voice = i; } });
     }
     const sizes = [...bySys.values()].map((g) => g.length);
-    const ok = useRows.every((r) => r.system !== undefined) && bySys.size >= 2 && sizes.every((n) => n === sizes[0] && n >= 2)
+    // 整首只有一个系统的（393）也算，但要 ≥3 行——两行的「系统」多半是连谱号认错
+    const ok = useRows.every((r) => r.system !== undefined) && (bySys.size >= 2 || sizes[0]! >= 3) && sizes.every((n) => n === sizes[0] && n >= 2)
       && [...bySys.values()].every((g) => g.every((r, i) => r.voice === i));
     probe(ok ? "voices" : "voices.reject");
     if (!ok) for (const r of useRows) { delete r.system; delete r.voice; }

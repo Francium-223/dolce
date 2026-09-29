@@ -937,7 +937,8 @@ export async function recognizeLyrics(
     // `C///////O：/l z///一` 这类杂字（选本诗歌712 537），占掉一个段位，谱后附段随之整体错后一段。
     // 只数汉字与字母数字（标点、续记号不算）
     const sig = (t: string) => [...t].filter((c) => isHanzi(c) || /[A-Za-z0-9]/.test(c));
-    const allSig = [...rawByKey.values()].flatMap(sig);
+    // 上方带（`-1:`，第 0 行之上，常读进页眉/谱行数字，选本 181）与和弦行不算
+    const allSig = [...rawByKey].filter(([k]) => !k.startsWith("-1:") && !chordKeys.has(k)).flatMap(([, t]) => sig(t));
     const hanPage = allSig.length >= 20 && allSig.filter(isHanzi).length >= allSig.length * 0.6;
     // 只有一两个字母数字、一个汉字都没有的也算（选本 98：连音弧读成一个「O」单成一段）
     const junkLine = (t: string) => {
@@ -961,7 +962,7 @@ export async function recognizeLyrics(
         const tooLong = nNotes > 0 && hanN(raw) > Math.max(nNotes * 1.5, hanN(rawByKey.get(`${r}:0`) ?? "") * 1.5);
         // 全曲别的谱行都没有这一段、只有这一行有（选本 127：别的行都只一段词，末行下方挤进附段第二段首行「爱主，自从当年…」）
         const loneVerse = staff.length >= 3 && hanN(raw) >= 4 &&
-          ![...rawByKey.keys()].some((k2) => { const [r2, v2] = k2.split(":").map(Number); return r2 !== r && r2! >= 0 && v2 === v && sig(rawByKey.get(k2)!).length >= 2; });
+          ![...rawByKey.keys()].some((k2) => { const [r2, v2] = k2.split(":").map(Number); const t2 = rawByKey.get(k2)!; return r2 !== r && r2! >= 0 && v2 === v && !chordKeys.has(k2) && !(hanPage && junkLine(t2)) && sig(t2).length >= 2; });
         if ((m && m[1] !== "一") || tooLong || loneVerse) {
           stanzaFrom.set(r, v); probe(tooLong ? "lyrics.stanzaInBandLong" : loneVerse ? "lyrics.stanzaInBandLone" : "lyrics.stanzaInBand"); break;
         }

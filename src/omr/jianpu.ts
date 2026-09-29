@@ -198,7 +198,9 @@ function stripUnderline(
   const dots: Component[] = [], digits: Component[] = [];
   let extra = 0;
   for (const p of connectedComponents(rest, 1)) {
-    if (p.area <= 3) continue;                                      // 毛刺
+    // 毛刺：面积门随字号走（(0.15 字号)²；原固定 3px）。粗黑翻印件线上沿挂着几个几像素的斜碎点（1218 277：5~8px），
+    // 固定 3px 时「说不清」整块放弃，减时线连着底下的点一起丢。真八度点远大于此（该页 ~90px；小图字号 16 时门约 6px）
+    if (p.area <= Math.max(3, (numH * 0.15) ** 2)) continue;
     const r: Rect = { x: b.x + p.bbox.x, y: b.y + p.bbox.y, w: p.bbox.w, h: p.bbox.h };
     const pc = mkComp(r, p.area);
     const ratio = r.w / r.h;
@@ -972,8 +974,24 @@ function classify(comps: Component[], bin: Binary): { c: Classified; numH: numbe
     // 读成一个 1），这形是明摆着的，碎渣冒充八度点的顾虑在这里不成立。
     {
       const sp = stripUnderline(bin, k, numH, lineH);
-      if (sp && (pageClean || sp.digits.length >= 2)) {
-        if (!pageClean) probe("stripUnderline.dirtyMulti");
+      // 脏页上线型（只剥出点）的也收，但每个点正上方都得压着一个数字大小的块（横向对齐、底边离线顶不到 0.6 字号）：
+      // 赞美诗歌1218 粗黑翻印件 `6̲1̲6̲` 的减时线连着底下的低八度点成一片（126×19），不剥就连线带点一起丢。
+      // 碎渣挂在线下不会恰好正对着数字。
+      const dotsUnderDigits = !!sp && !sp.digits.length && sp.dots.length > 0 && sp.dots.every((d) => comps.some((o) =>
+        o !== k && o.bbox.h >= numH * 0.8 && o.bbox.h <= numH * 1.3 && o.bbox.w <= numH * 1.2 &&
+        rcx(d.bbox) >= o.bbox.x && rcx(d.bbox) <= rright(o.bbox) &&
+        k.bbox.y - rbottom(o.bbox) >= -2 && k.bbox.y - rbottom(o.bbox) <= numH * 0.6));
+      // 只剥出线、没有点也没有数字的（双减时线粘成一块，1218 277 `6̳1̳` 131×16）：没有碎渣冒充八度点的顾虑，脏页也收
+      // 要真是上下叠的双线（至少两道、横向重叠过半）：增时线挨着减时线粘成的块剥出来是左右错开的两截，按纯线收会把增时线
+      // 当成第二道减时线（麦子若生了虫 `1-` 丢了增时线）
+      const pureLines = !!sp && !sp.dots.length && !sp.digits.length && sp.lines.length >= 2 &&
+        sp.lines.some((a, i) => sp.lines.some((b2, j) => j > i &&
+          Math.min(rright(a.bbox), rright(b2.bbox)) - Math.max(a.bbox.x, b2.bbox.x) >= Math.min(a.bbox.w, b2.bbox.w) * 0.5 &&
+          // 两道要一般粗：一根厚增时线也会被剥成「线 + 贴着的毛边」（麦子 20×7 → 20×5 + 19×2），毛边不到一半粗；
+          // 真双减时线（1218 277，两道之间还连着细丝、框贴着）两道差不多粗
+          Math.min(a.bbox.h, b2.bbox.h) >= Math.max(a.bbox.h, b2.bbox.h) * 0.5));
+      if (sp && (pageClean || sp.digits.length >= 2 || dotsUnderDigits || pureLines)) {
+        if (!pageClean) probe(sp.digits.length >= 2 ? "stripUnderline.dirtyMulti" : "stripUnderline.dirtyDotsUnderDigits");
         c.hlines.push(...sp.lines); c.dots.push(...sp.dots); c.blocks.push(...sp.digits); continue;
       }
     }
@@ -1781,6 +1799,7 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
   const firstMusicTop = Math.min(...rowMetaAll
     .filter((m) => m.rd.length >= 3 && m.barlineXs.length >= 2 && m.rd.filter((k) => !squareCore(k)).length >= m.rd.length * 0.7)
     .map((m) => m.topY));
+  const musicRowH = median(rowMetaAll.filter((m) => m.rd.length >= 3 && m.barlineXs.length >= 2).map((m) => median(m.rd.map((k) => k.bbox.h)))) || numH;
   const keyLineBot = Math.max(-Infinity, ...rowMetaAll.filter((m) => m.botY < firstMusicTop && keyLineRow(m.rd)).map((m) => m.botY));
   const pageRowH = median(rowMetaAll.filter((m) => m.rd.length >= 3).map((m) => median(m.rd.map((k) => k.bbox.h))));
   // **通栏横线以下是注释**：选本诗歌712 通本谱后隔一道过半页宽的细线印词语注释（「(11)1.昏沉若病：…」），
@@ -1797,8 +1816,10 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
     // 第一谱行以上、自己又不像谱行的（小节线 ≤1 根，或是小字）都是页眉：1218 页眉的「E调4/4」小字、大号曲号
     // 连标题凑成的行读成 `0 4 4 |`、`1 1 1 | 1 1`（1176、540、842），页眉 ROI 随之被截掉
     // （不按「核近方」判：小图粗体的数字核也近方，1940 第一谱行被当页眉删过）
+    // 「小字」跟**谱行**（≥2 根小节线）的中位高比，不跟全页各行比——歌词行比数字高，把全页中位抬上去，1218 1168 的真谱行
+    // （数字 30px，全页中位 42）被当小字删光过
     if (Number.isFinite(firstMusicTop) && m.botY < firstMusicTop && (m.barlineXs.length <= 1 ||
-      median(m.rd.map((k) => k.bbox.h)) < pageRowH * 0.8)) { probe("pseudoRow.headerAboveFirst"); return false; }
+      median(m.rd.map((k) => k.bbox.h)) < musicRowH * 0.8)) { probe("pseudoRow.headerAboveFirst"); return false; }
     // **大字行**：核的中位高超过 1.4 字号——音符数字都在一个字号上下，大一号的是标题/曲号那一排
     //（补充本 71：「受难」小字 + 大号曲号「71」（59×46、60×26，字号 36）凑成一行，读成 `1 | 7 1`）。
     // 还要比**全页各行**的中位高高出 1.4 倍：numH 估小了的页（补充本 155，数字核连着八度点）正经谱行也过得了

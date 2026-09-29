@@ -1789,6 +1789,11 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
     if (m.rd.filter(flatCore).length * 2 > m.rd.length) { probe("pseudoRow.flat"); return false; }
     if (keyLineRow(m.rd)) { probe("pseudoRow.keyLine"); return false; }
     if (m.botY < firstMusicTop && m.botY <= keyLineBot) { probe("pseudoRow.aboveKeyLine"); return false; }
+    // 第一谱行以上、自己又不像谱行的（小节线 ≤1 根，或是小字）都是页眉：1218 页眉的「E调4/4」小字、大号曲号
+    // 连标题凑成的行读成 `0 4 4 |`、`1 1 1 | 1 1`（1176、540、842），页眉 ROI 随之被截掉
+    // （不按「核近方」判：小图粗体的数字核也近方，1940 第一谱行被当页眉删过）
+    if (Number.isFinite(firstMusicTop) && m.botY < firstMusicTop && (m.barlineXs.length <= 1 ||
+      median(m.rd.map((k) => k.bbox.h)) < pageRowH * 0.8)) { probe("pseudoRow.headerAboveFirst"); return false; }
     // **大字行**：核的中位高超过 1.4 字号——音符数字都在一个字号上下，大一号的是标题/曲号那一排
     //（补充本 71：「受难」小字 + 大号曲号「71」（59×46、60×26，字号 36）凑成一行，读成 `1 | 7 1`）。
     // 还要比**全页各行**的中位高高出 1.4 倍：numH 估小了的页（补充本 155，数字核连着八度点）正经谱行也过得了

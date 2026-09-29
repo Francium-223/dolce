@@ -956,6 +956,23 @@ function buildMusicLine(
 }
 
 /** 小节收尾：推进到下一小节。空小节（连续两根小节线）不产生。 */
+/**
+ * 123/ABC 的房号约定：**一组房的最后一房不封口**。ABC 本身没有区分封口与否的写法（ABC §4.9/§4.10：房号止于
+ * 双线、反复线或下一房的开始），读入时结束类小节线一律收成 `stop`；这里把「后面不再紧跟一房」的那个 `stop`
+ * 改记 `discontinue`。排版器（简谱引擎、原样文档布局、五线谱）只照模型里的值画，不再各自判断；
+ * MusicXML、文本谱照各自原文。
+ */
+function markLastEndings(part: Part): void {
+  const ms = part.measures;
+  ms.forEach((m, i) => {
+    for (const b of m.barlines ?? []) {
+      if (b.location !== "right" || b.ending?.type !== "stop") continue;
+      const next = ms[i + 1];
+      if (!next?.barlines?.some((x) => x.location === "left" && x.ending?.type === "start")) b.ending.type = "discontinue";
+    }
+  });
+}
+
 function closeMeasure(ctx: Ctx, pb: PartBuild): void {
   if (pb.measure.elements.length === 0 && !pb.measure.barlines?.length) return;
   // 末尾那个分支是空的（`… & |`）：`&` 写了却没有音，多半是漏了内容
@@ -1108,6 +1125,7 @@ export function parseAbcFamily(
         b.arcNext = null;
       }
       closeMeasure(ctx, b);
+      markLastEndings(b.part);
       if (b.block && b.block.end === undefined) b.block.end = slotCount(b, ctx.d.id);
       const first = b.part.measures[0];
       if (b.clef && first) (first.attrs ??= {}).clefs = [b.clef];

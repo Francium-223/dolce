@@ -17,19 +17,6 @@ import { LayoutOptions } from "./options";
 
 // ---------------- Line / layout ----------------
 
-/** 每组房的**最后一房**收尾的那个小节（后面不再紧跟一房）。按行序扫一遍全曲小节，`Line.addEnding` 让它们右端不封口。 */
-function lastEndingMeasures(lines: readonly Line[]): Set<JMeasure> {
-  const ms: JMeasure[] = [];
-  for (const l of lines)
-    for (const e of l.entries)
-      if (e instanceof NoteEntry && ms[ms.length - 1] !== e.chord.measure) ms.push(e.chord.measure);
-  const out = new Set<JMeasure>();
-  ms.forEach((m, i) => {
-    if (m.endingRight !== null && !ms[i + 1]?.endingLeft) out.add(m);
-  });
-  return out;
-}
-
 /** 一行里的一段房：`cont` = 上一行续过来的（不画左脚、不印房号）。 */
 interface EndingSpan { num: string; notes: NoteEntry[]; closed: boolean; x0: number; x1: number; cont?: boolean }
 
@@ -1236,7 +1223,6 @@ export class Line {
     }
     // 跨行的房：上一行结束时还开着的房号，下一行开头接着画（不重印房号、不画左脚）
     let openEnding: string | null = null;
-    const lastEndings = lastEndingMeasures(lines);
     for (const l of lines) {
       this.updateXPos(l, width, opt);
       // 段落词要的那点地方**必须在画符杠/连音线/弧线之前**匀出来：那些东西的坐标
@@ -1252,7 +1238,7 @@ export class Line {
       //（房号的车道读堆叠结果）。见 Line.stackAbove。
       l.stackAbove(opt);
       l.placeDirections(opt);
-      openEnding = l.addEnding(opt, openEnding, lastEndings);
+      openEnding = l.addEnding(opt, openEnding);
       l.addSectionWords(opt, width);
       l.liftSectionWordsUnderSlurs(opt);
       l.clipBarlinesUnderSlurs(opt);
@@ -1418,7 +1404,7 @@ export class Line {
    * `carry` 是上一行结束时还开着的房号（房跨行）：本行开头那一段接着画，**不画左脚、不重印房号**。
    * 返回本行结束时仍开着的房号，交给下一行。
    */
-  addEnding(opt: LayoutOptions, carry: string | null = null, lastEndings: ReadonlySet<JMeasure> = new Set()): string | null {
+  addEnding(opt: LayoutOptions, carry: string | null = null): string | null {
     if (opt.endingSize <= 0) return null;
     // 先把本行按小节切开（房的起止是**小节级**的）
     const segs: { m: JMeasure; notes: NoteEntry[] }[] = [];
@@ -1468,8 +1454,7 @@ export class Line {
       // 二房常写成「start + discontinue 在同一小节，逻辑上的 stop 在几小节之后」
       //（037《我尊崇祢》的二房 m9 就地 discontinue、m11 才 stop），
       // 线要在 m9 收住——跨过好几个小节的长横线是错的。
-      // 一组房的**最后一房**右端不封口（后面接着的是房外的音乐，封口像是还要再回去）
-      if (seg.m.endingRight !== null) flush(seg.m.endingRight === StartStopDiscontinue.STOP && !lastEndings.has(seg.m));
+      if (seg.m.endingRight !== null) flush(seg.m.endingRight === StartStopDiscontinue.STOP);
     }
     const stillOpen: string | null = num;
     flush(false); // 房跨到下一行：本行这一段不封口

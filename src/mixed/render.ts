@@ -497,8 +497,11 @@ function drawTuplet(eng: MixedOptions, container: Group, obj: Tuplet): void {
 // drawEnding（render.cpp::drawEnding）
 
 function drawEnding(container: Group, obj: Ending, sys: Sys, mixed: boolean): void {
-  const mifL = obj.startMeasure;
-  const mifR = obj.endMeasure;
+  // 房跨系统：起点在前面的系统里，这一段从本系统首小节画起、不画左脚不印房号；终点在后面的系统里，画到本系统末小节、不封口
+  const startsHere = sys.contains(obj.startTick);
+  const endsHere = sys.contains(obj.endTick);
+  const mifL = startsHere ? obj.startMeasure : sys.measures[0];
+  const mifR = endsHere ? obj.endMeasure : sys.measures[sys.measures.length - 1];
   let left = mifL.xpos() + mifL.dataPos - 5 - mifL.sibKeyOffset;
   let right = mifR.xpos() + mifR.dataEnd;
 
@@ -531,9 +534,9 @@ function drawEnding(container: Group, obj: Ending, sys: Sys, mixed: boolean): vo
   const grp = translated(0, yPos !== null ? yPos - vlen : 0);
   addEndingBracket(grp, {
     x0: left, x1: right, top: y0, drop: vlen,
-    leftFoot: true, rightFoot: obj.hasStop,
+    leftFoot: startsHere, rightFoot: endsHere && obj.hasStop,
     lineWidth: 1, color: 0xff000000,
-    label: { text: obj.number, font: new Font(eng.wordFont, 20), dx: hlen },
+    label: startsHere ? { text: obj.number, font: new Font(eng.wordFont, 20), dx: hlen } : undefined,
   });
 
   container.add(grp);
@@ -886,10 +889,8 @@ function drawLineObjs(container: Group, sys: Sys, p: PartLayout): void {
   }
 
   for (const obj of p.endings) {
-    if (!sys.overlap(obj)) continue;
-    if (sys.contains(obj.startTick) && sys.contains(obj.endTick)) {
-      drawEnding(grp, obj, sys, mixed);
-    }
+    // 跨系统的房按系统裁段画（原先起止不在同一系统就整条丢掉）
+    if (sys.overlap(obj)) drawEnding(grp, obj, sys, mixed);
   }
 }
 

@@ -2029,6 +2029,25 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
   const recog = await ocr.recognizeDigits(bin, recRects, { rhythm: true });
   const digitCache = new Map<Rect, number>();
   allDigits.forEach((k, i) => digitCache.set(k.bbox, recog[i] ?? 0));
+  // 读成 1 的宽块多半是 7：粗体窄字（赞美诗歌1218 通本）的 7 顶横短、带上减时线，数字模型读成 1——全本 `7_→1_` 三百多处。
+  // 真「1」是一根竖笔（该页 17px 宽），这些 7 与别的数字一样宽（24~27px）。门：宽过本页真 1 中位宽的 1.35 倍，
+  // 且顶部两成高度里有一道横贯七成宽度的横笔（7 的顶横；1 顶上只有一小撇）。
+  {
+    const ones = allDigits.filter((k) => digitCache.get(k.bbox) === 1).map((k) => k.bbox.w).sort((a, b) => a - b);
+    const oneW = ones.length >= 3 ? ones[Math.floor(ones.length * 0.3)]! : 0;   // 取偏窄的分位，免得被误读的 7 抬高
+    const topBar = (b: Rect): boolean => {
+      const y1 = b.y + Math.max(2, Math.round(b.h * 0.2));
+      for (let y = b.y; y < y1; y++) {
+        let run = 0, best = 0;
+        for (let x = b.x; x < b.x + b.w; x++) { if (bin.data[y * bin.w + x]) { run++; if (run > best) best = run; } else run = 0; }
+        if (best >= b.w * 0.7) return true;
+      }
+      return false;
+    };
+    if (oneW > 0) for (const k of allDigits) {
+      if (digitCache.get(k.bbox) === 1 && k.bbox.w >= oneW * 1.35 && topBar(k.bbox)) { probe("digit.wideOneIsSeven"); digitCache.set(k.bbox, 7); }
+    }
+  }
   const ocrDigit = (b: Rect) => digitCache.get(b) ?? 0;
 
   // 圆滑线弧帽候选（宽而薄的连通块）：用于在 buildJpNums 里把弧脚碎片从"高八度点"中剔除。

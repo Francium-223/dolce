@@ -939,17 +939,32 @@ export async function recognizeLyrics(
     const sig = (t: string) => [...t].filter((c) => isHanzi(c) || /[A-Za-z0-9]/.test(c));
     const allSig = [...rawByKey.values()].flatMap(sig);
     const hanPage = allSig.length >= 20 && allSig.filter(isHanzi).length >= allSig.length * 0.6;
-    const junkLine = (t: string) => { const cs = sig(t); return cs.length >= 3 && cs.filter(isHanzi).length < cs.length * 0.3; };
+    // 只有一两个字母数字、一个汉字都没有的也算（选本 98：连音弧读成一个「O」单成一段）
+    const junkLine = (t: string) => {
+      const cs = sig(t), han = cs.filter(isHanzi).length;
+      return (cs.length >= 3 && han < cs.length * 0.3) || (cs.length >= 1 && cs.length <= 2 && han === 0);
+    };
     // 附段挤进了末谱行/段末行的歌词带（选本 36：每调只两行谱，「二 纵我双手不罢休…」离第二行很近，封底线以内）：
     // 该行第 1 段不带段号、后面某一段以「二」起头，从那段起都是附段，交给 stanzas.ts。
     // 只认汉字段号：谱下多段词用「1.」「2.」，第 1 段的号 OCR 读丢时「2.」就像附段开头（哦，愿我有千万舌头、日光之下）
     const LABEL_HEAD = /^[\s/]*[(（]?([一二])[)）]?[.、．]?/;
     const stanzaFrom = new Map<number, number>();
     for (const r of capRows) {
-      if (LABEL_HEAD.test(rawByKey.get(`${r}:0`) ?? "")) continue;
+      const nNotes = staff[r]?.nums.filter((n) => n.digit !== 0).length ?? 0;
+      const hanN = (t: string) => [...t].filter(isHanzi).length;
+      const labeled0 = LABEL_HEAD.test(rawByKey.get(`${r}:0`) ?? "");
       for (let v = 1; rawByKey.has(`${r}:${v}`); v++) {
-        const m = LABEL_HEAD.exec(rawByKey.get(`${r}:${v}`)!);
-        if (m && m[1] !== "一") { stanzaFrom.set(r, v); probe("lyrics.stanzaInBand"); break; }
+        const raw = rawByKey.get(`${r}:${v}`)!;
+        const m = labeled0 ? null : LABEL_HEAD.exec(raw);
+        // 没段号的附段首行：字数远多于这一行的音数，放不下，不是这一行的词（选本 85：末行「在我身上！」4 个音，
+        // 下面紧挨的附段首行 20 来个字被当成第 2 段，fillLeadingVerses 再把第 1 段抄一遍，附段整体错后一段）
+        const tooLong = nNotes > 0 && hanN(raw) > Math.max(nNotes * 1.5, hanN(rawByKey.get(`${r}:0`) ?? "") * 1.5);
+        // 全曲别的谱行都没有这一段、只有这一行有（选本 127：别的行都只一段词，末行下方挤进附段第二段首行「爱主，自从当年…」）
+        const loneVerse = staff.length >= 3 && hanN(raw) >= 4 &&
+          ![...rawByKey.keys()].some((k2) => { const [r2, v2] = k2.split(":").map(Number); return r2 !== r && r2! >= 0 && v2 === v && sig(rawByKey.get(k2)!).length >= 2; });
+        if ((m && m[1] !== "一") || tooLong || loneVerse) {
+          stanzaFrom.set(r, v); probe(tooLong ? "lyrics.stanzaInBandLong" : loneVerse ? "lyrics.stanzaInBandLone" : "lyrics.stanzaInBand"); break;
+        }
       }
     }
     const inStanza = (k: string) => { const [r, v] = k.split(":").map(Number); return stanzaFrom.has(r!) && v! >= stanzaFrom.get(r!)!; };

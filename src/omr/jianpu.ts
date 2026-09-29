@@ -1807,8 +1807,17 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
   const noteRuleY = Math.min(...c.hlines
     .filter((h) => h.bbox.w >= bin.w * 0.5 && rowMetaAll.filter((m) => m.botY < h.bbox.y && m.barlineXs.length >= 2).length >= 2)
     .map((h) => h.bbox.y));
+  // **末谱行以下的方块字行是注释**：没有通栏线隔开的（选本 217 附段下直接印「(217)1.你名似膏香：…」），注释里的汉字与
+  // 数字同高，被 classify 收成了核，零星的「1.」「2」过得了休止占比的门。汉字核近正方（18×18），数字瘦（11×18）。
+  // 只看最后一条像样谱行（≥3 根小节线、七成核不方）以下——粗体数字也近方，谱区里不能这么判；整页找不出像样谱行
+  //（我今来就你，数字粗方）就不判。
+  const hanCore = (k: DigitCore) => k.bbox.w >= k.bbox.h * 0.9 && k.bbox.h >= musicRowH * 0.85;
+  const lastMusicBot = Math.max(-Infinity, ...rowMetaAll
+    .filter((m) => m.rd.length >= 3 && m.barlineXs.length >= 3 && m.rd.filter((k) => !squareCore(k)).length >= m.rd.length * 0.7)
+    .map((m) => m.botY));
   const rowMeta = rowMetaAll.filter((m) => {
     if (m.topY > noteRuleY) { probe("pseudoRow.belowNoteRule"); return false; }
+    if (Number.isFinite(lastMusicBot) && m.topY > lastMusicBot && m.rd.length >= 6 && m.rd.filter(hanCore).length * 2 >= m.rd.length) { probe("pseudoRow.proseTail"); return false; }
     if (m.rd.length < 3) return false;
     if (m.rd.filter(flatCore).length * 2 > m.rd.length) { probe("pseudoRow.flat"); return false; }
     if (keyLineRow(m.rd)) { probe("pseudoRow.keyLine"); return false; }
@@ -1830,8 +1839,9 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
     // 前一道门，只按字号判整页谱行全丢。
     const rowH = median(m.rd.map((k) => k.bbox.h));
     if (rowH >= numH * 1.4 && rowH >= pageRowH * 1.4) { probe("pseudoRow.tall"); return false; }
-    if (m.rd.length < 4 && rowMetaAll.some((o) => o !== m && o.rd.length >= m.rd.length * 2 &&
-      o.topY - m.botY > -numH * 0.3 && o.topY - m.botY < numH * 1.2)) {
+    // 行内拍号「3/4」连着下一行的 ♯ 凑成四个核、底边还压进下面谱行半个字高（选本 586），也算：核 ≤4、重叠放到一个字号内
+    if (m.rd.length <= 4 && rowMetaAll.some((o) => o !== m && o.rd.length >= m.rd.length * 2 && o.topY > m.topY &&
+      o.topY - m.botY > -numH && o.topY - m.botY < numH * 1.2)) {
       probe("pseudoRow.deco"); return false;
     }
     return true;

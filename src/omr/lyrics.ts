@@ -773,6 +773,13 @@ export async function recognizeLyrics(
         const lx = textsPos ? fracToSrcX(textsPos[s][0]?.xFrac ?? 0) : cells[0].x;
         if (lx < rcx(first.bbox)) labelEnd = cn[0].length;
       }
+      // 没分隔符、跟正文读成一块的（选本 299「一在远山…」、195）：首字是中文数字、在首音左边半个字号以外，
+      // 且第二个字正落在首音下方——真歌词首字是「一」的，它自己才在首音下，第二个字要到下一个音
+      const tp = textsPos?.[s];
+      if (!labelEnd && isFirstChunk && first && tp && tp.length >= 2 && CN_NUM.includes(tp[0]!.ch)) {
+        const x0 = fracToSrcX(tp[0]!.xFrac), x1 = fracToSrcX(tp[1]!.xFrac);
+        if (x0 < first.bbox.x - numH * 0.5 && Math.abs(x1 - first.bbox.x) < numH * 0.8) { probe("lyrics.bareCnLabel"); labelEnd = 1; }
+      }
     }
     // 段落方框 Intro/Verse/Chorus/Coda：可能独占一块（被 cov 过滤的短行），也可能与和弦行同块
     // （"Gsus4G" 与 "Chorus" 同一 verse 行）。在任何块里就地捞出，x 取该词首字。

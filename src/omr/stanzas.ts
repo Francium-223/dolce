@@ -17,10 +17,13 @@ import { probe } from "./probe";
 const isHanzi = (c: string) => /[一-鿿]/.test(c);
 const isLatin = (c: string) => /[A-Za-z']/.test(c);
 
-// 整行只有段号：「二」「2」「2.」「（二）」
-const LABEL_ONLY_RE = new RegExp(`^[(（]?([${CN_NUM}]|\\d{1,2})[)）]?[.、．。:：]?$`);
+// 中文段号：一…十、十一…二十（选本 563 有十二段）
+const CN_LABELS = [...CN_NUM, ...[...CN_NUM.slice(0, 9)].map((c) => "十" + c), "二十"];
+const CN_LABEL_ALT = `二十|十[${CN_NUM.slice(0, 9)}]|[${CN_NUM}]`;
+// 整行只有段号：「二」「十二」「2」「2.」「（二）」
+const LABEL_ONLY_RE = new RegExp(`^[(（]?(${CN_LABEL_ALT}|\\d{1,2})[)）]?[.、．。:：]?$`);
 // 段号领着正文：「2.夕阳…」「二、夕阳…」——必须带分隔符，裸「一面运行」的「一」是正文
-const LABEL_PREFIX_RE = new RegExp(`^[(（]?([${CN_NUM}]|\\d{1,2})[)）]?[.、．](?=.)`);
+const LABEL_PREFIX_RE = new RegExp(`^[(（]?(${CN_LABEL_ALT}|\\d{1,2})[)）]?[.、．](?=.)`);
 /** 音节数与第 1 段音位数至多差几个还照填（OCR 多读/漏读一两个字） */
 const COUNT_TOL = 2;
 
@@ -45,7 +48,7 @@ export function toSyllables(text: string): string[] {
   return out;
 }
 
-interface Stanza { label?: string; lines: { text: string; bbox: TextRegion["bbox"] }[] }
+interface Stanza { label?: string; lines: { text: string; bbox: TextRegion["bbox"]; vi: number }[] }
 
 /** 识别谱后附段并按第 1 段的音位骨架写进各音符的 `lyrics[v]`。返回收下的诗文行（识别模式叠加用）。
  *  一页两调的（选本诗歌712「(第一调)」谱 + 附段 +「(第二调)」谱）按谱行间的大间隔（>3 倍行距，同 lyrics.ts 的段末行）
@@ -87,12 +90,38 @@ async function stanzasOfSegment(
   // 区域：末谱行歌词下缘 → 下一段首行（没有就到图底）。末行下没配词（器乐尾奏）就从谱行底下一个字高起。
   const below = (lyricRegions ?? []).filter((r) => r.bbox.y >= last.bottomY - numH * 0.2 && r.bbox.y < yEnd);
   const y0 = Math.round((below.length ? Math.max(...below.map((r) => rbottom(r.bbox))) : last.bottomY + numH) + numH * 0.3);
+  // 附段下方的通栏细线（过半页宽）以下是注释（选本 303：注释首行「(303)1.」读成「30311」，行首截断认不出，二十来行注释并进第五段）
+  const rule = ruleBelow(bin, y0, yEnd);
+  if (rule !== undefined) { probe("stanza.ruleCut"); yEnd = rule; }
   if (yEnd - y0 < numH * 2) return [];
-  const dets = (await ocr.recognizeRegion(bin, { x: 0, y: y0, w: bin.w, h: yEnd - y0 }))
+  let dets = (await ocr.recognizeRegion(bin, { x: 0, y: y0, w: bin.w, h: yEnd - y0 }))
     .map((d) => ({ text: d.text.trim(), bbox: d.bbox }))
     .filter((d) => d.text);
+  // 一段两行挨得很近、字距又拉得很宽的版面（选本 563「他 是 美 中 之 美」上下两行只隔三四像素），检测把上下两个字
+  // 连成一个竖框，逐框读出来是单字乱码（夹着些读成碎字的小框）。三成以上的框高过投影切出的文本行高 1.6 倍、或过半的框只有一个字（262 行距 27px 的三行一段，框碎成单字夹着竖框）时，按投影行逐条重检（`stanza.bandRedet`）。
+  const bands = inkBands(bin, y0, yEnd);
+  const bandH = median(bands.map((b) => b[1] - b[0]));
+  const tallShare = dets.filter((d) => d.bbox.h > bandH * 1.6).length / Math.max(1, dets.length);
+  const singleShare = dets.filter((d) => [...d.text].length === 1).length / Math.max(1, dets.length);
+  if (bands.length >= 2 && bandH > 0 && (tallShare >= 0.3 || (dets.length >= 20 && singleShare >= 0.5))) {
+    probe("stanza.bandRedet");
+    dets = [];
+    for (const [a, b] of bands) {
+      const pad = 2, ya = Math.max(y0, a - pad), yb = Math.min(yEnd, b + pad);
+      dets.push(...(await ocr.recognizeRegion(bin, { x: 0, y: ya, w: bin.w, h: yb - ya }))
+        .map((d) => ({ text: d.text.trim(), bbox: d.bbox })).filter((d) => d.text));
+    }
+  }
   if ((globalThis as { __omrDebug?: boolean }).__omrDebug) {
-    console.log("[stanzas/det]", dets.map((d) => `${Math.round(d.bbox.h)}px@${Math.round(d.bbox.y)}=${JSON.stringify(d.text)}`).join("  "));
+    console.log("[stanzas/det]", dets.map((d) => `${Math.round(d.bbox.h)}px@${Math.round(d.bbox.x)},${Math.round(d.bbox.y)}w${Math.round(d.bbox.w)}=${JSON.stringify(d.text)}`).join("  "));
+  }
+  // 汉字附段块里夹在句中、不含汉字的一两个字符的碎框（262 重检后夹着「K」「FO」）是笔画碎块读出来的，挤歪音位。
+  // 只剔同一行左边已有汉字框的——行首的是读错的段号（262「三」读成「I」），留给下面按几何认段号
+  const allChars = dets.flatMap((d) => [...d.text]).filter((c) => /[\p{L}\p{N}]/u.test(c));
+  if (allChars.filter(isHanzi).length >= allChars.length * 0.8) {
+    const midLine = (d: (typeof dets)[number]) => dets.some((o) => o !== d && o.bbox.x < d.bbox.x && [...o.text].some(isHanzi) &&
+      Math.min(rbottom(o.bbox), rbottom(d.bbox)) - Math.max(o.bbox.y, d.bbox.y) >= Math.min(o.bbox.h, d.bbox.h) * 0.5);
+    dets = dets.filter((d) => [...d.text].some(isHanzi) || [...d.text].length > 2 || !midLine(d));
   }
   if (!dets.length) return [];
   // 先按纵向重叠聚成视觉行、行内按 x 排：一行诗常分两半印（选本诗歌712「我乃天上的人，　暂居世间，」），
@@ -100,20 +129,26 @@ async function stanzasOfSegment(
   dets.sort((a, b) => a.bbox.y - b.bbox.y);
   const vlines: (typeof dets)[] = [];
   for (const d of dets) {
-    const ln = vlines.find((l) => l.some((o) => Math.min(rbottom(o.bbox), rbottom(d.bbox)) - Math.max(o.bbox.y, d.bbox.y) >= Math.min(o.bbox.h, d.bbox.h) * 0.5));
+    // 按中心距聚：按重叠比例聚时，高框（310 段号「二」38px，行距才 27px）会把下一行行首的字拉进来，两行链成一行
+    const cy = (b: TextRegion["bbox"]) => b.y + b.h / 2;
+    const ln = vlines.find((l) => l.some((o) => Math.abs(cy(o.bbox) - cy(d.bbox)) < Math.min(o.bbox.h, d.bbox.h) * 0.5));
     if (ln) ln.push(d); else vlines.push([d]);
   }
   vlines.sort((a, b) => Math.min(...a.map((d) => d.bbox.y)) - Math.min(...b.map((d) => d.bbox.y)));
   // 页脚注释从这里起就不是诗了：选本诗歌712 通本在附段下面印「(337)1.生命的饼：指主的话语。…」，
   // 行首是括号括着的曲号。混进末段就字数对不上、整块被拒。演唱说明「(唱至第五、六节的“和”时…)」同理（304）
   // 下一调的小标题「(第二调)」「降E调 4/4」也是截断处
-  const noteAt = vlines.findIndex((l) => {
-    const t = [...l].sort((a, b) => a.bbox.x - b.bbox.x).map((d) => d.text).join("");
-    // 整行括号括着的说明（25「(“我”可换唱“你”)」）同理
-    return /^[(（](?:\d{1,4}[)）]|唱|注)/.test(t) || /^[(（].*[)）]$/.test(t) || /[(（]第.{1,3}调[)）]|调\s*\d{1,2}\s*[/／]\s*\d{1,2}/.test(t);
+  const lineText = (l: typeof dets) => [...l].sort((a, b) => a.bbox.x - b.bbox.x).map((d) => d.text).join("");
+  const labelLine = (l: typeof dets) => { const t = lineText(l); return LABEL_ONLY_RE.test(t.slice(0, 2)) || LABEL_PREFIX_RE.test(t) || /^[(（]?\d{1,2}[)）]?$/.test(t); };
+  const noteAt = vlines.findIndex((l, i) => {
+    const t = lineText(l);
+    // 整行括号括着的说明（25「(“我”可换唱“你”)」）同理——后面还有段号行的不算：那是段里一句括着的诗
+    //（186 第六段「(亲爱旅伴！世人对你，是否算为已经亡？)」）
+    return /^[(（](?:\d{1,4}[)）]|唱|注)/.test(t) || (/^[(（].*[)）]$/.test(t) && !vlines.slice(i + 1).some(labelLine)) ||
+      /[(（]第.{1,3}调[)）]|调\s*\d{1,2}\s*[/／]\s*\d{1,2}/.test(t);
   });
   if (noteAt >= 0) { probe("stanza.footnoteCut"); vlines.length = noteAt; }
-  const ordered = vlines.flatMap((l) => l.sort((a, b) => a.bbox.x - b.bbox.x).map((d, i) => ({ ...d, lineStart: i === 0, lineLen: l.length })));
+  const ordered = vlines.flatMap((l, vi) => l.sort((a, b) => a.bbox.x - b.bbox.x).map((d, i) => ({ ...d, lineStart: i === 0, lineLen: l.length, vi })));
 
   // 切段：段号开新段；没段号时按空行（行距明显大于常规行距）断开。
   const lineH = median(dets.map((d) => d.bbox.h)) || numH;
@@ -125,37 +160,53 @@ async function stanzasOfSegment(
   // 还没切出任何段时等的是「二」——谱下配的就是第 1 段（选本 167「二由死而生—何等奇妙的复活！」）
   // 段号漏检的段（408「二」没检出来）按段数往下推
   const nextLabel = () => {
-    if (!stanzas.length) return CN_NUM[1];
-    const k = cur?.label ? CN_NUM.indexOf(cur.label) : stanzas.length;
-    return k >= 0 && k + 1 < CN_NUM.length ? CN_NUM[k + 1] : undefined;
+    if (!stanzas.length) return CN_LABELS[1];
+    const k = cur?.label ? CN_LABELS.indexOf(cur.label) : stanzas.length;
+    return k >= 0 && k + 1 < CN_LABELS.length ? CN_LABELS[k + 1] : undefined;
   };
   const labeled = ordered.some((d) => d.lineStart && (LABEL_ONLY_RE.test(d.text) || LABEL_PREFIX_RE.test(d.text)));
+  // 正文起始列：各视觉行首个多字框左缘的中位。段号印在它左边一栏
+  const textColX = median(vlines.map((l) => l.find((d) => [...d.text].length > 2)?.bbox.x).filter((x): x is number => x !== undefined));
   for (const d of ordered) {
     const nl = nextLabel();
-    // 段号读错了字（684「西」= 四、「三卷」）：视觉行首单独一个 1–2 字的小框、同一行后面还跟着正文，照样是段号
+    // 段号读错了字（684「西」= 四、「三卷」）：视觉行首单独一个 1–2 字的小框、同一行后面还跟着正文，照样是段号。
+    // 须在段号栏里（框中心在正文起始列左边；单字框常被检测放宽，右缘会压到正文列，299「西」）——
+    // 正文行首一个字单独成框的（310「从」+「军的教会」）不是
+    const inLabelCol = !textColX || d.bbox.x + d.bbox.w / 2 < textColX;
     const only = LABEL_ONLY_RE.exec(d.text) ??
-      (labeled && d.lineStart && d.lineLen > 1 && [...d.text].length <= 2 && nl ? ([d.text, nl] as unknown as RegExpExecArray) : null);
-    const glued = !only && d.lineStart && nl && d.text.length > 1 && d.text[0] === nl ? ([nl, nl] as unknown as RegExpExecArray) : null;
+      (labeled && d.lineStart && d.lineLen > 1 && [...d.text].length <= 2 && nl && inLabelCol ? ([d.text, nl] as unknown as RegExpExecArray) : null);
+    // （不认跳一个号的：圣徒诗歌 11「四围星辰…」会被当成段号「四」）
+    const glued = !only && d.lineStart && nl && d.text.length > nl.length && d.text.startsWith(nl) ? ([nl, nl] as unknown as RegExpExecArray) : null;
     const pre = only ? null : LABEL_PREFIX_RE.exec(d.text) ?? glued;
     if (glued && pre === glued) probe("stanza.gluedLabel");
     // 有段号就按段号切，不再按空行断：行距宽的版面（选本诗歌712 637，行间空当超过一个框高）段内也像空行
     const gapBreak = !labeled && d.lineStart && d.bbox.y - prevBottom > lineH * 1.2;
     prevBottom = d.lineStart ? rbottom(d.bbox) : Math.max(prevBottom, rbottom(d.bbox));
-    if (only) { stanzas.push(cur = { label: only[1], lines: [] }); continue; }
+    if (only) {
+      // 段号重复或倒退（277 第三段的「三」读成「二」）：按顺下来的号算，后面粘连的「四你要不死…」才认得出
+      const curLabel: string | undefined = (cur as Stanza | null)?.label;
+      const back: boolean = !!curLabel && CN_LABELS.includes(only[1]) && CN_LABELS.indexOf(only[1]) <= CN_LABELS.indexOf(curLabel);
+      stanzas.push(cur = { label: back && nl ? nl : only[1], lines: [] });
+      continue;
+    }
     if (pre) {
-      stanzas.push(cur = { label: pre[1], lines: [{ text: d.text.slice(pre[0].length), bbox: d.bbox }] });
+      stanzas.push(cur = { label: pre[1], lines: [{ text: d.text.slice(pre[0].length), bbox: d.bbox, vi: d.vi }] });
       continue;
     }
     // 段号行后面紧跟的第一行不算空行断开（段号与正文之间本来就隔着点距离）
     if (!cur || (gapBreak && cur.lines.length)) stanzas.push(cur = { lines: [] });
-    cur.lines.push({ text: d.text, bbox: d.bbox });
+    cur.lines.push({ text: d.text, bbox: d.bbox, vi: d.vi });
   }
 
   // 逐段对音位数；一段对不上，整块当正文丢掉（散文碰巧有一段字数对上的概率不值得冒险）。
   // 带副歌的：附段只配主歌那几行，副歌每段照唱、不重印（选本诗歌712 529：二三四段各两行诗，只对前两谱行，
   // 后两行「和」领起的副歌不在附段里）。所以音位数不必等于整首，可以等于**到某一谱行为止**的前缀——
   // 各段须落在同一条行界上。整首对得上优先。
-  const sylls = stanzas.filter((s) => s.lines.length).map((s) => toSyllables(s.lines.map((l) => l.text).join("")));
+  const kept = stanzas.filter((s) => s.lines.length);
+  const sylls = kept.map((s) => toSyllables(s.lines.map((l) => l.text).join("")));
+  // 各段按视觉行拆开的音节（逐行填用）
+  const lineSylls = kept.map((s) => [...new Set(s.lines.map((l) => l.vi))]
+    .map((vi) => toSyllables(s.lines.filter((l) => l.vi === vi).map((l) => l.text).join(""))));
   const cum: number[] = [];
   rows.reduce((a, r) => { const v = a + r.nums.filter((n) => n.lyrics?.[0]).length; cum.push(v); return v; }, 0);
   // 每段各自选对得上的范围：整首，或某条谱行界上的第 1 段音位前缀（选本 19：一段只配主歌 54、另一段连副歌整首 68）。
@@ -166,7 +217,7 @@ async function stanzasOfSegment(
     .sort((a, b) => Math.abs(sy.length - a) - Math.abs(sy.length - b) || b - a)[0] ?? 0);
   // 只有末尾几段对不上（末段后面还连着没截住的说明文字，195 末段 93 对 61）：丢掉那几段，前面对得上的照收
   while (spans.length > 1 && !spans[spans.length - 1] && spans.slice(0, -1).some((c) => c)) {
-    probe("stanza.dropTail"); spans.pop(); sylls.pop();
+    probe("stanza.dropTail"); spans.pop(); sylls.pop(); lineSylls.pop();
   }
   if (!sylls.length || spans.some((c) => !c)) {
     if (sylls.length) probe("stanza.rejected");
@@ -175,11 +226,45 @@ async function stanzasOfSegment(
   if (spans.some((c) => c < slots.length)) probe("stanza.versePrefix");
 
   const base = Math.max(1, ...rows.flatMap((r) => r.nums.map((n) => n.lyrics?.length ?? 0)));
+  // 一段的诗行数正好等于谱行数、每行音节数都与该谱行第 1 段音位数差不过 2 时逐行填：一行里 OCR 漏读一个字，
+  // 错位只限在这一行，不往后面各行传（选本 303 四行一段，「我们可否因贪优游」漏「贪」，后三行全错一位）。
+  const rowSlots = rows.map((r) => r.nums.filter((n) => n.lyrics?.[0])).filter((x) => x.length);
   sylls.forEach((sy, k) => {
     const v = base + k, S = spans[k]!;
+    const ls = lineSylls[k]!;
+    if (S === slots.length && ls.length === rowSlots.length && ls.every((l, i) => Math.abs(l.length - rowSlots[i]!.length) <= COUNT_TOL)) {
+      probe("stanza.perRow");
+      rowSlots.forEach((rs, i) => rs.forEach((n, j) => { (n.lyrics ??= [])[v] = ls[i]![j] ?? ""; }));
+      return;
+    }
     if (sy.length !== S) probe("stanza.countMismatch");
     slots.slice(0, S).forEach((n, i) => { (n.lyrics ??= [])[v] = sy[i] ?? ""; });
   });
   probe("stanza");
   return stanzas.flatMap((s) => s.lines.map((l) => ({ text: l.text, bbox: l.bbox })));
+}
+
+/** [y0, y1) 里按行投影切出的有墨行带（高不足 3px 的碎点带不算） */
+function inkBands(bin: Binary, y0: number, y1: number): [number, number][] {
+  const out: [number, number][] = [];
+  let start = -1;
+  for (let y = Math.max(0, y0); y <= Math.min(bin.h, y1); y++) {
+    let ink = false;
+    if (y < Math.min(bin.h, y1)) for (let x = 0, o = y * bin.w; x < bin.w; x++) if (bin.data[o + x]) { ink = true; break; }
+    if (ink && start < 0) start = y;
+    else if (!ink && start >= 0) { if (y - start >= 3) out.push([start, y]); start = -1; }
+  }
+  return out;
+}
+
+/** [y0, y1) 里第一条横向连续墨迹过半页宽的行（通栏细线）；文字行凑不出这么长的连续段 */
+function ruleBelow(bin: Binary, y0: number, y1: number): number | undefined {
+  for (let y = Math.max(0, y0); y < Math.min(bin.h, y1); y++) {
+    let run = 0, best = 0;
+    for (let x = 0, o = y * bin.w; x < bin.w; x++) {
+      if (bin.data[o + x]) { if (++run > best) best = run; } else run = 0;
+    }
+    if (best >= bin.w * 0.5) return y;
+  }
+  return undefined;
 }

@@ -82,7 +82,7 @@ Node 侧经 `src/cli/j123.ts` → `dist-cli/j123.js` 使用（`npm run build:cli
   只在 `ScoreDoc` 与 `.123` 里活着。
 - 五线谱侧字段（`clef`/`staves`/`transpose`/`pedal`/`octaveShift`/`partGroups`/`defaults`/`technical`）
   **已由 `fromxml.ts` 填充**（`../dev/scripts/staff-fields-check.mjs` 的合成夹具逐样断言过，
-  真实语料 1035 份的填充率也在那里）。
+  真实语料的填充率也在那里）。
 - **派生量不存进模型、只经查询层取**（唱名、减时线条数、调号上下文、演唱顺序…，见 `model/jianpu.ts`、`score/playorder.ts`）：
   存了就有同名字段两种口径（`Chord.beams` 在 MusicXML 来源是 `<beam>` 列表、在简谱来源是减时线条数，靠 `isXmlShaped` 分），
   要管编辑后的失效，指针有环不能序列化。**断行例外**——它是「这份谱怎么印」的事实，跨格式都有，随文档保存、往返。

@@ -19,18 +19,14 @@
   `public/redist/ocr/`（rec onnx `ch_PP-OCRv6_small_rec_infer.onnx` **~21MB** + `ppocrv6_dict.txt` **18708 字**
   + **det onnx ~4.7MB**（DBNet，仍 PP-OCRv4，页眉用；det 头与 rec 无关故可跨版混用）），wasm 运行时在
   `public/redist/ort/`（纯 wasm 单线程，免 COOP/COEP）；`onnxruntime-web/wasm` 子入口避开 26MB 的 jsep 构建。
-  早期用 **tesseract.js**（`localocr.ts` + `montage.ts`），实测数字仅约 69%（常把 6 误读为 0），
-  且从来没有开关能切到它，2026-08 重构时连同已废弃的 Gemini/agy 整页转写方案一并移除。
-  - **rec 逐代换**（2026-07）：PP-OCRv4(6623字/无「祂」) → v5_mobile(18383字) → **v6_small(18708字)**。v4 无「祂」
-    （赞美诗第三人称神）只能读成形近「他」；v5_mobile 字典含「祂」但**视觉仍偏向高频「他」**、48px 二值条上「祂」全读错；
-    **v6_small 同一条子「祂」4/4 全对**（基督更美/耶稣普治），整体音符 100%、含标点歌词 ~93→**99.8%**、词曲 99→**100%**。
+  - **模型选型**：rec 用 v6_small，因为赞美诗的「祂」——v4 字典里没有、只能读成「他」；v5_mobile 字典有但视觉偏向高频「他」；
+    v6_tiny 读成「池」；v6_small 同一批条子全对；v6_medium（76MB）太大。
     前端 CTC 解码字典驱动（`_chars`=["", ...dict]）、数字类别索引 `chars.indexOf` 动态求、Rust argmax 读动态末轴，
-    **换字典/模型无需改逻辑**，只换 `REC_URL`/`DICT_URL` + `tauri.conf.json` 打包映射（rec.onnx）。输入 shape
-    仍 [3,48,320]、归一化不变。导出：`paddlepaddle 3.x`(macOS arm64 **必须 3.x**，2.6.2 CPU 构建卡死/段错误) +
-    `paddleocr 3.7.0` → `paddle2onnx 2.1.0`（**注意** `paddlex --install paddle2onnx` 会降级到 2.0.2rc3 且报
-    "Paddle2ONNX is not available"，须 `pip install paddle2onnx==2.1.0` 后直接 `paddle2onnx --model_dir …`）。
-    变体实测：v6_tiny(4.4MB)「祂」读成「池」、**v6_small(21MB)「祂」4/4**、v6_medium(76MB)太大 → v6_small 最优。
-  - **v6 换代的两处数字回退，用两条通用几何修复消掉**（均在 `jianpu.ts`，非针对样本打补丁）：① **矮块补高**
+    **换字典/模型无需改逻辑**，只换 `REC_URL`/`DICT_URL` + `tauri.conf.json` 打包映射（rec.onnx）；输入 shape [3,48,320]、归一化不变。
+  - **模型导出**：`paddlepaddle 3.x`（macOS arm64 **必须 3.x**，2.6.2 CPU 构建卡死/段错误）+ `paddleocr 3.7.0` → `paddle2onnx 2.1.0`
+    （`paddlex --install paddle2onnx` 会降级到 2.0.2rc3 且报 "Paddle2ONNX is not available"，须 `pip install paddle2onnx==2.1.0`
+    后直接 `paddle2onnx --model_dir …`）。
+  - **换 v6 后的两处数字回退，用两条通用几何修复消掉**（均在 `jianpu.ts`，非针对样本打补丁）：① **矮块补高**
     （`recRects`）——连通域偶尔只截半个字（淡印断笔「1」竖笔断开、块高≈半字高 → 送 rec 成半字读作「4」），据本行
     数字带统计高度把 h<带高×0.7 的块纵向补到整字高（`cellOf` 按 rect 从二值图裁、会纳入带内断开的另一半；带
     `[topY,botY]` 由数字核算出不含下划线/八度点，补高安全）；② **空心环校验**（`midbandInk`）——简谱「0」是空心环、
@@ -69,7 +65,7 @@ montage 单行长条过大导致 OCR 超时（改网格）、**八度点过检**
 上一个**：按 x 排序时，同一道减时线的第二层就夹在序列中间（那处四截是 x784/866/874/879，
 其中 874 是下面一层），只比上一个第三截就接不回去。
 
-### 密排粗体印刷本（迦南诗选那批）挑出来的五条
+### 密排粗体印刷本：减时线、增时线、粘连块与拍号的五条判据
 
 数字排版直接印的诗歌本（迦南诗选 8 首实测）与从前的翻拍/复印语料**版面特性正相反**：音符排得密、
 减时线紧贴数字底、字形瘦、增时线短。旧判据全是照扫描件的宽松版面定的，在这批上一条条地翻车：
@@ -137,7 +133,7 @@ numH 47），0.55 把**清清楚楚的 4 和 7** 一并改成了 1（《祷告�
 （`节拍自检`：除各首本就写着的弱起/收尾小节外无一例外），新立的 GT《1689 天不蓝了 水不清了》
 音符/小节/slur/歌词/对位**全 100%**（改前音符 62.6、小节 64.2、slur 50.0）；14 首老语料指标不变。
 
-### 减时线粘连、和弦字母当弧、中文段号（《5915 切慕》《7606 同伴》）
+### 减时线粘连、和弦字母当弧、中文段号
 
 两张干净印刷谱（小节线实心笔直，`isCleanPage` 为真）各有几处错，**表面现象与根因多半对不上**，下面按根因记。
 
@@ -724,7 +720,7 @@ Chorus/Intro 一视同仁地先剥掉，再判是不是注记行。1《以色列
 在任何块的 rec 原文里用 `SECTION_MARK_RE` 就地捞词（Chorus 常与和弦同块）。落位：方框印在**下一谱行**
 音符上方 → 归到该行、标记 x 所在**小节的首音**（`JpNum.sectionMark`）→ `Chord.sectionWord`（123 `"^Chorus"`）。
 以前经 MusicXML `<direction><words>` 转手，读回 123 时整个丢了。
-### 六首新语料挑出来的七条（1801/1806/1811/1812、92/95）
+### 小图与厚印老本子：页边墨、行序等七条互不相干的判据
 
 迦南诗选四首 + 爱主颂两首（小图、厚印的老本子）一次性暴露的七处，根因互不相干，各立了一首 GT 看护。
 

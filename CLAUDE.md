@@ -7,15 +7,17 @@
 
 - [docs/需求.md](docs/需求.md) 做什么 · [docs/架构.md](docs/架构.md) 怎么分层、哪些决策不要推翻
 - [docs/模块/](docs/模块/) 每个模块一页：职责/入口/判据/回归/限制（18 篇）
-- [docs/格式/](docs/格式/) 格式规范：[123格式](docs/格式/123格式.md)（新，设计稿）、[jpwabc](docs/格式/jpwabc.md)；
+- [docs/格式/](docs/格式/) 格式规范：[123格式](docs/格式/123格式.md)（简谱主格式）、[jpwabc](docs/格式/jpwabc.md)；
   样式定制见 [docs/样式机制.md](docs/样式机制.md)
-- [docs/实现/](docs/实现/) 判据与踩坑全录（各模块页开头有指向对应篇的链接）
+- [docs/实现/](docs/实现/) 判据与踩坑全录（各模块页开头有指向对应篇的链接；没有单独实现篇的写明判据在本页）
+- 还要做什么只记在 [docs/待办.md](docs/待办.md)（做完的条目直接删）；README 中英两份（`README.md` / `README.en.md`）要同步改
 
 ## 命令
 
 构建、类型检查、桌面调试命令见 [docs/架构.md](docs/架构.md)「技术栈与构建」。
 回归脚本、语料与基线不在本仓库（本地私有仓库，从本仓库根跑 `node ../dev/scripts/xxx.mjs`）；
-`scripts/` 只留发布链路：`release.sh`、`pack-omr.mjs`、`win-crt.mjs`、`vcredist.mjs`。
+`scripts/` 只留发布链路：`release.sh`、`pack-omr.mjs`、`win-crt.mjs`、`vcredist.mjs`，外加随 OMR 包分发的 `omr-cli.mjs`。
+文档里写的 `../dev/scripts/xxx.mjs` 都在私有仓库。
 
 ## 约定
 

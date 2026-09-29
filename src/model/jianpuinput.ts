@@ -724,6 +724,9 @@ function rowsPart(
         m.time = curTime = { beats: t.beats, beatType: t.beatType };
         m.timeChange = true;
       }
+      // 小节**左线**上的反复起点（曲首的 `|:`、接在 `||` 后面的 `|:`）：排版行视图不把左线输出成元素
+      //（`pu/slots.ts::buildRow`，否则多出空小节），只靠前一小节右线的 `:|:` 带不回来，在这里直接从模型读
+      if (src.barlines?.some((b) => b.location === "left" && b.repeat === "forward")) m.repeatForward = true;
     }
     measure = m;
     measures.push(m);

@@ -496,6 +496,9 @@ function drawTuplet(eng: MixedOptions, container: Group, obj: Tuplet): void {
 // -----------------------------------------------------------------------
 // drawEnding（render.cpp::drawEnding）
 
+/** 混排里房号竖脚底离简谱层原点的空（高音点 + 简谱连音弧）。 */
+const MIXED_ENDING_GAP = 16;
+
 function drawEnding(container: Group, obj: Ending, sys: Sys, mixed: boolean): void {
   // 房跨系统：起点在前面的系统里，这一段从本系统首小节画起、不画左脚不印房号；终点在后面的系统里，画到本系统末小节、不封口
   const startsHere = sys.contains(obj.startTick);
@@ -520,7 +523,11 @@ function drawEnding(container: Group, obj: Ending, sys: Sys, mixed: boolean): vo
       // 自动铺排的和弦按真实字高（约 18 tenths）：数字基线放到和弦顶上方 4；带坐标的谱照 musicpp
       yPos = scr.autoLayout ? -(st.harmonyY + 3 + harmonyBand(scr)[0]) + 26 : -st.harmonyY + 12;
     } else if (mixed) {
-      yPos = -st.minY - eng.mixStaffDist - eng.mixStaffHeight;
+      // 简谱层的原点是 `st.minY − mixStaffDist − mixStaffHeight`（同 `jianpuoverlay.ts::drawJianpuOverlay`）。
+      // 原先这里把 `minY` 的符号写反了：谱表越往上伸（minY 越负）房号反而越往下掉，压进简谱层。
+      // 竖脚底（= yPos − 30）停在简谱层之上 16：6 给高音点、10 给简谱层数字上方的连音弧；房号基线就在脚底上下。
+      // 系统纵向范围里同一份高度见 `model.ts` 的 `MIXED_ENDING_BAND`。
+      yPos = st.minY - eng.mixStaffDist - eng.mixStaffHeight + 30 - MIXED_ENDING_GAP;
     } else {
       yPos = Math.min(20, st.minY + 26); // 20 = 不给 yPos 时的缺省位置；高音、上方弧再往上让
     }

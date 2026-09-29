@@ -2031,6 +2031,9 @@ export class Tuplet extends SpanOverNotes {
   }
 }
 
+/** 混排里房号在简谱层之上占的高度（tenths）：竖脚 20 + 离简谱层 16 + 横线上方余量 4。 */
+export const MIXED_ENDING_BAND = 40;
+
 export class Ending extends SpanObj {
   startMeasure!: MeasureLayout;
   endMeasure!: MeasureLayout;
@@ -2677,6 +2680,8 @@ export class SysStaff {
       hasSlur = true;
     }
     if (hasSlur && mixed) maxY += 15;
+    // 混排的房号排在简谱层之上（`render.ts::drawEnding`：竖脚 20 + 离简谱层 16 + 房号与横线的余量），行距要给它留出来
+    if (hasEnding && mixed) maxY += MIXED_ENDING_BAND;
     const first = sys.firstMeasure;
     const cnt = sys.measures.length;
     for (let m = first; m < first + cnt; m++) {

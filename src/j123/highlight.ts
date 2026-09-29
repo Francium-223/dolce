@@ -100,7 +100,8 @@ function scanMusic(src: string, from: number, out: Span[]): void {
       push(i + tuplet[0].length, "break");
       continue;
     }
-    if (ch === "(" || ch === ")") {
+    // 圆滑线括号与接弧 `~`（弧连到下一个音，规范 §4.1）同色
+    if (ch === "(" || ch === ")" || ch === "~") {
       push(i + 1, "break");
       continue;
     }

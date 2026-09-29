@@ -26,7 +26,7 @@ import type {
 } from "../model/doc";
 import { breakAfter, lyricOfVerse, type BreakKind } from "../model/helpers";
 import { lyricSlots, type LyricSlotRule } from "./lyricslot";
-import { isLatinEnd, isLatinStart, isOneCjkWithPunct, nestArcsInTuplets, ownIds, ownMarks, partRanges, systemRanges, type SystemRange } from "../model/emitutil";
+import { arcsToNextNote, isLatinEnd, isLatinStart, isOneCjkWithPunct, nestArcsInTuplets, ownIds, ownMarks, partRanges, systemRanges, type SystemRange } from "../model/emitutil";
 import { harmonyText } from "../model/jianpu";
 import { ORNAMENT_TAG } from "../model/xmlproject";
 import { BARLINE_ORNAMENT_NAME } from "./jumpmarks";
@@ -45,6 +45,8 @@ export interface MarkIndex {
   tupletStart: Map<number, { ratios: { actual: number; normal: number }[]; outerArcs: number }>;
   /** 123 的多连音收在哪（写 `)`）；`outerArcs`：组外起头、收在这个音上的弧数，它们的 `)` 写在多连音的 `)` 之后 */
   tupletEnd: Map<number, { count: number; outerArcs: number }>;
+  /** 起点音后写 `~`（123：跨出多连音连到下一个音的弧，见 `emitutil.ts::arcsToNextNote`） */
+  arcNext: Set<number>;
 }
 
 /** 小节线上的记号 → `!segno!` 之类的 token（认不出的名字原样写出，别默默丢）。 */
@@ -386,7 +388,13 @@ export abstract class AbcFamilyEmitter {
     const tupletEnd = new Map<number, { count: number; outerArcs: number }>();
     const isArc = (m: Mark): boolean => m.type === "slur" || (m.type === "tied" && this.tiesAsSlurs);
     let marks = ownMarks(song, own);
-    // 123 的多连音与弧共用括号、只许嵌套：跨出组的弧截进组内（`planSave` 另报 `slurCrossTuplet`）
+    // 123 的多连音与弧共用括号、只许嵌套：连到下一个音的写成 `~`，其余跨出组的弧截进组内（`planSave` 另报 `slurCrossTuplet`）
+    const arcNext = new Set<number>();
+    if (this.tupletCloses) {
+      const toNext = arcsToNextNote(part, marks, isArc, own);
+      for (const m of toNext) arcNext.add(m.start);
+      if (toNext.size) marks = marks.filter((m) => !toNext.has(m));
+    }
     const nest = this.tupletCloses ? nestArcsInTuplets(part, marks, isArc) : null;
     if (nest) marks = nest.marks;
     for (const m of marks) {
@@ -450,13 +458,13 @@ export abstract class AbcFamilyEmitter {
       time = t;
       let el0 = 0;
       for (const cut of cuts) {
-        out.push(this.measureBody(mea, { slurStart, slurEnd, tupletStart, tupletEnd }, el0, cut.at));
+        out.push(this.measureBody(mea, { slurStart, slurEnd, tupletStart, tupletEnd, arcNext }, el0, cut.at));
         out.push(this.breakText(cut.kind === "page"));
         flush();
         ri++;
         el0 = cut.at;
       }
-      out.push(this.measureBody(mea, { slurStart, slurEnd, tupletStart, tupletEnd }, el0));
+      out.push(this.measureBody(mea, { slurStart, slurEnd, tupletStart, tupletEnd, arcNext }, el0));
       const right = (mea.barlines ?? []).find((b) => b.location === "right");
       // 右线的记号写在线**之前**（`… 6 !fine! |]`）：唱到这儿才跳，读回来也按这个位置认。
       if (right) out.push(...barlineOrnaments(right));
@@ -528,6 +536,7 @@ export abstract class AbcFamilyEmitter {
       for (const r of this.tupletCloses ? tp?.ratios ?? [] : (tp?.ratios ?? []).slice(0, 1)) s += this.tupletText(r.actual, r.normal);
       s += "(".repeat(opens - (tp?.outerArcs ?? 0));
       s += this.elementText(el, mi);
+      if (mi.arcNext.has(el.id)) s += "~";
       const te = mi.tupletEnd.get(el.id);
       const closes = mi.slurEnd.get(el.id) ?? 0;
       s += ")".repeat(closes - (te?.outerArcs ?? 0));

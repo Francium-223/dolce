@@ -303,15 +303,34 @@ function loadXmlMeasure(
     }
   };
 
+  /** 落在 `at`（没折算的 divisions）的和弦挂到那一拍的增时线上；不在某条增时线的拍头上就返回 false */
+  const onSustain = (h: Harmony, at: number): boolean => {
+    const text = xmlHarmonyText(h);
+    const host = chords(m).filter((c) => c.position.toFloat() * div <= at + 1e-6).pop();
+    if (!text || !host) return false;
+    const rel = at / div - host.position.toFloat();
+    const k = Math.round(rel);
+    if (Math.abs(rel - k) > 1e-6 || k < 1 || k >= host.beats) return false;
+    const list = (host.sustainHarmonies ??= Array.from({ length: Math.ceil(host.beats) - 1 }, () => null));
+    if (list[k - 1]) return false;
+    list[k - 1] = text;
+    return true;
+  };
+
   barlinesAt(0, "left");
   dm.elements.forEach((el, i) => {
     barlinesAt(i, "middle");
     directionsAt(i);
     if (el.kind !== "chord") {
+      // 小节末的 `y`（`fromxml.ts` 收音符后面欠着的 `<harmony>`）：offset 为负时往回数、落在前面长音的增时线上
+      if (el.harmony && (el.harmony.offset ?? 0) < 0 && onSustain(el.harmony, noteEnd.toFloat() + el.harmony.offset!)) return;
       if (el.harmony) pendingHarmony = xmlHarmonyText(el.harmony) ?? pendingHarmony;
       return;
     }
-    for (const h of [el.harmony, ...(el.laterHarmonies ?? [])]) if (h) pendingHarmony = xmlHarmonyText(h) ?? pendingHarmony;
+    if (el.harmony) pendingHarmony = xmlHarmonyText(el.harmony) ?? pendingHarmony;
+    // 长音中途换的和弦（`offset` 从本音起算）要等本音排进去才找得到增时线，见 `notes.forEach` 之后。
+    // 以前与本音的和弦共用 `pendingHarmony`，后面的顶掉前面的——音符上印的成了中途那个和弦
+    const later = el.laterHarmonies ?? [];
     const onset = el.onset ?? prevEnd;
     prevEnd = onset + el.duration.divisions;
     const notes: (DocNote | null)[] = el.notes.length ? el.notes : [null];
@@ -347,6 +366,12 @@ function loadXmlMeasure(
       }
       flushPending();
     });
+    const host = m.entries[m.entries.length - 1] as XChord;
+    for (const h of later) {
+      if (onSustain(h, onset + (h.offset ?? 0))) continue;
+      // 落不到增时线上、音符本身又没有和弦的：退一步挂在音符上（同 `jianpuproject.ts::placeLaterHarmonies`）
+      if (!host.harmony) host.harmony = xmlHarmonyText(h);
+    }
   });
   directionsAt(count);
   barlinesAt(count, "middle");

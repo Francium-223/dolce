@@ -29,6 +29,8 @@ export class Lexer123 extends AbcFamilyLexer {
   protected readonly hyphen = "sustain" as const;
   /** 音符是数字，裸 `(3` 与「圆滑线 + 音符 3」冲突，所以冒号必需。 */
   protected readonly tupletNeedsColon = true;
+  /** 后置 `~` = 弧连到下一个音（规范 §4.1：括号只许嵌套，从多连音里连到组外相邻音靠它）。 */
+  protected override readonly arcNextTilde = true;
 
   /** 不带引号的和弦：**大写 A–G 开头、读到空白为止、后面必须跟空格**。
    *  123 音乐体里 A–G 没有别的用处（音符是数字、节奏音符是 `X`、行内字段以 `[` 起头），不会撞。

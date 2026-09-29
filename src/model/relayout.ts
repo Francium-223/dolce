@@ -187,6 +187,7 @@ function anchorTable(f: JpwFile): Array<{ mid: number; nid: number }> {
   const out: Array<{ mid: number; nid: number }> = [];
   let mid = 0;
   for (const m of readJpwSource(f).measures) {
+    if (!m.entries.some((e) => e.kind === "note")) continue; // 没有音的小节不数（同 `assignLyrics`）
     mid++;
     let nid = 0;
     for (const ent of m.entries) {

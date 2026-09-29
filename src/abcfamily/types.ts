@@ -19,6 +19,7 @@ export type TokenKind =
   | "rhythm"      // X（节奏音符：有声无音高）
   | "sustain"     // 123 的 `-` 增时线
   | "tie"         // ABC 的 `-` 延音线
+  | "arcNext"     // 123 的后置 `~`：弧连到下一个音（不进括号栈）
   | "barline"     // | || |] [| |: :| :: |:: ::| .| [|]
   | "ending"      // [1 / [1,3 / [1-3 / |1 / :|2
   | "slurStart"   // (

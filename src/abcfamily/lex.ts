@@ -95,6 +95,9 @@ export abstract class AbcFamilyLexer {
   /** 落单的 `]` 算不算收尾线（野外 ABC 的容错）。123 不认。 */
   protected readonly strayBracketIsFinal: boolean = false;
 
+  /** 后置 `~` 是不是「弧连到下一个音」（123 扩展，规范 §4.1）。ABC 的 `~` 是 roll 装饰，走 `shorthandDecoration`。 */
+  protected readonly arcNextTilde: boolean = false;
+
   /** 方言特有的单字符装饰（ABC 的 `.` `~` `H`–`W`）。不认返回 null。 */
   protected shorthandDecoration(line: string, i: number): { len: number; name: string } | null {
     void line;
@@ -199,6 +202,13 @@ export abstract class AbcFamilyLexer {
         }
         i++;
         push({ kind: "overlay", text: "&" }, start, 1);
+        continue;
+      }
+
+      // `~`：123 的接弧——从前一个音连一条弧到下一个音，不进括号栈（能从多连音里伸出去）
+      if (ch === "~" && this.arcNextTilde) {
+        i++;
+        push({ kind: "arcNext", text: "~" }, start, 1);
         continue;
       }
 

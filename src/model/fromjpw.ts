@@ -329,12 +329,15 @@ function readVoice(sec: VoiceSectionLike, fifths: number, time: { beats: number;
 
 type VoiceSectionLike = Section & { voiceData: JpwToken[] };
 
-/** 歌词落点：按源文小节数，小节中间的换行也让小节序号加一。 */
+/** 歌词落点：按源文小节数，小节中间的换行也让小节序号加一。
+ *  没有音的小节不算：曲首 `|:|` 词法成 `|:` `|` 两根线，`readVoice` 为收它们开出一个空小节，
+ *  数进去的话 `W1@1,2` 就落空、词整体早一格（`J14.你们要专心` 第一个字挂到了休止上）。 */
 function assignLyrics(measures: readonly SrcMeasure[], f: JpwFile): void {
   for (const seg of f.getLyric()?.segments ?? []) {
     const notes: SrcNote[] = [];
     let mid = 0;
     for (const m of measures) {
+      if (!m.entries.some((e) => e.kind === "note")) continue;
       mid++;
       let nid = 0;
       for (const ent of m.entries) {

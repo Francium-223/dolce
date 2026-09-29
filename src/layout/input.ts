@@ -81,6 +81,8 @@ export interface JChord {
   slurEndChord: JChord | null;
   fermata: boolean;
   harmony: string | null;
+  /** 增时线上的和弦：下标 k 是第 k+1 条增时线（长音中途换和弦，MusicXML 的 `<harmony>` 带 `offset`）。缺省即没有 */
+  sustainHarmonies?: (string | null)[];
   sectionWord: string | null;
   directions: JDirection[];
   articulations: string[];

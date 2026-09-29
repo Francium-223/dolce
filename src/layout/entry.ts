@@ -218,11 +218,11 @@ export class NoteEntry extends Entry {
   }
   /** 和弦符号：排在音符正上方（以数字墨迹中心对齐）。
    *  富文本分段（根音升降号走 SMuFL、后缀上标）复用 layout/harmony.ts，与五线谱、文本谱同一套。 */
-  static addHarmony(ch: JChord, opt: LayoutOptions, ent: NoteEntry, num: JpNumber): void {
-    if (!ch.harmony || opt.chordSize <= 0) return;
+  static addHarmony(ch: JChord, opt: LayoutOptions, ent: NoteEntry, num: JpNumber, text = ch.harmony): void {
+    if (!text || opt.chordSize <= 0) return;
     const wordFont = opt.numberFont.makeWithSize(opt.chordSize);
     const musicFont = opt.smuflFont.makeWithSize(opt.chordSize);
-    const g = layoutHarmonySegs(chordTextSegs(ch.harmony, opt.chordPlainText), wordFont, musicFont, opt.color);
+    const g = layoutHarmonySegs(chordTextSegs(text, opt.chordPlainText), wordFont, musicFont, opt.color);
     g.classes.add("chord-group"); // 段落词要按它的位置让路，见 Line.addSectionWords
     g.update();
     g.x = num.x + num.cx - g.width / 2;
@@ -649,6 +649,8 @@ export class NoteEntry extends Entry {
       it.color = options.color;
       it.font = options.noteFont;
       ent.add(it);
+      // 长音中途换的和弦印在对应那条增时线上
+      NoteEntry.addHarmony(ch, options, ent, it, ch.sustainHarmonies?.[i - 1] ?? null);
       ent.update();
       res.push(ent);
     }

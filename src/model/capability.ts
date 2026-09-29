@@ -17,7 +17,7 @@
 // **改这张表之前先去改那几处的实测**——这里只是它们的汇总。
 
 import type { Mark, ScoreDoc, Song } from "./doc";
-import { inlineBreakOf, nestArcsInTuplets } from "./emitutil";
+import { arcsToNextNote, inlineBreakOf, nestArcsInTuplets } from "./emitutil";
 import { eachChord, verseCount } from "./helpers";
 import { projectForJianpu } from "./jianpuproject";
 import { melodyLane } from "./jianpu";
@@ -49,7 +49,7 @@ export type Feature =
   | "invisibleRest"  // 不可见休止
   | "nestedArc"      // 一条弧线完全包住另一条（文本谱的括号先开先闭，写不出）
   | "oddTuplet"      // 比例不是 n:n−1 的多连音（文本谱里 n 个音一律占 n−1 个基本时值）
-  | "slurCrossTuplet" // 跨出多连音组的弧（123 的弧与多连音共用括号、只许嵌套）
+  | "slurCrossTuplet" // 跨出多连音组、又不是连到下一个音的弧（123 的括号只许嵌套，连到下一个音的写 `~`）
   | "lyricOnRest"    // 挂在可见休止上的词（123、ABC 的休止不占对位格）
   | "pageBreak";     // 谱里写的换页（小节级或小节中间的）
 
@@ -112,7 +112,8 @@ export const FORMAT_CAPS: Readonly<Record<TargetFormat, ReadonlySet<Feature>>> =
   // 123 是按「装得下全部」设计的（`docs/格式/123格式.md`），实测全语料只有 0.17% 表达不了，
   // 那些是转换层的账不是格式的账。
   // 音符堆 123 刻意不做（规范：和弦走符号，`.jpwabc` 的 `[1 3 5]` 语料 0 例）。
-  // 嵌套弧与任意比例的多连音（`(5:4:`）都写得出；弧与多连音只许嵌套、可见休止不跟词（规范 §4、§5.1）
+  // 嵌套弧与任意比例的多连音（`(5:4:`）都写得出；弧与多连音的括号只许嵌套（从组里连到组外下一个音写 `~`，
+  // 跨得更远的写不出）、可见休止不跟词（规范 §4.1、§5.1）
   "123": allBut("harmonyOffset", "noteStack", "slurCrossTuplet", "lyricOnRest"),
   // 标准 ABC：样式被规范标为 VOLATILE（§11，「not standardised」），所以 123 才把样式
   // 另走样式表；`I:playorder` 是 123 的扩展，标准 ABC 读不懂（虽然会忽略，等于丢）。
@@ -193,10 +194,12 @@ export function featuresUsed(doc: ScoreDoc): Set<Feature> {
     if ([...eachChord(song)].some(({ chord }) => chord.laterHarmonies?.length)) {
       if ([...eachChord(projectForJianpu(song))].some(({ chord }) => chord.laterHarmonies?.length)) used.add("harmonyOffset");
     }
-    // 弧线与多连音能不能写成文本谱的括号：判据与写出端同一份（`topu.ts::planArcs`）
+    // 跨出多连音的弧（123 的括号只许嵌套）：连到下一个音的写成 `~`，不算；判据与写出端同一份（`abcfamily/emit.ts`）
     for (const part of song.parts) {
       const isArc = (m: Mark): boolean => m.type === "slur" || m.type === "tied";
-      if (nestArcsInTuplets(part, song.marks ?? [], isArc).crossed) used.add("slurCrossTuplet");
+      const marks = song.marks ?? [];
+      const nest = nestArcsInTuplets(part, marks, isArc);
+      if (nest.crossedMarks.size > arcsToNextNote(part, marks, isArc).size) used.add("slurCrossTuplet");
     }
     const arcs = puArcLosses(song);
     if (arcs.nested) used.add("nestedArc");

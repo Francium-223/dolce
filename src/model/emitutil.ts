@@ -107,7 +107,7 @@ export function ownMarks(song: Song, own: ReadonlySet<ElementId>): Mark[] {
  *  要的整理结果：
  *  - `marks`：跨出组的弧截进组内——组外起、组内收的弧起点挪到组首，组内起、组外收的弧终点挪到组尾；
  *    截完只剩一个音的弧丢掉（`(2)` 在 123 里另有「首尾相接」的读法，写不得）；
- *  - `crossed`：截了几条（丢失清单 `slurCrossTuplet` 用）；
+ *  - `crossed`：截了几条；`crossedMarks`：截了的是哪几条（原 Mark，`arcsToNextNote` 用）；
  *  - `outerOpen`：组首那个音上起头、却在组外收的弧数——`(` 要写在 `(n:` **之前**；
  *  - `outerClose`：组外起头、在组尾那个音上收的弧数——`)` 要写在多连音的 `)` **之后**。
  *  位置按元素先后数，增时线各占一位；收在和弦上的弧与多连音的 `)` 都写在它的增时线之后，所以终点按和弦的最后一条增时线算。 */
@@ -115,7 +115,7 @@ export function nestArcsInTuplets(
   part: Part,
   marks: readonly Mark[],
   isArc: (m: Mark) => boolean,
-): { marks: Mark[]; crossed: number; outerOpen: Map<ElementId, number>; outerClose: Map<ElementId, number> } {
+): { marks: Mark[]; crossed: number; crossedMarks: Set<Mark>; outerOpen: Map<ElementId, number>; outerClose: Map<ElementId, number> } {
   const pos = new Map<ElementId, number>();
   const tail = new Map<ElementId, number>();
   let n = 0;
@@ -146,6 +146,7 @@ export function nestArcsInTuplets(
   const outerOpen = new Map<ElementId, number>();
   const outerClose = new Map<ElementId, number>();
   let crossed = 0;
+  const crossedMarks = new Set<Mark>();
   for (const m of marks) {
     let s = isArc(m) ? pos.get(m.start) : undefined;
     let e = isArc(m) ? endPos(m.end) : undefined;
@@ -165,6 +166,7 @@ export function nestArcsInTuplets(
         crossed++;
       }
     }
+    if (mm !== m) crossedMarks.add(m);
     if (mm !== m && mm.start === mm.end) continue;
     out.push(mm);
     // 同一个音上起（收）几个多连音时只和最外层比：写出端把这些多连音的括号连在一起写
@@ -173,7 +175,32 @@ export function nestArcsInTuplets(
     const last = outermostTo.get(mm.end);
     if (last && s < last.s) outerClose.set(mm.end, (outerClose.get(mm.end) ?? 0) + 1);
   }
-  return { marks: out, crossed, outerOpen, outerClose };
+  return { marks: out, crossed, crossedMarks, outerOpen, outerClose };
+}
+
+/** 跨出多连音、但终点就是起点**之后下一个非倚音和弦**的弧：123 写成起点音后的 `~`（规范 §4.1），
+ *  不进括号栈，所以不用截。写出端（`abcfamily/emit.ts`）与丢失清单（`capability.ts` 的 `slurCrossTuplet`
+ *  只算剩下的）共用这一份判据。`own` 给了就只在这些元素里数「下一个」（123 只写简谱印的那一路）。 */
+export function arcsToNextNote(
+  part: Part,
+  marks: readonly Mark[],
+  isArc: (m: Mark) => boolean,
+  own?: ReadonlySet<ElementId>,
+): Set<Mark> {
+  const out = new Set<Mark>();
+  const { crossedMarks } = nestArcsInTuplets(part, marks, isArc);
+  if (!crossedMarks.size) return out;
+  const next = new Map<ElementId, ElementId>();
+  let prev: ElementId | null = null;
+  for (const mea of part.measures) {
+    for (const el of mea.elements) {
+      if (el.kind !== "chord" || el.grace || (own && !own.has(el.id))) continue;
+      if (prev !== null) next.set(prev, el.id);
+      prev = el.id;
+    }
+  }
+  for (const m of crossedMarks) if (next.get(m.start) === m.end) out.add(m);
+  return out;
 }
 
 const LATIN_CH = /[\p{L}\p{N}']/u;

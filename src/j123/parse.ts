@@ -112,6 +112,8 @@ interface PartBuild {
   inlineBreak: { host: Chord; sustains: number; kind: BreakKind } | null;
   /** `V:n clef=…`（123）：收尾时落到第一小节的 `attrs.clefs` */
   clef?: Clef;
+  /** 123 的后置 `~` 还没配到下一个音：起点和弦与 `~` 的位置。存在声部级，`~` 可以跨 `$` 行 */
+  arcNext: { from: ElementId; source: SourceSpan } | null;
 }
 
 /** 见到 `$`（或 ABC 的代码行末）：当前小节已有和弦时先记下，是不是小节中间换行等后面来的是什么再定（`PartBuild.inlineBreak`）。 */
@@ -468,6 +470,11 @@ function buildMusicLine(
     }
     pb.measure.elements.push(el);
     cur.last = el;
+    // 123 的 `~`：弧从前一个音连到这个音（倚音不算「下一个音」）
+    if (pb.arcNext && el.kind === "chord" && !el.grace) {
+      marks.push({ type: "slur", start: pb.arcNext.from, end: el.id, level: openSlurs.length, openSource: pb.arcNext.source });
+      pb.arcNext = null;
+    }
     // 回填还没拿到起点的开弧/开连音——它们的起点就是「`(` 之后的第一个元素」
     for (const o of openSlurs) if (!o.start) o.start = el.id;
     for (const o of openTuplets) if (!o.start) o.start = el.id;
@@ -602,6 +609,16 @@ function buildMusicLine(
         if (pb.voice === 1) pb.noteCount++;
         break;
       }
+
+      case "arcNext":
+        // 123 的后置 `~`：从前一个音连一条弧到下一个音，不进括号栈（规范 §4.1）
+        if (pb.arcNext) report(ctx, "orphan-arc-next", "`~` 后面没有音符", pb.arcNext.source);
+        if (cur.sustainHost && !cur.sustainHost.grace) pb.arcNext = { from: cur.sustainHost.id, source: t.source };
+        else {
+          pb.arcNext = null;
+          report(ctx, "orphan-arc-next", "`~` 前面没有音符", t.source);
+        }
+        break;
 
       case "tie":
         // ABC 的 `-`：给前一个和弦的音打 start，下一个音打 stop
@@ -878,6 +895,10 @@ function buildMusicLine(
           report(ctx, "overlay-open-tuplet", "多连音跨过了 `&`", t.source);
           openTuplets.length = 0;
         }
+        if (pb.arcNext) {
+          report(ctx, "orphan-arc-next", "`~` 后面没有音符", pb.arcNext.source);
+          pb.arcNext = null;
+        }
         if (!pb.measure.elements.some((el) => el.voice === pb.voice)) {
           report(ctx, "empty-overlay", "`&` 前面这个临时声部是空的", t.source);
         }
@@ -1082,6 +1103,10 @@ export function parseAbcFamily(
         for (const tp of b.openTuplets) report(ctx, "unclosed-tuplet", "多连音缺 `)`", tp.openSource!);
         b.openTuplets.length = 0;
       }
+      if (b.arcNext) {
+        report(ctx, "orphan-arc-next", "`~` 后面没有音符", b.arcNext.source);
+        b.arcNext = null;
+      }
       closeMeasure(ctx, b);
       if (b.block && b.block.end === undefined) b.block.end = slotCount(b, ctx.d.id);
       const first = b.part.measures[0];
@@ -1135,6 +1160,7 @@ export function parseAbcFamily(
     openEnding: [],
     afterLyrics: false,
     inlineBreak: null,
+    arcNext: null,
   });
   /** `V:n` 切到声部 n：没有就新开，有就**续写**（不收尾它开着的小节）。四声部谱靠这个分开，否则会被拼成一串小节。 */
   const startPart = (voice: number): PartBuild => {

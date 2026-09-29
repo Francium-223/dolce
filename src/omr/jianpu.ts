@@ -2534,6 +2534,38 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
       // ⓪ 系统里夹着的碎行（94 第 1 系统第 3、4 声部之间一条 4 个音的碎行；313 每个系统都夹着几条 4~6 个音的）：
       //    音数不到同系统中位数四成的剔掉，剔完至少还剩 3 行才剔。先剔再数众数，否则众数被碎行抬高
       const drop = new Set<StaffRow>();
+      // 同一谱行被 groupRows 拆成纵向重叠的两三段（243：816~883 与 849~892；179 拆成三段），合回一行
+      for (const sys of countOf().keys()) {
+        const g = useRows.filter((r) => r.system === sys).sort((a, b) => a.topY - b.topY);
+        for (let i = 0; i < g.length; i++) {
+          const a = g[i]!;
+          if (drop.has(a)) continue;
+          for (let j = i + 1; j < g.length; j++) {
+            const b = g[j]!;
+            const ov = Math.min(a.bottomY, b.bottomY) - Math.max(a.topY, b.topY);
+            if (ov < Math.min(a.bottomY - a.topY, b.bottomY - b.topY) * 0.4) break;
+            // 拆开的一行两段在横向上错开；上下两个声部（行框被八度点、弧撑得交叠，141、317）的音却上下对齐——对齐的过三成不并
+            const stacked = b.nums.filter((n) => a.nums.some((m) => Math.abs(rcx(m.bbox) - rcx(n.bbox)) <= numH * 0.5)).length;
+            if (stacked > b.nums.length * 0.3) continue;
+            probe("voices.mergeSplitRow");
+            a.nums = [...a.nums, ...b.nums].sort((p, q) => p.bbox.x - q.bbox.x);
+            a.barlineXs = [...new Set([...a.barlineXs, ...b.barlineXs])].sort((p, q) => p - q);
+            if (b.doubleBarXs) a.doubleBarXs = [...(a.doubleBarXs ?? []), ...b.doubleBarXs].sort((p, q) => p - q);
+            if (b.endBarXs) a.endBarXs = [...(a.endBarXs ?? []), ...b.endBarXs].sort((p, q) => p - q);
+            if (b.finalBarline) a.finalBarline = b.finalBarline;
+            a.topY = Math.min(a.topY, b.topY); a.bottomY = Math.max(a.bottomY, b.bottomY);
+            drop.add(b);
+          }
+        }
+      }
+      // 连谱号括进来的歌词行（43：「4.耶稣 最清洁…」段号读成数字、右边长小节线穿过歌词区）：核是近方的汉字，
+      // 中位宽高比 ≥0.85（数字瘦长 ~0.6、休止 0 ~0.7），剔完还剩 ≥3 行才剔
+      for (const [sys, n] of countOf()) {
+        const g = useRows.filter((r) => r.system === sys && !drop.has(r));
+        const sq = g.filter((r) => median(r.nums.map((k) => k.bbox.w / Math.max(1, k.bbox.h))) >= 0.85);
+        if (sq.length && n - sq.length >= 3) { probe("voices.dropLyricRow"); for (const r of sq) drop.add(r); }
+      }
+      for (const r of drop) { delete r.system; delete r.voice; }
       for (const [sys, n] of countOf()) {
         const g = useRows.filter((r) => r.system === sys);
         const med = median(g.map((r) => r.nums.length));
@@ -2611,7 +2643,6 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
     const ok = useRows.every((r) => r.system !== undefined) && (bySys.size >= 2 || sizes[0]! >= 3) && sizes.every((n) => n === sizes[0] && n >= 2)
       && [...bySys.values()].every((g) => g.every((r, i) => r.voice === i));
     probe(ok ? "voices" : "voices.reject");
-    if ((globalThis as { __omrDebug?: boolean }).__omrDebug) console.log("[voicedbg]", ok, useRows.map((r) => `${Math.round(r.topY)}-${Math.round(r.bottomY)}:${r.system}/${r.voice}:${r.nums.length}`).join(" "));
     if (!ok) for (const r of useRows) { delete r.system; delete r.voice; }
   }
 

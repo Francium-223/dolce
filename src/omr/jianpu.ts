@@ -2463,8 +2463,14 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
     return sizes.size >= 2 && n.every((x) => x === n[0] && x >= 2);
   })();
   const firstOkTop = Math.min(...allRows.filter((r) => r.nums.length && keepBy(r.nums)).map((r) => r.topY));
+  // 页眉那一排（1218 通本「95 F调 4/4 超乎万有」曲号与拍号是数字、标题读成 0）被凑成了最上面一「行」：休止占比 0.44
+  // 过得了 0.5 的门。真第一谱行一行里总有几根小节线；这一排至多一两根（标题字的竖笔，468）。
+  const topRow = allRows.filter((r) => r.nums.length).reduce<StaffRow | undefined>((a, r) => (!a || r.topY < a.topY ? r : a), undefined);
+  const headerLike = !!topRow && topRow.barlineXs.length <= 2 && restShare(topRow.nums) >= 0.3 &&
+    allRows.filter((r) => r !== topRow && r.barlineXs.length >= 3).length >= 2;
   const rows = allRows.filter((r) => {
     if (!r.nums.length) return false;
+    if (headerLike && r === topRow) { probe("pseudoRow.headerLine"); return false; }
     const rest = restShare(r.nums);
     // 连谱号括着的行是实打实的声部行：四声部谱的伴奏声部休止多（78《马槽歌》第 2 系统 Q3 `5 5 0 0 | 0 0 6 …`
     // 过半是 0），按单声部的 0.5 会被当成和弦字母伪行删掉，整个系统缺一声部、分组验收失败。

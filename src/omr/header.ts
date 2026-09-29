@@ -233,8 +233,8 @@ function parseMeta(lines: HLine[]): MetaInfo {
   // 一片 "Eb调4/4"）先剥掉拍号再认。
   if (res.fifths === undefined) {
     for (const l of lines) {
-      // 「调」前的 `0`/`O` 是读坏了的 D（1218 1014 `0调4/4`）；拍号里偶夹一个噪点（130 `2./4`）
-      const t = l.text.replace(/\s+/g, "").replace(/(调)\d{1,2}[.·]?[/／]\d{1,2}$/, "$1").replace(/^([b#♭♯降升]?)[0Oo](?=[b#♭♯]?调)/, "$1D");
+      // 调名先归一（normKeyText）；拍号里偶夹一个噪点（130 `2./4`）
+      const t = normKeyText(l.text.replace(/\s+/g, "")).replace(/(调)\d{1,2}[.·]?[/／]\d{1,2}$/, "$1");
       // 升降号也有写成汉字的：「降E调」「升F调」（选本诗歌712 通本）
       const m = t.length <= 6 && t.match(/^([b#♭♯降升]?)([A-G])([b#♭♯]?)(大调|小调|调)$/);
       if (!m) continue;
@@ -490,6 +490,14 @@ function mergeStackedColumns(comps: Component[], numH: number): Component[] {
   return boxes.filter((_, i) => alive[i]).map((b, id) => ({ id, bbox: b, area: b.w * b.h, cx: b.x + b.w / 2, cy: b.y + b.h / 2 }));
 }
 
+/** 中文调名的 OCR 归一：「调」前读坏的 D（`0`/`O`/`p`：1218 1014「0调」、110「pb调」）改回 D；一行印两个调的
+ *（330「D.F调」、422「B调A调」，前调后转）只留前一个——曲首的调号是前一个。 */
+function normKeyText(t: string): string {
+  return t
+    .replace(/(^|\d)([b#♭♯降升]?)[0OopP](?=[b#♭♯]?调)/, "$1$2D")
+    .replace(/((?:[降升]|[b#♭♯])?[A-G][b#♭♯]?)(?:[.\-、．·]?(?:[降升]|[b#♭♯])?[A-G][b#♭♯]?)?调(?:(?:[降升]|[b#♭♯])?[A-G][b#♭♯]?调)?/, "$1调");
+}
+
 /** 页眉一行连印「曲号 调号 拍号 标题」（赞美诗歌1218 通本：`203 E♭调 4/4 与主同忧`），det 常并成一片
  *  （"304E调4/4这是耶和华所定的日子"、"G调3/4敬虔的奥秘"）：调号认不出、标题带着一串前缀。
  *  按逐字位切成曲号 / 调号拍号 / 标题几片，后面各归各类。要整串「音名 + 调 + 拍号」（中间只许升降号）
@@ -497,7 +505,8 @@ function mergeStackedColumns(comps: Component[], numH: number): Component[] {
 function splitInlineKey(lines: HLine[]): HLine[] {
   const out: HLine[] = [];
   for (const l of lines) {
-    const m = /^(\d{1,4})?((?:[降升]|[b#♭♯])?[A-G0Oo][b#♭♯]?调\d{1,2}[.·]?[/／]\d{1,2})(.*)$/.exec(l.text);
+    // 归一只改调名那几个字、字数可能变（两个调并成一个），所以先在原文上认形、按原文字位切，切出的调号片再归一
+    const m = /^(\d{1,4})?((?:(?:[降升]|[b#♭♯])?[A-G0OopP][b#♭♯]?)?(?:[.\-、．·]?(?:[降升]|[b#♭♯])?[A-G][b#♭♯]?)?调(?:(?:[降升]|[b#♭♯])?[A-G][b#♭♯]?调)?\d{1,2}[.·]?[/／]\d{1,2})(.*)$/.exec(l.text);
     const cs = l.chars && l.chars.length === l.text.length ? l.chars : undefined;
     if (!m || !cs || (!m[1] && !m[3])) { out.push(l); continue; }
     const cuts = [0, (m[1] ?? "").length, (m[1] ?? "").length + m[2].length, l.text.length];
@@ -1152,6 +1161,18 @@ export async function recognizeHeader(
     // 斜杠式拍号先读（keyByGlyphs 的锚点二要用它改写过的分子块）：与调号同一个池——标题中线左侧、标题那一排往下。
     const slashes = slashGroups(glyphPool(titleLine ? titleLine.cx : bin.w / 2, titleLine ? titleLine.bbox.y : 0));
     const glyphSlash = await slashMeters(slashes);
+    // 音名整个读丢的「调4/4」片（1218 598：det 读成 "598调2/4不知道…"，F 没了）：取曲号与「调」字之间的墨块单独读
+    if (meta.fifths === undefined) {
+      const ln = ls.find((l) => /^调\d/.test(l.text) && l.chars && l.chars.length === l.text.length);
+      if (ln) {
+        const tiao = ln.chars![0]!;
+        const group = comps
+          .filter((c) => c.cx >= ln.bbox.x && c.bbox.x + c.bbox.w <= tiao.cx - 4 && overlapRatioY(c.bbox, ln.bbox) > 0.3 && c.bbox.h >= 8)
+          .sort((a, b) => a.bbox.x - b.bbox.x);
+        const k = group.length && group.length <= 4 ? await readKeyGroup(group) : undefined;
+        if (k) { probe("key.letterBeforeTiao"); meta.fifths = k.fifths; meta.fifthsLine = ln; }
+      }
+    }
     const textFifths = meta.fifths;
     let g = await keyByGlyphs(titleLine, slashes);
     // 「X调 4/4」写法：音名与拍号之间隔着「调」字，锚点二（拍号左边紧挨的块）够着的是「调」的碎块，

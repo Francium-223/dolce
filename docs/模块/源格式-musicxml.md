@@ -40,10 +40,6 @@ MusicXML 双向（导入为 `ScoreDoc`；简谱档与成书经 `model/jianpuinpu
 - MuseScore 兼容：有任何 `<credit>` 就不再用 `<work-title>` 生成标题 → 缺 title credit 时补一条；
   `<part-name>` 留空并 `print-object="no"`。
 
-## 回归
-
-回归脚本、语料与基线不在本仓库（本地私有仓库）。
-
 ## 已知限制
 
 - `.Repeat` 的 skip/limit **不表达**（`<ending>` 只能整小节）

@@ -124,12 +124,7 @@ Node 侧经 `src/cli/j123.ts` → `dist-cli/j123.js` 使用（`npm run build:cli
 - **`Chord.srcId`（派生模型才有）**：文本格式进五线谱/混排时写成 MusicXML 再读回，元素 id 另编一套；写出时 `<note id="jp<源 id>">`
   （`ToXmlOptions.sourceIds`，只这条内部路径开）、`fromxml` 读回成 `srcId`，五线谱与代码区靠它互相定位。导出文件不带。
 
-## 回归
-
-回归脚本、语料与基线不在本仓库（本地私有仓库）。
-
 ## 已知限制
 
-- 扩展 meta（英文标题、经文、标签、分类…）没有字段：设计为 `Song.meta`（map + 键注册表），各格式映射见 [../样式机制.md](../样式机制.md) §9，落地见 [../待办.md](../待办.md) §2.3 P1
 - 123 / 文本谱的作者一律记成 `composer`，不区分词曲（P1 按标签拆）
 - 承接前音的增时线（`Chord.continued`）不需要支持：123 写不出，导出 MusicXML 按普通音符写

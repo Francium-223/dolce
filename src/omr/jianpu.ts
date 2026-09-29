@@ -2061,10 +2061,22 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
     const top = voiced ? median(m.rd.map((k) => k.bbox.y)) : m.topY;
     const bot = voiced ? median(m.rd.map((k) => rbottom(k.bbox))) : m.botY;
     const bandH = bot - top;
+    // 斜着的谱行（整行上下沿比数字高出 1.3 倍以上）：按整行的带补高会把数字下面的减时线、低八度点一起裁进去——
+    // 赞美诗歌1218 25 首行斜 14px，6 补到 57px 高、连着线和点读成 5（全本 `6_→5_` 三百多处）。改按左右各 3 个邻近数字的
+    // 上下沿中位数就地补高。
+    const medH = median(m.rd.map((k) => k.bbox.h));
+    const slanted = !voiced && bandH > medH * 1.3;
+    const xs = slanted ? [...m.rd].sort((a, b) => a.bbox.x - b.bbox.x) : [];
     return m.rd.map((k) => {
-      if (k.bbox.h >= bandH * 0.7) return k.bbox;
-      const y = Math.min(k.bbox.y, top);
-      return { x: k.bbox.x, y, w: k.bbox.w, h: Math.max(rbottom(k.bbox), bot) - y };
+      let t = top, b2 = bot;
+      if (slanted) {
+        const i = xs.indexOf(k);
+        const nb = xs.slice(Math.max(0, i - 3), i + 4);
+        t = median(nb.map((o) => o.bbox.y)); b2 = median(nb.map((o) => rbottom(o.bbox)));
+      }
+      if (k.bbox.h >= (b2 - t) * 0.7) return k.bbox;
+      const y = Math.min(k.bbox.y, t);
+      return { x: k.bbox.x, y, w: k.bbox.w, h: Math.max(rbottom(k.bbox), b2) - y };
     });
   });
   const recog = await ocr.recognizeDigits(bin, recRects, { rhythm: true });

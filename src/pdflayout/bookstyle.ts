@@ -30,7 +30,7 @@ export interface RoleStyle {
 }
 
 /** 间距。命名规则：`*Em` 随字号缩放（基准音符字号 roles.note.size；个别项按歌词字号，见 `style/book.ts`），其余为 pt。
- *  每一项的量法见 docs/实现/矢量PDF识别.md 的「重排」一节与 stats.ts 的注释。
+ *  每一项的量法见 docs/实现/成书排版.md 的「重排」一节与 stats.ts 的注释。
  *  **只留排版真正读的量**：原书量到而排版不用的（`ink*` 描边宽、各处到谱行的距离…）只进
  *  `bookstyle-report.md` 作比对，不进这里。样式表里的写法见 `style/keys.ts` 的 `book` 一列。 */
 export interface BookMetrics {

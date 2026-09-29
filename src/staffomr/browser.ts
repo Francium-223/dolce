@@ -19,7 +19,7 @@ import type { Staff } from "./model";
  *
  * **`disableFontFace: true` 不是可选项**：它让 worker 走 `buildFontPaths`，
  * 把字形轮廓以 commonObjs 送出来——`vectext.ts` 的紧包围盒与形状签名全靠它
- * （理由见 docs/实现/五线谱识别.md）。
+ * （理由见 docs/实现/五线谱矢量识别.md）。
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export async function openStaffPdf(bytes: Uint8Array): Promise<{ pdf: any; OPS: OpsEnum }> {

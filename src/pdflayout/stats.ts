@@ -160,7 +160,7 @@ export function collectRoleSamples(pages: PageSpec[], opt: SampleOptions = {}): 
   return out;
 }
 
-/** 间距原料。每一项的量法见字段注释——**改量法前先读 docs/实现/矢量PDF识别.md 的「重排」一节**。 */
+/** 间距原料。每一项的量法见字段注释——**改量法前先读 docs/实现/成书排版.md 的「重排」一节**。 */
 export interface MetricSamples {
   noteH: number[];
   /** 谱行净距：上一行最后一条歌词 baseline → 下一行 noteTop。

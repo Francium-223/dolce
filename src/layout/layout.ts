@@ -8,12 +8,30 @@ import { Point } from "../common/geom";
 import { GlyphCodes } from "../smufl/smufl";
 import { BandItem, bandTop, stackUpperBand } from "./upperband";
 import { BarStyle, StartStopDiscontinue } from "../score/enums";
+import { addEndingBracket, labelBaseline } from "./ending";
+import type { Font } from "./font";
 import { measureDuration, type JChord, type JMeasure, type JNote, type JScore } from "./input";
 import { getOrNull, PageItem, GraphicPath, Group, TextFrame, SmuflText, JpNumber, Lyric, Tie, Slur, slurStyleOf, type SlurStyle, type SlurTieBase } from "./pageitem";
 import { Entry, KeySig, TimeSig, NoteEntry, Barline, LineBreak, BeamLine, EntryItemInfo, entryBounds, normalizeEntryX, placeSectionWord, sectionWordHangLeft, sectionWordRun, type SectionWordSlot } from "./entry";
 import { LayoutOptions } from "./options";
 
 // ---------------- Line / layout ----------------
+
+/** 每组房的**最后一房**收尾的那个小节（后面不再紧跟一房）。按行序扫一遍全曲小节，`Line.addEnding` 让它们右端不封口。 */
+function lastEndingMeasures(lines: readonly Line[]): Set<JMeasure> {
+  const ms: JMeasure[] = [];
+  for (const l of lines)
+    for (const e of l.entries)
+      if (e instanceof NoteEntry && ms[ms.length - 1] !== e.chord.measure) ms.push(e.chord.measure);
+  const out = new Set<JMeasure>();
+  ms.forEach((m, i) => {
+    if (m.endingRight !== null && !ms[i + 1]?.endingLeft) out.add(m);
+  });
+  return out;
+}
+
+/** 一行里的一段房：`cont` = 上一行续过来的（不画左脚、不印房号）。 */
+interface EndingSpan { num: string; notes: NoteEntry[]; closed: boolean; x0: number; x1: number; cont?: boolean }
 
 export class Line {
   group = new Group();
@@ -1216,6 +1234,9 @@ export class Line {
       this.sectionWords.set(next.chord, this.sectionWordOf(last));
       this.sectionWords.set(last.chord, null);
     }
+    // 跨行的房：上一行结束时还开着的房号，下一行开头接着画（不重印房号、不画左脚）
+    let openEnding: string | null = null;
+    const lastEndings = lastEndingMeasures(lines);
     for (const l of lines) {
       this.updateXPos(l, width, opt);
       // 段落词要的那点地方**必须在画符杠/连音线/弧线之前**匀出来：那些东西的坐标
@@ -1231,7 +1252,7 @@ export class Line {
       //（房号的车道读堆叠结果）。见 Line.stackAbove。
       l.stackAbove(opt);
       l.placeDirections(opt);
-      l.addEnding(opt);
+      openEnding = l.addEnding(opt, openEnding, lastEndings);
       l.addSectionWords(opt, width);
       l.liftSectionWordsUnderSlurs(opt);
       l.clipBarlinesUnderSlurs(opt);
@@ -1393,9 +1414,12 @@ export class Line {
    *     也是整行一起抬。
    *   - 端点**贴着两侧的小节线**，不贴房内首末音符。相邻两房之间隔着一条小节线的宽度，
    *     天然分得开（158 首的一房二房曾按音符各向外扩 0.35em、顶在一起）。
+   *
+   * `carry` 是上一行结束时还开着的房号（房跨行）：本行开头那一段接着画，**不画左脚、不重印房号**。
+   * 返回本行结束时仍开着的房号，交给下一行。
    */
-  addEnding(opt: LayoutOptions): void {
-    if (opt.endingSize <= 0) return;
+  addEnding(opt: LayoutOptions, carry: string | null = null, lastEndings: ReadonlySet<JMeasure> = new Set()): string | null {
+    if (opt.endingSize <= 0) return null;
     // 先把本行按小节切开（房的起止是**小节级**的）
     const segs: { m: JMeasure; notes: NoteEntry[] }[] = [];
     for (const e of this.entries) {
@@ -1408,17 +1432,26 @@ export class Line {
     // 本行的小节线**墨迹**左右缘（端点要贴着它们，见 Barline.inkLeft/inkRight）
     const barInk = this.entries
       .filter((e): e is Barline => e instanceof Barline)
-      .map((b) => ({ left: b.group.x + b.inkLeft, right: b.group.x + b.inkRight }))
+      .map((b) => {
+        const p = b.group.pos(this.group);
+        return {
+          left: b.group.x + b.inkLeft, right: b.group.x + b.inkRight,
+          first: b.group.x + b.firstLineX, last: b.group.x + b.lastLineX,
+          top: p.y + Math.min(0, b.group.childrenBound.top),
+        };
+      })
       .sort((a, b) => a.left - b.left);
-    const spans: { num: string; notes: NoteEntry[]; closed: boolean; x0: number; x1: number }[] = [];
-    let num: string | null = null;
+    const spans: EndingSpan[] = [];
+    let num: string | null = carry;
+    let cont = carry !== null; // 当前这一段是上一行续过来的
     let notes: NoteEntry[] = [];
     const flush = (closed: boolean) => {
       if (num !== null && notes.length) {
         const sp = this.endingSpan(opt, num, notes, closed, barInk);
-        if (sp) spans.push(sp);
+        if (sp) spans.push({ ...sp, cont });
       }
       num = null;
+      cont = false;
       notes = [];
     };
     for (const seg of segs) {
@@ -1435,10 +1468,12 @@ export class Line {
       // 二房常写成「start + discontinue 在同一小节，逻辑上的 stop 在几小节之后」
       //（037《我尊崇祢》的二房 m9 就地 discontinue、m11 才 stop），
       // 线要在 m9 收住——跨过好几个小节的长横线是错的。
-      if (seg.m.endingRight !== null) flush(seg.m.endingRight === StartStopDiscontinue.STOP);
+      // 一组房的**最后一房**右端不封口（后面接着的是房外的音乐，封口像是还要再回去）
+      if (seg.m.endingRight !== null) flush(seg.m.endingRight === StartStopDiscontinue.STOP && !lastEndings.has(seg.m));
     }
+    const stillOpen: string | null = num;
     flush(false); // 房跨到下一行：本行这一段不封口
-    if (!spans.length) return;
+    if (!spans.length) return stillOpen;
     // **全行共用一个高度**：各房区间内所有已画对象的最高墨迹，取所有房里最高的那个。
     // 逐房各算就会错开（一房上方有和弦、二房没有）。
     //
@@ -1456,17 +1491,29 @@ export class Line {
       // 紧挨着房区间左边的那个和弦照样会被它压上（396《我要向高山举目》的 `G7`）。
       const t = bandTop(this.bandBoxes, sp.x0 - opt.endingSize, sp.x1);
       if (t !== null) above = Math.min(above, t);
+      // 两端与区间内的小节线：竖脚正落在小节线上方，脚底要离开小节线顶，不能粘连
+      for (const b of barInk) if (b.last >= sp.x0 - 0.5 && b.first <= sp.x1 + 0.5) above = Math.min(above, b.top);
     }
-    if (!Number.isFinite(above)) return;
-    const drop = opt.bracketFoot > 0 ? opt.bracketFoot : opt.endingSize * 0.9;
-    const top = above - opt.endingSize * 0.5 - drop;
+    if (!Number.isFinite(above)) return stillOpen;
+    // 竖脚长照五线谱：与房号字号等长（五线谱是两个线距、房号 20 tenths）
+    const drop = opt.bracketFoot > 0 ? opt.bracketFoot : opt.endingSize;
+    // 括线下面最深的是竖脚还是房号（房号从横线往下排，可能比短脚还低）：按更深的那个让开下方的音符与和弦
+    const lw = opt.bracketWidth > 0 ? opt.bracketWidth : opt.barlineWidth;
+    let depth = drop;
+    for (const sp of spans) {
+      if (!sp.num || sp.cont) continue;
+      const f = this.endingFont(opt);
+      depth = Math.max(depth, labelBaseline(f, sp.num, lw) + Math.max(0, f.charBound(sp.num).bottom));
+    }
+    const top = above - opt.endingSize * 0.7 - depth;
     for (const sp of spans) this.drawEnding(opt, sp, top, drop);
+    return stillOpen;
   }
 
   /** 一段房的横向范围。端点贴**小节线**（找不到才退回按首末音符外扩）。 */
   private endingSpan(
     opt: LayoutOptions, num: string, notes: NoteEntry[], closed: boolean,
-    barInk: { left: number; right: number }[],
+    barInk: { left: number; right: number; first: number; last: number }[],
   ): { num: string; notes: NoteEntry[]; closed: boolean; x0: number; x1: number } | null {
     const leftItem = notes[0].entryItem();
     const rightItem = notes[notes.length - 1].entryItem();
@@ -1477,48 +1524,40 @@ export class Line {
     // 相邻两房之间因此隔着一条小节线的宽度，不会再顶在一起（158）。
     // 起点贴前一条小节线的**右缘**、终点贴后一条的**左缘**，各让一点气。
     // 相邻两房之间因此隔着一条小节线的宽度，不会再顶在一起（158）。
-    const gap = opt.endingSize * 0.12;
+    // 竖脚**对齐小节线的线位**：起点取前一条小节线的最后一根线、终点取后一条的第一根线
+    //（`:‖` 与 `‖:` 两房相接时一个落细线、一个落粗线，天然分开）。
     const barBefore = [...barInk].reverse().find((b) => b.right <= noteL);
     const barAfter = barInk.find((b) => b.left >= noteR);
-    const x0 = barBefore !== undefined ? barBefore.right + gap : noteL - opt.numberSize * 0.35;
-    const x1 = barAfter !== undefined ? barAfter.left - gap : noteR + opt.numberSize * 0.35;
+    const x0 = barBefore !== undefined ? barBefore.last : noteL - opt.numberSize * 0.35;
+    const x1 = barAfter !== undefined ? barAfter.first : noteR + opt.numberSize * 0.35;
     if (x1 <= x0) return null;
     return { num, notes, closed, x0, x1 };
   }
 
-  private drawEnding(
-    opt: LayoutOptions,
-    sp: { num: string; closed: boolean; x0: number; x1: number },
-    top: number,
-    drop: number,
-  ): void {
+  private endingFont(opt: LayoutOptions): Font {
+    return opt.numberFont.makeWithSize(opt.endingSize);
+  }
+
+  private drawEnding(opt: LayoutOptions, sp: EndingSpan, top: number, drop: number): void {
     const grp = new Group();
     grp.x = sp.x0;
     grp.y = top;
     const lw = opt.bracketWidth > 0 ? opt.bracketWidth : opt.barlineWidth;
-    const path = new GraphicPath();
-    path.classes.add("ending-line"); // line-check 的 L10/L11 靠它认（见 browser.ts::CLS_TAGS）
-    path.stroke = true;
-    path.fill = false;
-    path.strokeColor = opt.color;
-    path.strokeWidth = lw;
-    path.moveTo(0, drop);
-    path.lineTo(0, 0);
-    path.lineTo(sp.x1 - sp.x0, 0);
-    if (sp.closed) path.lineTo(sp.x1 - sp.x0, drop);
-    grp.add(path);
-    if (sp.num) {
-      const tf = new TextFrame();
-      tf.classes.add("ending"); // 见 browser.ts::roleOfItem（归 verseNum 那一档，别当成音符）
-      tf.font = opt.numberFont.makeWithSize(opt.endingSize);
-      tf.color = opt.color;
-      tf.text = sp.num;
-      // 数字摆在竖脚**右侧**、横线**下方**，谁也不压谁（原书就是这么排的）
-      tf.x = lw + opt.endingSize * 0.28;
-      tf.y = lw + opt.endingSize * 0.95;
-      tf.update();
-      grp.add(tf);
-    }
+    const label = addEndingBracket(grp, {
+      x0: 0, x1: sp.x1 - sp.x0, top: 0, drop,
+      leftFoot: !sp.cont, rightFoot: sp.closed,
+      lineWidth: lw, color: opt.color,
+      // 数字摆在竖脚**右侧**、横线**下方**（纵向从横线往下按墨迹算，见 `ending.ts::labelBaseline`）。
+      // 横向：编辑器照五线谱右移约半个字号；成书照原书 0.28 个字号（竖脚是实测的短脚 `bracketFoot`）
+      label: sp.num && !sp.cont ? {
+        text: sp.num,
+        font: this.endingFont(opt),
+        dx: lw + opt.endingSize * (opt.bracketFoot > 0 ? 0.28 : 0.4),
+      } : undefined,
+      // line-check 的 L10/L11 靠 ending-line 认；ending 见 browser.ts::roleOfItem（归 verseNum 那一档，别当成音符）
+      classes: { line: "ending-line", label: "ending" },
+    });
+    label?.update();
     this.group.add(grp);
   }
 

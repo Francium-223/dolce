@@ -53,7 +53,7 @@ export class LayoutOptions {
    *  原书 500 首就是这么印的，成书重排由 `style/book.ts::applyBookPreset` 打开；
    *  编辑器 / 五线谱 / 文本谱三路维持富文本排法。见 layout/harmony.ts。 */
   chordPlainText = false;
-  /** 房号（1./2.）的字号。0 = 不画房号。 */
+  /** 房号（1./2.）的字号。0 = 不画房号（展开档：反复已逐遍展开）。原样档与成书由样式层给值。 */
   endingSize = 0;
   /** 歌词段号（行首的 `1.` `2.`）标不标：
    *  `always` 一律标（编辑器那条路的老行为）、`never` 一律不标、

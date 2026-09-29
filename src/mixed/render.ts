@@ -43,6 +43,7 @@ import {
   harmonyBand,
 } from "./model";
 import { Font } from "../layout/font";
+import { addEndingBracket } from "../layout/ending";
 import { layoutHarmonySegs } from "../layout/harmony";
 import { addLine, addSmufl, addSmuflScaled, chordGroup, STAFF_SYSTEM, translated, type StaffSystemData } from "./prims";
 import { drawJianpuOverlay } from "./jianpuoverlay";
@@ -527,37 +528,13 @@ function drawEnding(container: Group, obj: Ending, sys: Sys, mixed: boolean): vo
   const vlen = 20.0;
   const hlen = 10.0;
 
-  const bpath = new GraphicPath();
-  bpath.fill = false;
-  bpath.stroke = true;
-  bpath.strokeColor = 0xff000000;
-  bpath.strokeWidth = 1;
-
-  const leftV = true;
-  const rightV = obj.hasStop;
-
-  if (leftV) {
-    bpath.moveTo(left, y0 + vlen);
-    bpath.lineTo(left, y0);
-  } else {
-    bpath.moveTo(left, y0);
-  }
-  bpath.lineTo(right, y0);
-  if (rightV) {
-    bpath.lineTo(right, y0 + vlen);
-  }
-
   const grp = translated(0, yPos !== null ? yPos - vlen : 0);
-  grp.add(bpath);
-
-  const numFont = new Font(eng.wordFont, 20);
-  const numT = new TextFrame();
-  numT.text = obj.number;
-  numT.font = numFont;
-  numT.color = 0xff000000;
-  numT.x = left + hlen;
-  numT.y = y0 + vlen;
-  grp.add(numT);
+  addEndingBracket(grp, {
+    x0: left, x1: right, top: y0, drop: vlen,
+    leftFoot: true, rightFoot: obj.hasStop,
+    lineWidth: 1, color: 0xff000000,
+    label: { text: obj.number, font: new Font(eng.wordFont, 20), dx: hlen },
+  });
 
   container.add(grp);
 }

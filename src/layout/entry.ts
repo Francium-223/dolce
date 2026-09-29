@@ -722,6 +722,13 @@ export class Barline extends Entry {
     const l = this.lines[this.lines.length - 1];
     return l ? l.x + l.strokeWidth / 2 : 0;
   }
+  /** 第一根 / 最后一根线的线位（线心，相对本 entry 的组原点）。房号的竖脚对齐它们。 */
+  get firstLineX(): number {
+    return this.lines[0]?.x ?? 0;
+  }
+  get lastLineX(): number {
+    return this.lines[this.lines.length - 1]?.x ?? 0;
+  }
 
 
   /**

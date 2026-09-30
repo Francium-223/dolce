@@ -267,7 +267,11 @@ function stripUnderline(
           r.w >= Math.max(numH * 0.4, r.h * 3)) {
         lines.push(pc); extra++; continue;
       }
-      if (digitMode && p.bbox.y + p.bbox.h <= topBand && r.h >= numH * 0.85 && r.h <= numH * 1.25) { digits.push(pc); continue; }
+      // 高上限 1.25 字号；够宽（≥0.3 字号，不是粘上来的小节线）的放到 1.4：一页两种字号时字号按小的那种估
+      //（新编赞美诗·四声部 275 伴奏小行数字 30、声部行 37~38，字号估 30），声部行 `1̲̇ 2̲̇ 1̲̇` 连线一块 156×43，剥出的 2 高 38 过不了 1.25，
+      // 整块当成一个音
+      if (digitMode && p.bbox.y + p.bbox.h <= topBand && r.h >= numH * 0.85 &&
+          (r.h <= numH * 1.25 || (r.h <= numH * 1.4 && r.w >= numH * 0.3))) { digits.push(pc); continue; }
       return null;                                                  // 说不清是什么 → 整块不动
     }
     if (digitMode && !digits.length) return null;
@@ -1073,8 +1077,21 @@ function classify(comps: Component[], bin: Binary): { c: Classified; numH: numbe
           // 两道要一般粗：一根厚增时线也会被剥成「线 + 贴着的毛边」（麦子 20×7 → 20×5 + 19×2），毛边不到一半粗；
           // 真双减时线（1218 277，两道之间还连着细丝、框贴着）两道差不多粗
           Math.min(a.bbox.h, b2.bbox.h) >= Math.max(a.bbox.h, b2.bbox.h) * 0.5));
-      if (sp && (pageClean || sp.digits.length >= 2 || dotsUnderDigits || pureLines)) {
-        if (!pageClean) probe(sp.digits.length >= 2 ? "stripUnderline.dirtyMulti" : "stripUnderline.dirtyDotsUnderDigits");
+      // 一条减时线罩着两个音、只有一个粘上了线：剥出一个数字 + 一条往旁边伸出去的线，伸出去那段正上方还压着另一个
+      // 数字大小的块（新编赞美诗·四声部 4 行首 `1̲ 3̲` 133×47，3 粘线、1 不粘；不收就整块当一个「3」、框宽 133，
+      // 排到 1 前头成了 `3̲ 1̲`，下一声部的 `5̣̲ 5̣̲` 连点带线全丢）。碎渣不会恰好在线的另一头压着一个数字
+      const digitOn = (o: Component, ln: Component) => o.bbox.h >= numH * 0.8 && o.bbox.h <= numH * 1.3 && o.bbox.w <= numH * 1.2 &&
+        rcx(o.bbox) >= ln.bbox.x && rcx(o.bbox) <= rright(ln.bbox) &&
+        ln.bbox.y - rbottom(o.bbox) >= -2 && ln.bbox.y - rbottom(o.bbox) <= numH * 0.6;
+      const sharedLine = !!sp && sp.digits.length === 1 && sp.lines.length > 0 && (() => {
+        const dg = sp.digits[0]!;
+        const mates = comps.filter((o) => o !== k && sp.lines.some((ln) => digitOn(o, ln)) &&
+          (rright(o.bbox) < dg.bbox.x || o.bbox.x > rright(dg.bbox)));
+        return mates.length > 0 && sp.dots.every((d) => [dg, ...mates].some((o) =>
+          rcx(d.bbox) >= o.bbox.x && rcx(d.bbox) <= rright(o.bbox)));
+      })();
+      if (sp && (pageClean || sp.digits.length >= 2 || dotsUnderDigits || pureLines || sharedLine)) {
+        if (!pageClean) probe(sp.digits.length >= 2 ? "stripUnderline.dirtyMulti" : sharedLine ? "stripUnderline.dirtySharedLine" : "stripUnderline.dirtyDotsUnderDigits");
         c.hlines.push(...sp.lines); c.dots.push(...sp.dots); c.blocks.push(...sp.digits); continue;
       }
     }
@@ -1451,6 +1468,58 @@ function resolveDashLike(cls: Classified, rowCores: DigitCore[], numH: number): 
   }
 }
 
+/** 各音在 buildJpNums 里收下的八度点（上/下），供 resolvePairOctaveDots 按声部组复核 */
+const octDotsOf = new WeakMap<JpNum, { up: Rect[]; down: Rect[] }>();
+
+/** 四声部谱两声部一组（S/A、T/B）上下挨着，夹在两组数字之间的一颗点，要么是上声部的低音点、要么是下声部的高音点，
+ *  逐音按窗口收常被两边各收一次（上声部「数字 → 减时线 → 点」离得反而远，按「归更近的」也抢不回去）：
+ *  新编赞美诗·四声部 223 第 2 声部 `5̣̲ 5̣̲ 5̣̲ 5̣̲` 被上声部的低音点抵消成 `5̲`；275 第 1 声部 `3̲̇` 把下声部 `1̇` 的高音点也收成
+ *  自己的低音点，抵消成 `3̲`。这里在声部定下来之后按组裁决：
+ *  · **一个音不会同时有高音点和低音点**：上声部头上已有点的，这颗归下声部；下声部脚下已有点的，归上声部；
+ *  · 两种都行就比**音高**：同一列上方声部的音不低于下方声部；
+ *  · 仍定不下来（两种都合或都不合）照原样。 */
+function resolvePairOctaveDots(rows: StaffRow[], numH: number): void {
+  const bySys = new Map<number, StaffRow[]>();
+  for (const r of rows) if (r.system !== undefined) (bySys.get(r.system) ?? bySys.set(r.system, []).get(r.system)!).push(r);
+  const pitch = (n: JpNum, oct: number) => oct * 7 + n.digit;
+  for (const g of bySys.values()) {
+    if (g.length % 2) continue;
+    g.sort((a, b) => a.voice! - b.voice!);
+    for (let v = 0; v + 1 < g.length; v += 2) {
+      const upper = g[v]!, lower = g[v + 1]!;
+      const aligned = (ns: JpNum[], kb: Rect) => ns.find((n) => n.digit >= 1 && n.digit <= 7 && Math.abs(rcx(n.bbox) - rcx(kb)) <= numH * 0.4);
+      const seen = new Set<Rect>();
+      for (const n of [...upper.nums, ...lower.nums]) {
+        const od = octDotsOf.get(n);
+        if (!od) continue;
+        for (const kb of [...od.up, ...od.down]) {
+          if (seen.has(kb)) continue;
+          seen.add(kb);
+          const u = aligned(upper.nums, kb), l = aligned(lower.nums, kb);
+          if (!u || !l || rbottom(u.bbox) > kb.y + 1 || rbottom(kb) > l.bbox.y + 1) continue;   // 不夹在这两个音之间
+          const uo = octDotsOf.get(u), lo = octDotsOf.get(l);
+          if (!uo || !lo) continue;
+          const uClaim = uo.down.includes(kb), lClaim = lo.up.includes(kb);
+          if (!uClaim && !lClaim) continue;
+          const uBase = u.octave + (uClaim ? 1 : 0), lBase = l.octave - (lClaim ? 1 : 0);
+          // A：归上声部当低音点；B：归下声部当高音点
+          let a = !uo.up.some((o) => o !== kb), b = !lo.down.some((o) => o !== kb);
+          if (a && b) {
+            const pa = pitch(u, uBase - 1) >= pitch(l, lBase), pb = pitch(u, uBase) >= pitch(l, lBase + 1);
+            if (pa !== pb) { a = pa; b = pb; }
+          }
+          if (a === b) continue;
+          const nu = Math.max(-3, uBase - (a ? 1 : 0)), nl = Math.min(3, lBase + (b ? 1 : 0));
+          if (nu !== u.octave || nl !== l.octave) probe("octave.pairResolve");
+          u.octave = nu; l.octave = nl;
+          if (a) { if (lClaim) lo.up.splice(lo.up.indexOf(kb), 1); if (!uClaim) uo.down.push(kb); }
+          else { if (uClaim) uo.down.splice(uo.down.indexOf(kb), 1); if (!lClaim) lo.up.push(kb); }
+        }
+      }
+    }
+  }
+}
+
 function buildJpNums(
   bin: Binary, rowCores: DigitCore[], numH: number, cls: Classified, ocrDigit: (b: Rect) => number,
   arcs: Component[], barlineXs: number[], dotSizes: number[],
@@ -1747,7 +1816,9 @@ function buildJpNums(
       div++;
       prev = kb;
     }
-    out.push({ digit, bbox: d, dot, octave, div, augment, augmentRects });
+    const jn: JpNum = { digit, bbox: d, dot, octave, div, augment, augmentRects };
+    octDotsOf.set(jn, { up: upDots, down: downDots });
+    out.push(jn);
   }
   recountUnderlines(bin, out, numH, cls, barlineXs, voiceMates);
   return out;
@@ -3159,6 +3230,7 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
       && [...bySys.values()].every((g) => g.every((r, i) => r.voice === i));
     probe(ok ? "voices" : "voices.reject");
     if (!ok) for (const r of useRows) { delete r.system; delete r.voice; }
+    else resolvePairOctaveDots(useRows, numH);
   }
 
   // 转拍号归行：落在哪一谱行的纵向范围里就归哪一行，并锚到**其右侧第一个音符**上

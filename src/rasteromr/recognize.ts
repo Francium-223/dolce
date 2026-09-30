@@ -580,6 +580,10 @@ const TIME_DEN_DIST = 300;
 const FLAG_HEAD_OVERLAP = 0.5;
 /** 实心头中心椭圆里白占这么多以上、又没有杠和尾的，时值按空心头算（见 `hollowish`）。 */
 const HOLLOW_FILL = 0.3;
+/** 封闭内腔面积占头盒的下限（`hollowish` 的另一路）。 */
+const HOLLOW_CAVITY = 0.1;
+/** 封闭内腔那一路只看盒高不过这么多格的小头。 */
+const HOLLOW_SMALL_H = 0.8;
 /** 被符头隔断的竖段接回一根（`joinVSegs`）：中心差（px）、断口上限（格）。 */
 const VSEG_JOIN_DX = 2;
 const VSEG_JOIN_GAP = 1.2;
@@ -2456,7 +2460,10 @@ export async function recognizeRasterPage(
   {
     const hollowMask = buildHollowMasks(raster.bin, syms.filter((s0) => !(s0 as { weak?: boolean }).weak), unit, [])[0] ?? null;
     if (hollowMask) {
-      const free = blobs.filter((c) => !claimed.has(c.id) && !dictClaimed.has(c.id) && !merged.has(c.id) && inBand(c.bbox.y + c.bbox.h / 2));
+      // 带外到 `FAR_HEAD` 格的块只交全音符形状那一路（第三条加线上的全音符离外线正好 3 格：称谢歌伴奏 m16 F#3），
+      // 模板那一路不放：谱表下三四格常是歌词字
+      const inFar = (y: number) => groups.some((g) => y > g.lines[0].y - unit.space * FAR_HEAD && y < g.lines[4].y + unit.space * FAR_HEAD);
+      const free = blobs.filter((c) => !claimed.has(c.id) && !dictClaimed.has(c.id) && !merged.has(c.id) && inFar(c.bbox.y + c.bbox.h / 2));
       /** 本页已认二分头的中位尺寸（开口内腔那一档用）。 */
       const halves = syms.filter((s0) => s0.code === "noteheadHalf");
       const med = (xs: number[]) => xs.sort((p, q) => p - q)[xs.length >> 1];
@@ -2500,7 +2507,7 @@ export async function recognizeRasterPage(
         if (w < 0.8 || w > 2.2 || h < 0.6 || h > 3.2) continue; // 粗体全音符宽到 1.96 格（《赞美一神》）
         if (syms.some((s0) => overlapFrac(box, s0.box) > 0.3)) continue;
         {
-          const whole = wholesByShape(raster.bin, nl, box, unit, pitchGrid);
+          const whole = wholesByShape(raster.bin, nl, box, unit, pitchGrid, prims.vSegs);
           if (whole.length) {
             for (const id of group) used.add(id), merged.add(id);
             for (const wb of whole) {
@@ -2510,6 +2517,7 @@ export async function recognizeRasterPage(
             continue;
           }
         }
+        if (!inBand(box.y + box.h / 2)) continue;
         // 块里要有内腔（空心头的先验）。没有封闭的孔就找**开口的内腔**：那种头模板也配不上
         // （万福泉源歌连已认出的头都只打到 0.2 分），改按内腔中心直接定头（`hollowHeadsFromCavities`）
         if (!holes.some((o) => o.x >= box.x && o.x + o.w <= box.x + box.w && o.y >= box.y - 1 && o.y + o.h <= box.y + box.h + 1)) {
@@ -2980,6 +2988,8 @@ export async function recognizeRasterPage(
   // **认成实心、其实中间是空的头**：圈细、内腔被没抹掉的谱线切成几小块的空心头（耶和华、高举主大能、你的信实广大），
   // 过不了空心头的形状闸，被收成实心。头的中心椭圆（半径取盒的三成，跳过谱线那几行）里白占 HOLLOW_FILL 以上、
   // 又没有杠和尾的，时值按空心头算。不在收头那一步改种类：改成空心头会走另一套收头规则，全音符大小的头反倒丢了（主使我喜乐）。
+  // 小一号的头（盒高不过 `HOLLOW_SMALL_H` 格）还可以看**封闭的内腔**：最大一块够头盒的 `HOLLOW_CAVITY` 就算空心。
+  // 小字号的空心头（以马内利来临歌，头盒 10×7）内腔是一道斜窄缝，头盒又常只罩住头的上半截，按盒中心的椭圆量不出白来
   const hollowish = (s0: Sym): boolean => {
     const b = s0.box;
     const cx = (b.left + b.right) / 2;
@@ -2996,7 +3006,10 @@ export async function recognizeRasterPage(
         if (!raster.bin.data[y * raster.bin.w + x]) wht++;
       }
     }
-    return tot > 0 && wht / tot >= HOLLOW_FILL;
+    if (tot > 0 && wht / tot >= HOLLOW_FILL) return true;
+    // 只看小一号的头：正常大小的头旁边，头、干、谱线三面也围得出一块白（父恩广大、称谢歌伴奏的四分读成二分）
+    if (b.bottom - b.top > unit.space * HOLLOW_SMALL_H) return false;
+    return enclosedWhite(nl, b, unit.space) >= (b.right - b.left) * (b.bottom - b.top) * HOLLOW_CAVITY;
   };
   // **大半落在符尾盒里的头不要**：同一块墨先被收成头、后又被符尾自举认成符尾（《所信有根基》八分的尾读成一个 A4 二分）
   {
@@ -4203,6 +4216,48 @@ function fillAround(bin: Binary, b: Rect, unit: RasterUnit): { box: Rect; area: 
   return { box: { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 }, area: seen.size };
 }
 
+/**
+ * 头盒四周外扩半格的窗口里，从窗口边上往里灌不到的白（封闭内腔），返回**最大一块**的像素数。
+ * 外扩半格：小字号头的盒常只罩住头的上半截（以马内利来临歌 m11），内腔伸到盒外。
+ * 只取最大一块：网点印刷的实心头里散着一两像素的白点，加起来也不小（万口欢唱）。
+ */
+function enclosedWhite(bin: Binary, b: { left: number; right: number; top: number; bottom: number }, sp: number): number {
+  const pad = Math.round(sp * 0.5);
+  const x0 = Math.max(0, Math.floor(b.left) - pad);
+  const x1 = Math.min(bin.w - 1, Math.ceil(b.right) + pad);
+  const y0 = Math.max(0, Math.floor(b.top) - pad);
+  const y1 = Math.min(bin.h - 1, Math.ceil(b.bottom) + pad);
+  const w = x1 - x0 + 1;
+  const h = y1 - y0 + 1;
+  const seen = new Uint8Array(w * h);
+  const fill = (sx: number, sy: number) => {
+    const s0 = (sy - y0) * w + (sx - x0);
+    if (seen[s0] || bin.data[sy * bin.w + sx]) return 0;
+    seen[s0] = 1;
+    const stack = [s0];
+    let n = 0;
+    while (stack.length) {
+      const i = stack.pop()!;
+      n++;
+      const x = (i % w) + x0;
+      const y = Math.floor(i / w) + y0;
+      for (const [nx, ny] of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]]) {
+        if (nx < x0 || nx > x1 || ny < y0 || ny > y1) continue;
+        const j = (ny - y0) * w + (nx - x0);
+        if (seen[j] || bin.data[ny * bin.w + nx]) continue;
+        seen[j] = 1;
+        stack.push(j);
+      }
+    }
+    return n;
+  };
+  for (let x = x0; x <= x1; x++) fill(x, y0), fill(x, y1);
+  for (let y = y0; y <= y1; y++) fill(x0, y), fill(x1, y);
+  let best = 0;
+  for (let y = y0 + 1; y < y1; y++) for (let x = x0 + 1; x < x1; x++) best = Math.max(best, fill(x, y));
+  return best;
+}
+
 /** `[x0,x1]` 整段都是墨的那些行，连成段返回（`[起行, 止行]`）。 */
 function crossRuns(bin: Binary, x0: number, x1: number, y0: number, y1: number): [number, number][] {
   const out: [number, number][] = [];
@@ -4224,11 +4279,39 @@ function crossRuns(bin: Binary, x0: number, x1: number, y0: number, y1: number):
  * 不只左右两半并成的块，整块的也按这套判（附点全音符叠头、「阿们」叠头，内腔被谱线切碎、模板配不上）。
  * 我灵镇静 m8 的 A4/F4、m25 的 A3/F3：内腔是两道竖缝（宽高比 0.5），内腔那一路与模板都认不出。
  */
-function wholesByShape(bin: Binary, nl: Binary, box: Rect, unit: RasterUnit, grid: (y: number) => number | null): Rect[] {
+function wholesByShape(bin: Binary, nl: Binary, box0: Rect, unit: RasterUnit, grid: (y: number) => number | null, stems: LineSeg[] = []): Rect[] {
   const sp = unit.space;
+  // **盒收到头上**：加线比头宽，块里带着整条加线时盒宽出一截（以马内利来临歌 m24 加一线上的 C4，43 像素的盒里头只有 30）。
+  // 墨横满盒宽九成的行是线，不算；按其余行的墨定左右边
+  let box = box0;
+  {
+    const lineRow = (y: number, frac = 0.9) => {
+      let c = 0;
+      for (let x = box0.x; x < box0.x + box0.w; x++) c += bin.data[y * bin.w + x];
+      return c >= box0.w * frac;
+    };
+    // 顶、底边上的线行先去掉：挂在加线下的头，块顶带着那条加线，上下对称被拉低（以马内利来临歌 m25 的 B3）。
+    // 线的边缘行常缺几个像素（这一处顶行 36/43），边上放到八成
+    let t = box0.y;
+    let b = box0.y + box0.h - 1;
+    while (t < b && lineRow(t, 0.8)) t++;
+    while (b > t && lineRow(b, 0.8)) b--;
+    let l = Infinity;
+    let r = -Infinity;
+    for (let y = t; y <= b; y++) {
+      if (lineRow(y)) continue;
+      for (let x = box0.x; x < box0.x + box0.w; x++)
+        if (bin.data[y * bin.w + x]) {
+          l = Math.min(l, x);
+          r = Math.max(r, x);
+        }
+    }
+    if (r >= l && (box0.w - (r - l + 1) > sp * 0.15 || t > box0.y || b < box0.y + box0.h - 1)) box = { x: l, y: t, w: r - l + 1, h: b - t + 1 };
+  }
   const w = box.w / sp;
   const h = box.h / sp;
-  if (w < 1.3 || w > 2.2) return [];
+  // 收盒之后细圈的头量得窄些（以马内利来临歌 m25 加线下的 B3 只有 1.27 格）：1.2~1.3 格的要旁边没有干（二分头那么宽）
+  if (w < 1.2 || w > 2.2) return [];
   const n = h >= 0.75 && h <= 1.35 ? 1 : h >= 1.6 && h <= 2.6 ? 2 : 0;
   if (!n) return [];
   const ink = (b: Binary, x: number, y: number) => x >= 0 && x < b.w && y >= 0 && y < b.h && b.data[y * b.w + x] === 1;
@@ -4273,7 +4356,52 @@ function wholesByShape(bin: Binary, nl: Binary, box: Rect, unit: RasterUnit, gri
   };
   const side = (colFrac(box.x, box.x + box.w * 0.3) + colFrac(box.x + box.w * 0.7, box.x + box.w)) / 2;
   const mid = colFrac(box.x + box.w * 0.4, box.x + box.w * 0.6);
-  if (lr < WHOLE_LR || ud < WHOLE_UD || side < WHOLE_SIDE || mid > side * WHOLE_MID) return [];
+  // **转 180° 对称**：内腔斜着的全音符（右上、左下粗）左右镜像只有 0.46，中间两成又正压着上下粗边，
+  // 上面两道都过不去（齐来崇拜低音 m9 复纵线后的 F#3/D3「8」字叠头）；它转半圈与自己重合。
+  // 另要每个头中心那一小块是空的（内腔），实心的字块转半圈也可能对称
+  let rb = 0;
+  let ra = 0;
+  for (let y = box.y; y < box.y + box.h; y++)
+    for (let x = box.x; x < box.x + box.w; x++) {
+      const a = ink(bin, x, y);
+      const m = ink(bin, box.x + box.w - 1 - (x - box.x), box.y + box.h - 1 - (y - box.y));
+      if (a || m) ra++;
+      if (a && m) rb++;
+    }
+  const rot = ra ? rb / ra : 0;
+  const hollowMid = () => {
+    for (let k = 0; k < n; k++) {
+      const y0 = Math.round(box.y + (k + 0.35) * hh);
+      const y1 = Math.round(box.y + (k + 0.65) * hh);
+      let wht = 0;
+      let tot = 0;
+      for (let y = y0; y <= y1; y++) {
+        // 头骑在线上时谱线穿过内腔（去线图在头里保留了线）：两侧伸出盒外的横贯行不算
+        if (ink(bin, box.x - 2, y) && ink(bin, box.x + box.w + 1, y)) continue;
+        for (let x = Math.round(box.x + box.w * 0.35); x <= Math.round(box.x + box.w * 0.65); x++) {
+          tot++;
+          if (!ink(bin, x, y)) wht++;
+        }
+      }
+      if (!tot || wht / tot < WHOLE_HOLE) return false;
+    }
+    return true;
+  };
+  // 带干的二分叠头转半圈也对称（齐来崇拜 m6 低音 G3/E3）：头左右沿 0.3 格内有伸出盒外一格以上的竖段的不算
+  const stemmed = stems.some((v) => {
+    const vx = (v.x0 + v.x1) / 2;
+    if (Math.abs(vx - box.x) > sp * 0.3 && Math.abs(vx - (box.x + box.w)) > sp * 0.3) return false;
+    const vy0 = Math.min(v.y0, v.y1);
+    const vy1 = Math.max(v.y0, v.y1);
+    if (vy1 < box.y - sp * 0.3 || vy0 > box.y + box.h + sp * 0.3) return false; // 得挨着头
+    return vy0 < box.y - sp || vy1 > box.y + box.h + sp;
+  });
+  if (w < 1.3 && stemmed) return [];
+  const byRot = !stemmed && rot >= WHOLE_ROT && side >= WHOLE_SIDE && hollowMid();
+  // **细圈**：圈细的全音符两侧不到 0.58（以马内利来临歌 m24 加一线上的 C4 叠 E4，0.57），
+  // 可它左右、上下都对称得很（与二分头一样），内腔也空：两侧放到 `WHOLE_SIDE_THIN`
+  const thin = lr >= WHOLE_LR_THIN && ud >= WHOLE_UD_THIN && side >= WHOLE_SIDE_THIN && mid <= side * WHOLE_MID && hollowMid();
+  if (!byRot && !thin && (lr < WHOLE_LR || ud < WHOLE_UD || side < WHOLE_SIDE || mid > side * WHOLE_MID)) return [];
   const out: Rect[] = [];
   for (let k = 0; k < n; k++) {
     const cy = grid(box.y + (k + 0.5) * hh);
@@ -4291,6 +4419,14 @@ const WHOLE_UD = 0.45;
 const WHOLE_SIDE = 0.58;
 /** 中间两成宽的墨不超过两侧的这么多倍：内腔竖直的 0~0.1，斜着的（万口欢唱末尾）细边斜穿中线到 0.52；字 0.6 以上。 */
 const WHOLE_MID = 0.55;
+/** 转 180° 的墨交并比下限（内腔斜着的全音符）：齐来崇拜 m9 叠头 0.81，已认出的全音符叠头 0.72~0.86。 */
+const WHOLE_ROT = 0.75;
+/** 转 180° 那一路：每个头中心三成见方里白的占比下限。 */
+const WHOLE_HOLE = 0.6;
+/** 细圈那一路：左右、上下镜像下限与两侧墨占比下限。 */
+const WHOLE_LR_THIN = 0.72;
+const WHOLE_UD_THIN = 0.6;
+const WHOLE_SIDE_THIN = 0.5;
 
 /**
  * 盒里有**两道横贯的粗横笔**：升号的两道斜横。四分休止是折线，横不满盒宽。

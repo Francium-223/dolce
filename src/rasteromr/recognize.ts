@@ -562,6 +562,8 @@ const DUP_HEAD_DX = 0.5;
 const PAIR_FILL_MAX = 0.96;
 /** 空心头正上/正下一格、头宽×头高七成的窗里墨占这么多，算贴着一个实心头。 */
 const SOLID_NEIGHBOR_FILL = 0.9;
+/** 实心头盒宽到这么多格、盒里又有干的，按带着加线截盒（全音符不论宽窄都查）。 */
+const WIDE_BLACK = 1.45;
 
 /** 拍号数字与模板的签名距离上限。见 `bootstrapTimeSig` 那段的说明。 */
 const TIME_TEMPLATE_DIST = 180;
@@ -1390,6 +1392,42 @@ export async function recognizeRasterPage(
     const fake = (q: { box: Rect; code: string }) => (q.code === "noteheadHalf" && arch(q.box)) || (q.code === "noteheadWhole" && byBeam(q.box));
     for (const h of heads) if (!dropHead.has(h.comp.id) && fake(h)) dropHead.add(h.comp.id);
     for (let i = stacked.length - 1; i >= 0; i--) if (fake(stacked[i])) stacked.splice(i, 1);
+    // **盒里有干的「全音符」、过宽的实心头是带着加线的有干头**：网纹实心头看着像空心，连着右边伸出的一截加线盒宽到了 1.7 格，
+    // 干落在盒中间、不在盒缘，找干那一步够不着（倚靠主永远膀臂 m3 C4、B♭3，干上还挂着 A♭4/G4，整串都没挂上干）。
+    // 盒里有一列墨从头里往上/下伸出一格以上、又在盒宽的两成以内之外的，在那一列截盒（加线那一侧去掉），按截后的填充率重判空实
+    for (const h of heads) {
+      if (dropHead.has(h.comp.id) || !(h.code === "noteheadWhole" || (h.code === "noteheadBlack" && h.box.w >= unit.space * WIDE_BLACK))) continue;
+      const b = h.box;
+      const ink = (x: number, y: number) => y >= 0 && y < nl.h && !!nl.data[y * nl.w + x];
+      const my = Math.round(b.y + b.h / 2);
+      let sx = -1;
+      for (let x = Math.max(0, b.x + Math.round(b.w * 0.2)); x < Math.min(nl.w, b.x + b.w - Math.round(b.w * 0.2)); x++) {
+        if (!ink(x, my)) continue;
+        let t = my;
+        let d = my;
+        while (ink(x, t - 1)) t--;
+        while (ink(x, d + 1)) d++;
+        if (b.y - t >= unit.space * 1.5 || d - (b.y + b.h) >= unit.space * 1.5) {
+          sx = x;
+          break;
+        }
+      }
+      if (sx < 0) continue;
+      // 干在盒右半：头在左，截到干右缘；在左半：头在右，从干左缘起
+      let x0 = b.x;
+      let x1 = b.x + b.w;
+      if (sx >= b.x + b.w / 2) {
+        let r = sx;
+        while (ink(r + 1, my) && r + 1 < x1 && r - sx < 3) r++;
+        x1 = r + 1;
+      } else x0 = sx;
+      const nb = { x: x0, y: b.y, w: x1 - x0, h: b.h };
+      if (nb.w >= unit.space * 1.4 || nb.w < unit.space * 0.9) continue;
+      let on = 0;
+      for (let y = nb.y; y < nb.y + nb.h; y++) for (let x = nb.x; x < nb.x + nb.w; x++) if (raster.bin.data[y * raster.bin.w + x]) on++;
+      h.box = nb;
+      h.code = on / (nb.w * nb.h) >= 0.62 ? "noteheadBlack" : "noteheadHalf";
+    }
     // **两根同向的干一左一右夹着的扁块是短杠**：两个十六分之间一格半长的杠没检出成杠原语，连着谱线被收成头
     //（有一位神 m2）。真头只在一侧有干；两侧的干还往同一头伸，就是杠
     const shortBeam = (b: Rect) => {

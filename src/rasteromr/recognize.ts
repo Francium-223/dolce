@@ -501,6 +501,10 @@ const REST_W = [0.9, 1.8] as const;
 const REST_H = 0.8;
 const REST_RATIO = 1.8;
 const REST_FILL = 0.75;
+/** 从符杠表里捡休止时的宽度上限（格）：这套字形的整小节休止宽 2.1 格。 */
+const REST_BEAM_W = 2.4;
+/** 坐在线上的扁块宽过这么多格，也按整小节休止（二分休止没这么宽）。 */
+const REST_WIDE = 1.7;
 
 /** 降号的肚子从盒顶往下第几成开始。取 0.45：盒高 2.36 格时中心正好下移 0.53 格，
  *  与实测的 0.55 格偏差吻合。 */
@@ -1121,6 +1125,33 @@ export async function recognizeRasterPage(
     restIds.add(c.id);
     restSyms.push({ box: b, code: restKind(b, staffLines, unit) });
   }
+  // **被当成符杠的休止**：下声部的整小节休止挪到了第四线下、第五线上，这套字形又宽（2.1 格），
+  // 原语那一步先当一截符杠拿走，块图里根本没有它（齐来崇拜低音谱表 m15–17）。
+  // 从符杠表里捡：两头都不挨干、扁实心、上沿吊在或下沿坐在第四、五线上。
+  // 吊着的、或宽过 `REST_WIDE` 格的记整小节休止；坐着的窄块记二分休止
+  for (const q of prims.beams) {
+    const b = q.box;
+    const w = b.w / unit.space;
+    const hRest = Math.max(0.1, b.h / unit.space - unit.lineThick / unit.space);
+    if (w < REST_W[0] || w > REST_BEAM_W || hRest < 0.3 || hRest > REST_H) continue;
+    if (Math.abs(q.y1 - q.y0) > unit.lineThick) continue; // 斜的是真符杠
+    if (besideStem(b)) continue;
+    if (nearStaffStart(b, groups, staffLefts, unit)) continue;
+    if (restSyms.some((r) => overlapFrac(r.box, b) > 0.3)) continue;
+    const tol = unit.lineThick + 2;
+    const grp = groups.find((g) => b.y + b.h / 2 > g.lines[0].y && b.y + b.h / 2 < g.lines[4].y);
+    if (!grp) continue;
+    // 只收挪到下声部的位置（第四、五线）：第二、三线上的归块图那一路；这里放开的话，
+    // 宁静的伯利恒吊在第二、三线下的一批扁块也进来，合唱谱干净档音符 −0.3
+    const low = grp.lines.slice(3);
+    const hang = low.some((l) => Math.abs(b.y - l.y) <= tol);
+    const sit = low.some((l) => Math.abs(b.y + b.h - l.y) <= tol);
+    if (!hang && !sit) continue;
+    let fill = 0;
+    for (let y = b.y; y < b.y + b.h; y++) for (let x = b.x; x < b.x + b.w; x++) fill += raster.bin.data[y * raster.bin.w + x];
+    if (fill / Math.max(1, b.w * b.h) < REST_FILL) continue;
+    restSyms.push({ box: b, code: hang || w >= REST_WIDE ? "restHBar" : "restHalf" });
+  }
   // **斜笔被抽成竖段的八分休止**：斜笔陡，原语那一步当竖段提走，块图里只剩上头的球
   //（《向主唱新歌》高音谱表下声部一排八分休止，球被歌词行收走）。拿球在去线图上把整个连通域
   // 回填出来，再按八分休止的形状判（`isEighthRest`）。
@@ -1654,6 +1685,23 @@ export async function recognizeRasterPage(
   // 再要求**盒的中心落在谱表中线附近**（四分休止是竖着写在谱表正中的）。
   // 这三条合起来在谱面上几乎没有别的东西能同时满足：符干太窄、符头太矮、
   // 连音线太空、升降号在 0.6 格上下。
+  /** 块左沿到本行「谱号 + 调号」右沿的距离；这一行没认出谱号、或块不在行首段右边的返回 Infinity。 */
+  const afterKey = (b: Rect) => {
+    const cy = b.y + b.h / 2;
+    const g = groups.find((g0) => cy > g0.lines[0].y - unit.space && cy < g0.lines[4].y + unit.space);
+    if (!g) return Infinity;
+    const inRow = (r: Rect) => r.y + r.h / 2 > g.lines[0].y - unit.space * 2 && r.y + r.h / 2 < g.lines[4].y + unit.space * 2;
+    const clef = syms.filter((s0) => s0.code.endsWith("Clef") && inRow(s0.box) && s0.box.x < b.x).sort((p, q) => q.box.x - p.box.x)[0];
+    if (!clef) return Infinity;
+    let right = clef.box.x + clef.box.w;
+    const accs = syms.filter((s0) => /^accidental(Flat|Sharp)$/.test(s0.code) && inRow(s0.box) && s0.box.x > clef.box.x).sort((p, q) => p.box.x - q.box.x);
+    // 谱号到第一个升降号隔得开些（低音谱号右边还有两个点）
+    for (const [i, a] of accs.entries()) {
+      if (a.box.x - right > unit.space * (i ? 1.2 : 2)) break;
+      right = Math.max(right, a.box.x + a.box.w);
+    }
+    return b.x - right < 0 ? Infinity : b.x - right;
+  };
   for (const c of blobs) {
     if (claimed.has(c.id) || dictClaimed.has(c.id) || merged.has(c.id)) continue;
     const b = c.bbox;
@@ -1673,6 +1721,10 @@ export async function recognizeRasterPage(
     //
     // 谱面上行首那一段是死的：谱号 + 调号最多占几格，真正的休止在它右边。
     if (nearStaffStart(b, groups, staffLefts, unit)) continue;
+    // 谱线左端离谱号远（大括号、缩进）或调号很长时，按谱线左端起算的那一段罩不到头。
+    // 改从本行认出的谱号起，往右串起紧挨着的升降号，得到行首段的右沿；候选在右沿往右 `KEY_TAIL` 格以内的也不收：
+    // 那里是还没认出的调号（倚靠主永远膀臂低音第四个降号）或拍号（向主唱新歌 6/8，拍号自举在这一路之后才跑）
+    if (afterKey(b) < unit.space * KEY_TAIL) continue;
     if (sharpCrossbars(nl, b, unit)) continue;
     // 已认的符头盖住大半的块不是休止：按内腔找的空心头不认领块，斜腔的「8」字叠头
     // 去线后正是这副个头（《你的信实广大》末小节）
@@ -2258,6 +2310,8 @@ export async function recognizeRasterPage(
       const straight = vr >= b.h * 0.85 && vr >= unit.space * 2.5;
       const rm = straight ? null : matchTemplate(binSig(nl, b), b.w / unit.space, b.h / unit.space, restTpl);
       const rs = rm ?? (!straight && isEighthRest(nl, b, c.area, unit) ? { smufl: "rest8th" as SmuflName } : null);
+      // 休止不会离谱表几格远：标题行的「你」字（我一生要赞美你，离第一线 8 格）配上了八分休止
+      if (rs && !inBand(b.y + b.h / 2)) continue;
       if (rs) {
         stemHeads.push({ box: b, code: rs.smufl });
         ledger.claim(b, `rest:${rs.smufl}`);
@@ -4056,6 +4110,8 @@ const QREST_FILL = [0.33, 0.62] as const;
 /** 行首「谱号 + 调号」那一段占几格（线距的倍数）。谱号约 2 格宽，
  *  七个降号排开也就再占 4 格，留一点余量。 */
 const STAFF_START = 6;
+/** 行首「谱号 + 调号」右沿往右这么多格里不收四分休止（没认出的调号、拍号在那里）。 */
+const KEY_TAIL = 2;
 
 /** 盒落在某行谱的**行首那一段**里吗（谱号 + 调号的地盘）。见 `bootstrapQuarterRest` 那一段。 */
 function nearStaffStart(

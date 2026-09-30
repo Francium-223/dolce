@@ -2838,13 +2838,24 @@ export async function recognizeRasterPage(
         const vx = (v.x0 + v.x1) / 2;
         return (Math.abs(vx - b.x) <= tol || Math.abs(vx - b.x - b.w) <= tol) && Math.min(v.y0, v.y1) <= cy + sp && Math.max(v.y0, v.y1) >= cy - sp;
       });
-      if (has) continue;
-      const col = inkColumn(nl, b, unit);
+      // 贴着的竖段要在正经那一侧：左缘上往上伸的、右缘上往下伸的是邻头的干（破碎扫描版 p7 相邻十六分，
+      // 前一根朝上的干离后一个头左缘 5px；后一个头自己的干被两侧邻墨判不孤立、不出竖段，于是被并进邻头的和弦）
+      const own = has && [...prims.vSegs, ...stemSegs, ...inkStems].some((v) => {
+        const vx = (v.x0 + v.x1) / 2;
+        const top = Math.min(v.y0, v.y1);
+        const bot = Math.max(v.y0, v.y1);
+        if (top > cy + sp || bot < cy - sp) return false;
+        return (Math.abs(vx - b.x) <= tol && bot >= cy + sp) || (Math.abs(vx - b.x - b.w) <= tol && top <= cy - sp);
+      });
+      if (has && own) continue;
+      const col = inkColumn(nl, b, unit, has);
       if (!col) continue;
       const reach = Math.max(cy - col[0], col[1] - cy);
       if (reach < sp * INK_STEM_REACH[0] || reach > sp * INK_STEM_REACH[1]) continue;
       const g = groups.find((q) => cy > q.lines[0].y - sp * 4 && cy < q.lines[4].y + sp * 4);
-      if (g && Math.abs(col[0] - g.lines[0].y) <= sp * 0.5 && Math.abs(col[1] - g.lines[4].y) <= sp * 0.5) continue;
+      // 一端扎进符杠的不算小节线：底线上的头、干顶到首线上方的杠，也正好两端压着首末线（破碎扫描版 p7 十六分 E4）
+      const inBeam = (y: number) => prims.beams.some((q) => col[2] >= q.box.x && col[2] <= q.box.x + q.box.w && y >= q.box.y - 2 && y <= q.box.y + q.box.h + 2);
+      if (g && Math.abs(col[0] - g.lines[0].y) <= sp * 0.5 && Math.abs(col[1] - g.lines[4].y) <= sp * 0.5 && !inBeam(col[0]) && !inBeam(col[1])) continue;
       inkStems.push({ x0: col[2], y0: col[0], x1: col[2], y1: col[1], lw: unit.lineThick, maxLw: unit.lineThick * 2 });
     }
   }

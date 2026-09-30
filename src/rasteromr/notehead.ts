@@ -1045,7 +1045,7 @@ export function hollowHeadsOnLedgers(
  * 竖段表之外、直接在图上量的符干：盒左右缘附近各列，从盒中心往上下沿墨走（断口 ≤2 像素），
  * 取纵向最长的一列，返回 `[上端, 下端, 列 x]`。
  */
-export function inkColumn(nl: Binary, b: Rect, unit: RasterUnit): [number, number, number] | null {
+export function inkColumn(nl: Binary, b: Rect, unit: RasterUnit, sided = false): [number, number, number] | null {
   const tol = Math.round(Math.max(unit.lineThick * 2, unit.space * 0.25));
   const cy = Math.round(b.y + b.h / 2);
   const at = (x: number, y: number) => x >= 0 && y >= 0 && x < nl.w && y < nl.h && nl.data[y * nl.w + x] === 1;
@@ -1062,8 +1062,9 @@ export function inkColumn(nl: Binary, b: Rect, unit: RasterUnit): [number, numbe
   let best: [number, number, number] | null = null;
   for (const edge of [b.x, b.x + b.w]) {
     for (let x = Math.round(edge) - tol; x <= Math.round(edge) + tol; x++) {
-      const top = walk(x, -1);
-      const bottom = walk(x, 1);
+      // `sided`：左缘只量往下的、右缘只量往上的（朝下的干挂头左缘、朝上的挂右缘）
+      const top = sided && edge === b.x ? cy : walk(x, -1);
+      const bottom = sided && edge !== b.x ? cy : walk(x, 1);
       if (!best || bottom - top > best[1] - best[0]) best = [top, bottom, x];
     }
   }

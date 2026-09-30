@@ -1478,6 +1478,45 @@ export interface BarCheck {
   /** 音符数（含休止）。 */
   count: number;
   full: boolean;
+  /** 一拍的时值（`1 / beatType`）。 */
+  beat: number;
+  /** 结构上的半截小节（弱起、乐句中间被小节线劈开的两半），见 `markSplitBars`。 */
+  split?: boolean;
+}
+
+/**
+ * **结构上的半截小节**：诗歌本在乐句末用小节线把一个小节劈成两半（前半句收尾、后半句弱起；
+ * 万口欢唱 3/2 拍 m5 一拍半 + m6 半拍，GT 记 `implicit="yes"`），曲首还有弱起小节。
+ * 它们谱面上就不满拍，识别没错，自检却一律记成「不满」——独唱谱没满拍的小节里七成是这一类。
+ * 按「系统行数 + 第几行」把各页的小节接成序列，不满、整拍数的小节满足任一条就标 `split`：
+ * 在曲首；与前或后一个同样的半截小节合起来正好一整小节；在曲末、与曲首的弱起合起来正好一小节；
+ * 挨着段落界（右端双纵线/反复线，或紧跟在它后面）。
+ */
+export function markSplitBars(pages: { page: SPage; bars: BarCheck[] }[]): void {
+  const seqs = new Map<string, BarCheck[]>();
+  for (const { page, bars } of pages)
+    for (const sys of page.systems)
+      sys.staves.forEach((stf, k) => {
+        const key = `${sys.staves.length}:${k}`;
+        const own = bars.filter((b) => b.staff === stf).sort((a, b) => a.index - b.index);
+        seqs.set(key, [...(seqs.get(key) ?? []), ...own]);
+      });
+  const eps = 1e-6;
+  const part = (b: BarCheck | undefined) =>
+    !!b && !b.full && b.sum > eps && b.sum < b.expect - eps && Math.abs(b.sum / b.beat - Math.round(b.sum / b.beat)) < eps;
+  const pair = (a: BarCheck, b: BarCheck) => Math.abs(a.expect - b.expect) < eps && Math.abs(a.sum + b.sum - a.expect) < eps;
+  for (const seq of seqs.values())
+    seq.forEach((b, i) => {
+      if (!part(b)) return;
+      const prev = seq[i - 1];
+      const next = seq[i + 1];
+      // 段落界：右端是双纵线/反复线（段尾不满，万口欢唱 m9 一拍、副歌从下一小节强拍起），或紧跟在它后面（段首弱起）
+      const bar = b.staff.bars[b.index];
+      const before = b.staff.bars[b.index - 1];
+      const sectionEnd = (x: typeof bar | undefined) => !!x && (x.rightRepeat || (!!x.rightStyle && x.rightStyle !== "regular"));
+      const edge = sectionEnd(bar) || sectionEnd(before) || !!bar?.leftRepeat;
+      if (i === 0 || edge || (part(prev) && pair(prev, b)) || (part(next) && pair(b, next)) || (i === seq.length - 1 && part(seq[0]) && pair(seq[0], b))) b.split = true;
+    });
 }
 
 /**
@@ -1550,7 +1589,8 @@ export function checkBars(
       const sum = heads
         .filter((n) => n.voice === (heads[0]?.voice ?? 1))
         .reduce((a, n) => a + (n.sym.code === "restHBar" ? expect : n.duration), 0);
-      out.push({ staff: stf, index: i, sum, expect, count: inBar.length, full });
+      // 分完声部第一声部正好一整小节的也算满（`checkFull` 两趟没凑上、按次序分出来却是满的：我一生要赞美你 m1-4）
+      out.push({ staff: stf, index: i, sum, expect, count: inBar.length, full: full || Math.abs(sum - expect) < 1e-6, beat });
     });
   }
   return out;

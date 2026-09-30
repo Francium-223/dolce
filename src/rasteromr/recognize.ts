@@ -826,6 +826,8 @@ export async function recognizeRasterPage(
   // 于是加线判不出来——而谱表外的符头**要有加线撑着才归得了谱行**
   // （实测宁静 p5 八度跑动上方那七个符头，认出来了却一个都没归属，窗口里一条横段都没有）。
   const gridYs = groups.flatMap((g) => g.lines.map((l) => l.y));
+  /** 各谱表五条线的 y（从上到下）。 */
+  const staffYs = groups.map((g) => g.lines.map((l) => l.y).sort((p, q) => p - q));
   // 没进任何一组的行投影线：多半是**通长的加线**（见 `staffLines` 那一处的说明）
   const groupedLines = new Set(groups.flatMap((g) => g.lines));
   const strayLines: LineSeg[] = lines
@@ -2465,7 +2467,7 @@ export async function recognizeRasterPage(
   // 《善牧恩慈歌》线距 11px，附点只有 3px。两首的附点二分、附点四分一个都没认出来。
   // 附点的位置是死的：符头右边一格之内、同一个间（线上的音写在上方那个间）。
   // 在去谱线图上找那个窗口里**孤立、近圆的小墨团**，找到就补一个附点，时值交给 `attachDots`。
-  for (const d of findDots(nl, syms, unit, (y) => gridYs.some((ly) => Math.abs(ly - y) <= unit.lineThick))) {
+  for (const d of findDots(nl, syms, unit, staffYs, (y) => gridYs.some((ly) => Math.abs(ly - y) <= unit.lineThick))) {
     syms.push({ box: d, code: "augmentationDot" });
     ledger.claim(d, "dot:augmentationDot");
   }
@@ -2631,7 +2633,7 @@ export async function recognizeRasterPage(
     }
     // 这里补出来的头错过了上面找附点那一步，单给它们再找一次（我灵镇静 m10 附点二分 F4）
     if (added.length)
-      for (const d of findDots(nl, syms, unit, (y) => gridYs.some((ly) => Math.abs(ly - y) <= unit.lineThick), added)) {
+      for (const d of findDots(nl, syms, unit, staffYs, (y) => gridYs.some((ly) => Math.abs(ly - y) <= unit.lineThick), added)) {
         syms.push({ box: d, code: "augmentationDot" });
         ledger.claim(d, "dot:augmentationDot");
       }
@@ -4234,11 +4236,21 @@ const DOT_MEDIAN_N = 4;
 const DOT_PAD = 0.3;
 /** 附点的长宽上限（格）。0.6 → 0.75：倚靠主永远膀臂的附点 10×11、线距 17.6（0.62 格），我灵镇静的圈状点 8×11（0.63 格）。 */
 const DOT_MAX = 0.75;
+/** 反复记号两点的判定（`findDots::repeatPair`）：点心离第二/三间间心、两点横向差、点到反复小节线的距离、
+ *  粗线最窄、粗细两线的间隔（格），与竖线贯穿谱表要占的墨比例（扫描件小节线有断口）。 */
+const REPEAT_Y = 0.25;
+/** 附点四周要干净的范围（格），见 `findDots`。 */
+const DOT_CLEAR = 0.6;
+const REPEAT_X = 0.3;
+const REPEAT_GAP = 1.0;
+const REPEAT_THICK = 0.3;
+const REPEAT_PAIR = 1.0;
+const REPEAT_INK = 0.9;
 
 /** `onLine`：这一行像素在谱线上（去线后残渣所在）。连通照走，但不计入点的盒、也不算伸出窗口
  *  ——贴着谱线的附点在去线图上常连着一截残渣，盒高超限或伸出窗口就整个丢了（我灵镇静 m3 的附点四分）。
  *  `only`：只给这几个头找（后补的头），其余头照样用来定窗口。 */
-function findDots(bin: Binary, syms: RasterSym[], unit: RasterUnit, onLine: (y: number) => boolean = () => false, only?: RasterSym[]): Rect[] {
+function findDots(bin: Binary, syms: RasterSym[], unit: RasterUnit, staffYs: number[][], onLine: (y: number) => boolean = () => false, only?: RasterSym[]): Rect[] {
   const sp = unit.space;
   const out: Rect[] = [];
   const heads = syms.filter((s0) => /^notehead/.test(s0.code));
@@ -4420,6 +4432,51 @@ function findDots(bin: Binary, syms: RasterSym[], unit: RasterUnit, onLine: (y: 
     }
     return false;
   };
+  /**
+   * `d`、`o` 两点是反复记号的两点：同一谱表里一个在第二间、一个在第三间（点心离间心不过 `REPEAT_Y` 格）、
+   * 左右对齐（`REPEAT_X` 格内），两点左边或右边 `REPEAT_GAP` 格内有反复小节线——
+   * 一粗（≥ `REPEAT_THICK` 格）一细两根、都从第一线贯穿到第五线（谱线行算墨、容 `REPEAT_INK` 的断口），相隔不过 `REPEAT_PAIR` 格。
+   */
+  const repeatPair = (d: Rect, o: Rect): boolean => {
+    const ax = d.x + d.w / 2, ay = d.y + d.h / 2;
+    const bx = o.x + o.w / 2, by = o.y + o.h / 2;
+    if (Math.abs(ax - bx) > sp * REPEAT_X) return false;
+    const ys = staffYs.find((l) => l.length === 5 && ay > l[0] && ay < l[4]);
+    if (!ys) return false;
+    const up = Math.min(ay, by), dn = Math.max(ay, by);
+    if (Math.abs(up - (ys[1] + ys[2]) / 2) > sp * REPEAT_Y || Math.abs(dn - (ys[2] + ys[3]) / 2) > sp * REPEAT_Y) return false;
+    // 贯穿谱表的竖墨列，并成一根根竖线
+    const full = (x: number) => {
+      let ink = 0;
+      for (let y = Math.round(ys[0]); y <= Math.round(ys[4]); y++) if (bin.data[y * bin.w + x] || onLine(y)) ink++;
+      return ink >= (Math.round(ys[4]) - Math.round(ys[0]) + 1) * REPEAT_INK;
+    };
+    const left = Math.min(d.x, o.x), right = Math.max(d.x + d.w, o.x + o.w);
+    const x0 = Math.max(0, Math.round(left - sp * (REPEAT_GAP + REPEAT_PAIR + 1)));
+    const x1 = Math.min(bin.w - 1, Math.round(right + sp * (REPEAT_GAP + REPEAT_PAIR + 1)));
+    const bars: [number, number][] = [];
+    for (let x = x0; x <= x1; x++) {
+      if (x >= left && x < right) continue;
+      if (!full(x)) continue;
+      const last = bars[bars.length - 1];
+      if (last && last[1] === x - 1) last[1] = x;
+      else bars.push([x, x]);
+    }
+    const thick = (q: [number, number]) => q[1] - q[0] + 1 >= Math.max(2, sp * REPEAT_THICK);
+    // 挨着点的那一根是细线，它另一侧紧挨着一根粗线
+    for (const side of [-1, 1]) {
+      const near = side < 0 ? bars.filter((q) => q[1] < left).pop() : bars.find((q) => q[0] >= right);
+      if (!near) continue;
+      const gap = side < 0 ? left - near[1] : near[0] - right;
+      if (gap > sp * REPEAT_GAP || thick(near)) continue;
+      const i = bars.indexOf(near);
+      const other = bars[i + side];
+      if (!other || !thick(other)) continue;
+      const between = side < 0 ? near[0] - other[1] : other[0] - near[1];
+      if (between <= sp * REPEAT_PAIR) return true;
+    }
+    return false;
+  };
   for (const hd of only ?? heads) {
     const b = hd.box;
     const cy = b.y + b.h / 2;
@@ -4443,12 +4500,20 @@ function findDots(bin: Binary, syms: RasterSym[], unit: RasterUnit, onLine: (y: 
       // 以前全被这条毙掉，读成二分或全音符）
       const dcx = d.x + d.w / 2;
       const dcy = d.y + d.h / 2;
-      // 只在谱线行上有墨的不算另一个点，是去线的残渣（主使我喜乐 m7、倚靠主永远膀臂 m7：点的正上/正下方谱线行残下 5×3 一小截）。
-      // 试过「旁边要有小节线才算反复记号」：破碎（1-bit 扫描件）成簇的噪点放进来三十多个，满拍自检 −1.3，没用
+      // **反复记号的判定要严**：两点正落在中线上下两个间（第二、三间）、左右对齐，旁边有一粗一细的反复小节线、
+      // 点离小节线不过 `REPEAT_GAP` 格，三条都满足才不当附点（`repeatPair`）。原先只要同列上下一格还有个点就算，
+      // 「8」字叠头各带一个点（以马内利来临歌 m4 只认出上面那个头）、点正上/正下方谱线行残下的一小截
+      //（主使我喜乐 m7、倚靠主永远膀臂 m7）都被当成反复记号剔掉
       const twins = blobsIn(dcx - sp * 0.5, dcy - sp * 1.5, dcx + sp * 0.5, dcy + sp * 1.5)
         .filter((o) => Math.abs(o.y + o.h / 2 - dcy) > sp * 0.6 && offLine(o))
-        .filter((o) => !heads.some((h2) => h2 !== hd && h2.box.x < b.x + b.w + sp * TWIN_COL && h2.box.x + h2.box.w > b.x - sp * TWIN_COL && inWindow(h2.box, o)));
+        .filter((o) => !heads.some((h2) => h2 !== hd && h2.box.x < b.x + b.w + sp * TWIN_COL && h2.box.x + h2.box.w > b.x - sp * TWIN_COL && inWindow(h2.box, o)))
+        .filter((o) => repeatPair(d, o));
       if (twins.length) continue;
+      // 四周 `DOT_CLEAR` 格内另有不属于任何符号的小墨团：扫描件的噪点成片（破碎一页上 4×4 的点隔七八个像素一个），
+      // 真附点四周是干净的
+      const speckles = blobsIn(dcx - sp * DOT_CLEAR, dcy - sp * DOT_CLEAR, dcx + sp * DOT_CLEAR, dcy + sp * DOT_CLEAR)
+        .filter((o) => overlapFrac(o, d) === 0 && offLine(o) && !syms.some((s0) => overlapFrac(o, s0.box) > 0));
+      if (speckles.length) continue;
       if (!isolated(d)) continue;
       out.push(d);
     }

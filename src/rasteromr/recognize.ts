@@ -1583,6 +1583,64 @@ export async function recognizeRasterPage(
     syms.push({ box: b, code: h.code });
     ledger.claim(b, `clef:${h.code}`);
   }
+  // ── **行首谱号被切碎的行**：块图里只剩碎块（低分辨率页上低音谱号右半那道竖弧被抽成竖段抹掉，望十架扫描版 p10
+  // 钢琴右手），`bootstrapClefs` 的尺寸闸一块都过不了，这一行没谱号、沿用默认的高音谱号，整行高十几级。
+  // 一个谱号都没认出的行，在去线图上直接取行首窗口里的墨：从左缘往右 `CLEF_WIN_FROM` 格起，逐列有墨就串下去、
+  // 空白过 0.4 格停；串出来的够谱号大小，按高度定种类（与 `bootstrapClefs` 兜底同口径）
+  for (const g of groups) {
+    const sp = unit.space;
+    const left = Math.max(...g.lines.map((l) => l.left));
+    const top = g.lines[0].y;
+    const bot = g.lines[4].y;
+    if (syms.some((s0) => isClef(s0.code) && s0.box.y < bot && s0.box.y + s0.box.h > top && s0.box.x < left + sp * 4)) continue;
+    const y0 = Math.max(0, Math.round(top - sp * 1.5));
+    const y1 = Math.min(nl.h - 1, Math.round(bot + sp * 1.5));
+    // 这一列算不算有墨：谱线行跳过，墨像素不到 0.35 格的不算（谱号的点、零星残渣）
+    // 谱线不按线位跳（斜页上行首的线与整行平均、局部模型都会差出半格到一条，这一段去线图上谱线也常没去干净），
+    // 按实测找：左端往右十格里有长过三格横墨的行是谱线行，上下各让一行
+    const lineRow = new Set<number>();
+    for (let y = y0; y <= y1; y++) {
+      let run = 0;
+      for (let x = Math.round(left); x < Math.min(nl.w, left + sp * 10); x++) {
+        run = nl.data[y * nl.w + x] ? run + 1 : 0;
+        if (run > sp * 3) { for (let d = -1; d <= 1; d++) lineRow.add(y + d); break; }
+      }
+    }
+    const colInk = (x: number) => {
+      let a = -1, b = -1, n = 0;
+      // 「有没有墨」只数谱表带里的（方括号下端的弯钩伸进窗口，在末线下一格：你的信实广大第四行）；上下沿照整个窗口量
+      for (let y = y0; y <= y1; y++)
+        if (nl.data[y * nl.w + x] && !lineRow.has(y)) {
+          if (a < 0) a = y;
+          b = y;
+          if (y >= top - sp * 0.5 && y <= bot + sp * 0.5) n++;
+        }
+      return n < sp * 0.35 ? null : [a, b];
+    };
+    let x = Math.round(left + sp * CLEF_WIN_FROM);
+    const xEnd = Math.round(left + sp * 1.5);
+    while (x < xEnd && !colInk(x)) x++;
+    if (x >= xEnd) continue;
+    const xs = x;
+    let lastInk = x;
+    let ya = Infinity, yb = -Infinity;
+    for (; x < Math.min(nl.w, left + sp * 4); x++) {
+      const c = colInk(x);
+      if (c) { lastInk = x; ya = Math.min(ya, c[0]); yb = Math.max(yb, c[1]); }
+      else if (x - lastInk > sp * 0.4) break;
+    }
+    const box = { x: xs, y: ya, w: lastInk - xs + 1, h: yb - ya + 1 };
+    if (box.h < sp * 1.8 || box.w < sp * 0.8 || box.w > sp * 3.2) continue;
+    const code: SmuflName = box.h >= sp * 3.8 ? "gClef" : "fClef";
+    for (let i = syms.length - 1; i >= 0; i--) {
+      const s1 = syms[i].box;
+      const cx0 = s1.x + s1.w / 2;
+      const cy0 = s1.y + s1.h / 2;
+      if (cx0 >= box.x - 1 && cx0 <= box.x + box.w + 1 && cy0 >= box.y - 1 && cy0 <= box.y + box.h + 1) syms.splice(i, 1);
+    }
+    syms.push({ box, code });
+    ledger.claim(box, `clef:${code}`);
+  }
   /** 行中换谱号那一路验过的谱号（其余行中的谱号在建页前剔掉）。 */
   const midClefs = new Set<RasterSym>();
   // ── **行中换谱号**（小一号的谱号，印在小节中间或小节线前）──────────────────
@@ -4356,6 +4414,8 @@ const QREST_FILL = [0.33, 0.62] as const;
 const QREST_SPINE_W = 1.25;
 /** 行中换谱号：离谱行左缘多少格以外才找（行首谱号 + 调号 + 拍号在这之内）。 */
 const MID_CLEF_FROM = 5;
+/** 行首谱号被切碎的行：取墨窗口从谱行左缘往右几格起（让过系统线）。 */
+const CLEF_WIN_FROM = 0.5;
 /** 行中换谱号：与本页行首谱号的宽高比差上限、签名距离上限。 */
 const MID_CLEF_ASPECT = 0.15;
 const MID_CLEF_DIST = 130;

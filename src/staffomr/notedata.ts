@@ -61,6 +61,8 @@ export interface StaffContext {
   staff: Staff;
   /** 本行谱起头的谱号符号。 */
   clef: Sym | null;
+  /** 本行谱上全部谱号（按 x 排；行中换谱号时不止一个）。 */
+  clefs?: Sym[];
   /** 调号里的升降号（按 x 排）。 */
   key: Sym[];
   /** 拍号数字（按 x 排，上下两排各一半）。 */
@@ -120,7 +122,10 @@ export function findClefKeyTime(pg: SPage): Map<Staff, StaffContext> {
     const cl = sortByLeft(validClefs.filter((c) => overlapY(c.box, st.box)).slice());
     const key = sortByLeft(pg.symbols.filter((s) => s.hasTag("Key") && overlapY(s.box, st.box)).slice());
     const tm = sortByLeft(pg.symbols.filter((s) => s.hasTag("Time") && s.ownerStaff === st).slice());
-    ctx.set(st, { staff: st, clef: cl[0] ?? null, key, time: tm });
+    // 行中换谱号只认离谱行左缘五格以外的：行首那一段里多出来的「谱号」是误认（齐来谢主歌第七行调号旁一个假低音谱号）
+    const sp = pg.normalStaffSpace || pg.space;
+    const clefs = cl.length ? [cl[0], ...cl.slice(1).filter((c) => c.box.left > st.box.left + sp * 5)] : [];
+    ctx.set(st, { staff: st, clef: cl[0] ?? null, clefs, key, time: tm });
   }
   return ctx;
 }
@@ -700,9 +705,11 @@ export interface StaffNote {
  * 只在**系统内的同一位置**之间继承：一个系统里第 k 行是同一个声部，
  * 声部中途不会换谱号（真换谱号时那一行必然印出来，也就认得出）。
  */
-function clefFor(pg: SPage, ctx: Map<Staff, StaffContext>, stf: Staff): Sym | null {
-  const own = ctx.get(stf)?.clef;
-  if (own) return own;
+function clefFor(pg: SPage, ctx: Map<Staff, StaffContext>, stf: Staff, x = Infinity): Sym | null {
+  // **行中换谱号**：取音左边最近的那个谱号（望十架 p9 钢琴右手行中换低音谱号）
+  const cs = ctx.get(stf)?.clefs ?? [];
+  const before = cs.filter((c) => c.box.left < x);
+  if (before.length) return before[before.length - 1];
   let si = -1;
   let ki = -1;
   for (let i = 0; i < pg.systems.length && si < 0; i++) {
@@ -716,7 +723,9 @@ function clefFor(pg: SPage, ctx: Map<Staff, StaffContext>, stf: Staff): Sym | nu
   for (let i = si - 1; i >= 0; i--) {
     const prev = pg.systems[i].staves[ki];
     if (!prev) continue;
-    const c = ctx.get(prev)?.clef;
+    // 上一行行中换过谱号的，接着用换后的那个
+    const pc = ctx.get(prev);
+    const c = pc?.clefs?.length ? pc.clefs[pc.clefs.length - 1] : pc?.clef;
     if (c) return c;
   }
   return null;
@@ -746,7 +755,7 @@ export function buildNotes(
     if (!s.hasTag("Note") || !s.ownerStaff) continue;
     const stf = s.ownerStaff;
     const rest = isRest(s.code);
-    const clef = clefFor(pg, ctx, stf);
+    const clef = clefFor(pg, ctx, stf, s.box.left);
     const mid = clef ? clefMiddleStep(clef.code) ?? 41 : 41;
 
     let diatonic = -1;

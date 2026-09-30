@@ -1583,6 +1583,71 @@ export async function recognizeRasterPage(
     syms.push({ box: b, code: h.code });
     ledger.claim(b, `clef:${h.code}`);
   }
+  /** 行中换谱号那一路验过的谱号（其余行中的谱号在建页前剔掉）。 */
+  const midClefs = new Set<RasterSym>();
+  // ── **行中换谱号**（小一号的谱号，印在小节中间或小节线前）──────────────────
+  //
+  // 钢琴右手下行时临时换成低音谱号（望十架 p9 m65，1.6×2.5 格，行首的是 2.25×3.5 格），
+  // 行首那一路只在谱行开头四格里找，行中的一律没人认；音高仍按行首谱号读，整段差十二级。
+  // 谱表里、离行首 `MID_CLEF_FROM` 格以外、尺寸像小一号谱号的块，拿本页行首的谱号比（宽高比、签名距离）；
+  // 低音谱号还要右边 0.9 格内有小点（它那两个点）佐证。认出来的盒里、连同右边两个点，字典结果作废
+  {
+    // 模板取**本页行首认出的谱号**：字典里的谱号模板来自别的字体（低音谱号 2.84×3.34 格），
+    // 这份谱的低音谱号窄高（2.25×3.49 格），缩放多少都配不上；本页自己的谱号与行中那个同一套字形
+    //（望十架 p9：对本页低音谱号 75~96，对高音谱号 220 以上）
+    const inkFrac = (r: Rect) => {
+      let n = 0;
+      for (let y = r.y; y < r.y + r.h; y++) for (let x = r.x; x < r.x + r.w; x++) n += nl.data[y * nl.w + x];
+      return n / Math.max(1, r.w * r.h);
+    };
+    const pageClefs = syms.filter((s0) => isClef(s0.code)).map((s0) => ({ code: s0.code, aspect: s0.box.w / s0.box.h, sig: binSig(nl, s0.box), fill: inkFrac(s0.box) }));
+    const sp = unit.space;
+    for (const c of blobs) {
+      if (claimed.has(c.id)) continue;
+      const b = c.bbox;
+      const cy = b.y + b.h / 2;
+      const g = groups.find((q) => cy > q.lines[0].y - sp && cy < q.lines[4].y + sp);
+      if (!g) continue;
+      if (b.x < Math.max(...g.lines.map((l) => l.left)) + sp * MID_CLEF_FROM) continue;
+      const w = b.w / sp;
+      const h = b.h / sp;
+      // 位置也要像：高音谱号上下都探出谱表（尾巴探到末线下 0.7 格以外，八分和弦的头只到半格）；低音谱号落在谱表里、顶端贴着首线
+      //（加线上的两个头连着干和尾，签名离高音谱号也近：你的信实广大 m?，整个在谱表上方）
+      const top = g.lines[0].y;
+      const bot = g.lines[4].y;
+      const fShape = w >= 1.2 && w <= 2.0 && h >= 2.0 && h <= 3.0 && Math.abs(b.y - top) <= sp * 0.5 && b.y + b.h <= bot + sp * 0.5;
+      const gShape = w >= 1.3 && w <= 2.4 && h >= 3.6 && h <= 5.8 && b.y <= top - sp * 0.5 && b.y + b.h >= bot + sp * 0.7;
+      if (!fShape && !gShape) continue;
+      const sig = binSig(nl, b);
+      let hit: { smufl: SmuflName; dist: number } | null = null;
+      // 墨占比也要像：谱号是细笔画；实心头连着干和尾的和弦墨实得多（万古磐石歌 m? 八分二度）
+      const fill = inkFrac(b);
+      for (const pc of pageClefs) {
+        if (Math.abs(pc.aspect - b.w / b.h) > MID_CLEF_ASPECT || Math.abs(pc.fill - fill) > MID_CLEF_FILL) continue;
+        const d = sigDistance(pc.sig, sig);
+        if (d <= MID_CLEF_DIST && (!hit || d < hit.dist)) hit = { smufl: pc.code as SmuflName, dist: d };
+      }
+      if (!hit || (hit.smufl === "fClef") !== fShape) continue;
+      const dotZone = { x: b.x + b.w, y: b.y, w: Math.round(sp * 0.9), h: Math.round(b.h * 0.6) };
+      if (hit.smufl === "fClef") {
+        const dots = blobs.filter((d) => d !== c && d.bbox.w <= sp * 0.5 && d.bbox.h <= sp * 0.5 && d.bbox.x >= dotZone.x - 2 && d.bbox.x <= dotZone.x + dotZone.w && d.bbox.y + d.bbox.h / 2 >= dotZone.y && d.bbox.y + d.bbox.h / 2 <= dotZone.y + dotZone.h);
+        if (!dots.length) continue;
+        for (const d of dots) claimed.add(d.id);
+      }
+      const zone = { x: b.x, y: b.y, w: b.w + (hit.smufl === "fClef" ? dotZone.w : 0), h: b.h };
+      for (let i = syms.length - 1; i >= 0; i--) {
+        const s0 = syms[i].box;
+        const cx0 = s0.x + s0.w / 2;
+        const cy0 = s0.y + s0.h / 2;
+        if (cx0 >= zone.x - 1 && cx0 <= zone.x + zone.w + 1 && cy0 >= zone.y - 1 && cy0 <= zone.y + zone.h + 1) syms.splice(i, 1);
+      }
+      claimed.add(c.id);
+      const cs: RasterSym = { box: b, code: hit.smufl };
+      midClefs.add(cs);
+      syms.push(cs);
+      ledger.claim(zone, `clef:${hit.smufl}`);
+    }
+  }
 
   // **调号按竖笔补认升号**（`sharpsByStrokes`）：全页至少两行、且过半的行数出同样多个升号才采信，
   // 采信后每行数出的升号盖掉那一段里别的认法（被读成降号串、假符头的碎块）。44 首里它从不多数
@@ -2995,6 +3060,15 @@ export async function recognizeRasterPage(
       kept.push(s0);
     }
   }
+  // 行中的谱号只信「行中换谱号」那一路验过的：字典按块查出来的行中「谱号」多是误认（万古磐石歌八分二度连干带尾认成高音谱号），
+  // 从前每行只用行首那个、它们不起作用；现在音高按位置取谱号，留着就把后半行读错
+  for (let i = syms.length - 1; i >= 0; i--) {
+    const s0 = syms[i];
+    if (!isClef(s0.code) || midClefs.has(s0)) continue;
+    const cy = s0.box.y + s0.box.h / 2;
+    const g = groups.find((q) => cy > q.lines[0].y - unit.space && cy < q.lines[4].y + unit.space);
+    if (g && s0.box.x >= Math.max(...g.lines.map((l) => l.left)) + unit.space * MID_CLEF_FROM) syms.splice(i, 1);
+  }
   const headBoxes = syms.filter((s0) => /notehead/i.test(s0.code)).map((s0) => ({ box: s0.box }));
 
   const pg = buildRasterPage({
@@ -4280,6 +4354,12 @@ const QREST_H = [2.2, 3.1] as const;
 const QREST_FILL = [0.33, 0.62] as const;
 /** 中段被抽成竖段的四分休止：宽度上限（格）。扫描件笔画粗，比 `QREST_W` 宽一点。 */
 const QREST_SPINE_W = 1.25;
+/** 行中换谱号：离谱行左缘多少格以外才找（行首谱号 + 调号 + 拍号在这之内）。 */
+const MID_CLEF_FROM = 5;
+/** 行中换谱号：与本页行首谱号的宽高比差上限、签名距离上限。 */
+const MID_CLEF_ASPECT = 0.15;
+const MID_CLEF_DIST = 130;
+const MID_CLEF_FILL = 0.08;
 
 /** 行首「谱号 + 调号」那一段占几格（线距的倍数）。谱号约 2 格宽，
  *  七个降号排开也就再占 4 格，留一点余量。 */

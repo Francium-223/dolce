@@ -804,6 +804,10 @@ function estimateNumH(comps: Component[]): number {
   // 凑上来的是碎笔
   const est3 = anchored.length >= 15 && anchored.length >= tall.length * 0.2 ? median(anchored.map((k) => k.bbox.h)) : 0;
   if (est3 && est > est3 * 1.15 && est3 >= est * 0.6) { probe("numH.barAnchored"); return est3; }
+  // 估小方向同理：补充本七十来页字号估 27~30、数字实高 36~37（汉字碎块压低了中位，est2 的 1.3 倍门又够不着）。
+  // 门开在 1.2：差一成多的页照旧。还得跟瘦高块的估计 est2 对得上（差不到一成）：四声部的小节线跨两个声部，锚上的瘦高块混进
+  // 别的东西（四声部 f1 数字 25、锚定估出 31 多，一整行丢了）；补充本那些页两者都在 36 上下
+  if (est3 && est3 > est * 1.2 && est2 && Math.abs(est3 - est2) <= est3 * 0.1) { probe("numH.barAnchoredUp"); return est3; }
   return est2 > est * 1.3 ? est2 : est;
 }
 
@@ -1185,10 +1189,11 @@ function classify(comps: Component[], bin: Binary): { c: Classified; numH: numbe
         // 偏矮 → 多半是数字 "1"。但终止/复纵线（‖）的细线常因扫描淡而偏矮，它紧贴另一根
         // 竖线（间距 < 0.7×字号、同 y）——这种有近邻的不当 "1"，保留为小节线。
         // 邻线也不能高出它太多：四声部谱跨两声部的长线（新编赞美诗·四声部《圣哉三一歌》115px）旁边紧挨着的
-        // `1`（35px，距 17px）会被当成终止线的细线留下，那一小节整个没了。终止线的两根再淡也差不了两倍多。
+        // `1`（35px，距 17px）会被当成终止线的细线留下，那一小节整个没了。终止线的两根再淡也差不了两倍（原 2.5：
+        // 补充本 198 阿们行 `|1---` 的瘦「1」12×37 贴着 83px 的小节线，2.24 倍，被当成终止线的细线）
         const paired = c.barlines.some((o) => o !== k &&
           Math.abs(rcx(o.bbox) - rcx(k.bbox)) < numH * 0.7 && Math.abs(rcy(o.bbox) - rcy(k.bbox)) < numH &&
-          o.bbox.h <= k.bbox.h * 2.5);
+          o.bbox.h <= k.bbox.h * 2);
         // 细于 0.2 字号的不是 1（1 的竖笔至少 0.28 字号宽）：是小节线断下来的一截或擦线剩下的线边
         //（78《马槽歌》末系统 Q2 那截 5×43、行首擦剩的 2×36）。够一字高的留作小节线，否则丢掉。
         if (!paired && k.bbox.w < numH * 0.2) {
@@ -1533,6 +1538,8 @@ function buildJpNums(
   arcs: Component[], barlineXs: number[], dotSizes: number[],
   /** 同一系统里别的声部行的数字核（多声部谱才有）：点归离它更近的数字，见 nearerOther */
   voiceMates: readonly Rect[] = [],
+  /** 上下相邻**别的系统**挨着的那一行的数字核：只给 nearerOther 用（点归更近的数字不分系统） */
+  otherMates: readonly Rect[] = [],
 ): JpNum[] {
   const out: JpNum[] = [];
   // 本行歌词字顶线：数字底下整字高的块（汉字也归在数字块里）顶的中位数；不足三块不算
@@ -1699,7 +1706,7 @@ function buildJpNums(
       const overArc = (dot: Rect): boolean => voiceMates.length > 0 && arcs.some((a) => a.bbox.w >= numH &&
         a.bbox.h <= numH * 0.5 && a.bbox.y >= rbottom(dot) - 1 && a.bbox.y <= rbottom(dot) + numH * 0.3 &&
         rcx(dot) >= a.bbox.x && rcx(dot) <= rright(a.bbox));
-      const nearerOther = (up: boolean): boolean => voiceMates.some((ob) => {
+      const nearerOther = (up: boolean): boolean => [...voiceMates, ...otherMates].some((ob) => {
         if (Math.abs(rcx(ob) - rcx(kb)) > numH * 0.3) return false;
         if (up) return rbottom(ob) <= d.y && kb.y - rbottom(ob) >= -1 && kb.y - rbottom(ob) < gapAbove * 0.8;
         return ob.y >= rbottom(d) && ob.y - rbottom(kb) >= -1 && ob.y - rbottom(kb) < gapBelow * 0.8;
@@ -3011,6 +3018,12 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
   if (accentComps.size) c.dots = c.dots.filter((o) => !accentComps.has(o));
 
 
+  // 每行数字高：宽不过 1.1 字号的核（窄的「1」也算，粘连的宽块不算——299 一行全是 1 加一块 97×51，只数宽的就成了 51），不足三个不算
+  const rowDigitH = new Map(staff.map((m) => {
+    const hs = m.rd.filter((k) => k.bbox.w <= numH * 1.1).map((k) => k.bbox.h);
+    return [m, hs.length >= 3 ? median(hs) : 0] as const;
+  }));
+  const smallRows = [...rowDigitH.values()].some((h) => h > 0 && h <= numH * 1.1);
   const allRows: StaffRow[] = staff.map((m) => {
     const mySys = sysOf.get(m)?.sys;
     // 歌词行不算别的声部：四声部谱夹在第 2、3 声部之间的几行歌词此时还在系统里（新编赞美诗·四声部 11《荣归天父歌》三行词 41px 见方，
@@ -3019,7 +3032,21 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
     const myH = median(m.rd.map((k) => k.bbox.h));
     const lyricRow = (o: typeof m) => o.rd.filter((k) => k.bbox.w >= k.bbox.h * 0.85 && k.bbox.h >= myH * 1.05).length * 2 >= o.rd.length;
     const mates = mySys !== undefined ? staff.filter((o) => o !== m && sysOf.get(o)?.sys === mySys && !lyricRow(o)).flatMap((o) => o.rd.map((k) => k.bbox)) : [];
-    const nums = buildJpNums(bin, m.rd, numH, c, ocrDigit, arcCands, m.barlineXs, dotSizes, mates);
+    // 一页两种字号（四声部二十几页：第 1 声部数字 37~38、其余声部 29~31，页字号按多数的小号估成 29）：大号那行的八度点、
+    // 减时线、附点窗口全按小号量，够不着。本行数字中位高比页字号大 15% 以上就按本行量（×0.96：字号一致的页上字号/数字高实测比）
+    // 只在真是两种字号时：页上还得有数字高在页字号 1.1 倍以内的行（整页一律比字号高两成的是字号估小，不归这里，四声部 38）
+    const rowH = rowDigitH.get(m) || numH;
+    const rowNumH = rowH >= numH * 1.15 && smallRows ? rowH * 0.96 : numH;
+    if (rowNumH !== numH) probe("numH.perRow");
+    // 上下相邻系统挨着的那一行（多声部谱才找）：上一系统末声部的低音点也会落进本系统首声部的上方窗口
+    //（四声部 32 第 1 声部按大号量窗口后，收了上一系统低音声部 `5̣ 3̣ 5̣` 的点）
+    const others = mySys === undefined ? [] : [-1, 1].flatMap((dir) => {
+      const cand = staff.filter((o) => o !== m && sysOf.get(o)?.sys !== undefined && sysOf.get(o)!.sys !== mySys && !lyricRow(o) &&
+        (dir < 0 ? o.botY <= m.topY : o.topY >= m.botY));
+      const near = cand.sort((a, b) => dir < 0 ? b.botY - a.botY : a.topY - b.topY)[0];
+      return near ? near.rd.map((k) => k.bbox) : [];
+    });
+    const nums = buildJpNums(bin, m.rd, rowNumH, c, ocrDigit, arcCands, m.barlineXs, dotSizes, mates, others);
     // buildJpNums 与 rd 一一对应，故按下标把摘出来的变音记号挂回它所修饰的那个音符。
     m.rd.forEach((k, j) => {
       const a = accidentals.get(k); if (a && nums[j]) nums[j].accidental = a;

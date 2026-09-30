@@ -1516,6 +1516,18 @@ function buildJpNums(
       // 顶与别的字平齐或更低。四声部第 2 声部底下紧挨着歌词，真低音点下 4px 就是字，按「下方有墨」会被剔掉
       //（84《主为救人》Q2 `5̣ − 5̣ 5̣` 整行丢点，点底 528、字顶 532）。
       const aboveLyrics = (dot: Rect): boolean => rbottom(dot) <= lyricTop - 2;
+      // 点与**歌词字同高**：左右 2.5 字号内有整字高的汉字块、点心落在它的上下沿之间——是歌词的标点（逗号、顿号），
+      // 归歌词行，不是八度点。1218 61 上一行歌词「苦，」的逗号正落在 `6̣` 正上方，收成高音点，与真低音点一加一减抵消成 `6`。
+      // 汉字块：高 ≥0.85 字号、近方（宽 ≥0.7 倍高），且同一高度上至少两块成一行——和弦字母、小号数字（1801、714 的 15×22）不算
+      const hanzi = (k: Component) => k.bbox.h >= numH * 0.85 && k.bbox.h <= numH * 1.6 && k.bbox.w >= k.bbox.h * 0.7 &&
+        !rowCores.some((c) => c.bbox === k.bbox);
+      // 只管离数字远（>0.35 字号）的：真八度点紧贴数字，行距挤时贴着上一行歌词底也照收（1218 329 `1̇ 1̇` 点距数字 5px、
+      // 点心落在上一行歌词字的上下沿之间）；61 那个逗号离数字 23px（0.7 字号）
+      const inTextLine = (dot: Rect): boolean => {
+        if (Math.max(d.y - rbottom(dot), dot.y - rbottom(d)) <= numH * 0.35) return false;
+        const near = cls.blocks.filter((k) => hanzi(k) && Math.abs(rcx(k.bbox) - rcx(dot)) <= numH * 4 && rcy(dot) >= k.bbox.y && rcy(dot) <= rbottom(k.bbox));
+        return near.length >= 2 && near.some((k) => overlapX(k.bbox, d) === 0 && Math.abs(rcx(k.bbox) - rcx(dot)) <= numH * 2.5);
+      };
       const underOwnLine = (dot: Rect): boolean => voiceMates.length > 0 && cls.hlines.some((l) =>
         l.bbox.y >= rbottom(d) - 2 && rbottom(l.bbox) <= dot.y + 1 && overlapX(l.bbox, d) >= d.w * 0.5 &&
         rcx(dot) >= l.bbox.x && rcx(dot) <= rright(l.bbox));
@@ -1540,21 +1552,25 @@ function buildJpNums(
         // 声部行上弧端外侧的余量收到 0.25 字号：四声部谱弧起在音符右上角，高音点就在弧端左边一点
         //（《圣哉三一歌》Q3 `1̇⌒5`：点心距弧左端 14px，字号 36，按 0.4 字号被当成了弧脚）。
         const footReach = numH * (voiceMates.length ? 0.25 : 0.4);
+        // 碎片在**弧端或弧端外侧**：点心从近侧弧端往弧里伸进去不过 max(半个点宽, 0.15 字号)。
+        // 基督更美 那几个碎片在弧左端外 2px；1218 35 `1̇⌒…` 的高音点在弧左端往里 12px（弧底下，属于这个音），原先被当弧脚剔了。
+        const inward = (ab: Rect): number => (rcx(kb) - ab.x <= rright(ab) - rcx(kb) ? rcx(kb) - ab.x : rright(ab) - rcx(kb));
         const isArcFoot = !cls.clean && arcs.some((arc) => {
           const ab = arc.bbox;
           return rbottom(ab) > kb.y && rbottom(ab) <= rbottom(kb) + numH * 0.15 &&
-            rcx(kb) >= ab.x - footReach && rcx(kb) <= rright(ab) + footReach;
+            rcx(kb) >= ab.x - footReach && rcx(kb) <= rright(ab) + footReach &&
+            inward(ab) <= Math.max(kb.w / 2, numH * 0.15);
         });
         // 声部行才看上方有没有墨（单声部谱高音点头上常压着圆滑线，这条会误伤）。
         const underText = voiceMates.length > 0 && inkAbove(bin, kb, numH) >= 0.12;
-        if (!isArcFoot && dotSized(kb) && !hasSideMate(kb) && !nearerOther(true) && !underText) upDots.push(kb); // 上点 → 高八度（几点算几个八度见下面的裁决）
+        if (!isArcFoot && dotSized(kb) && !hasSideMate(kb) && !nearerOther(true) && !underText && !inTextLine(kb)) upDots.push(kb); // 上点 → 高八度（几点算几个八度见下面的裁决）
       // 下点 → 低八度。额外一道门专防**歌词字的顶部笔画**：歌词带紧接在数字下方，字顶的短竖/点
       // （如「主」字上方那一笔）正落在数字正下方、dx≈0、间隙也与「减时线下方的低音点」几乎同高
       // （14~15px vs 真点 3~13px），靠位置分不开。改看**它下方还有没有墨**：八度点孤立、下方留白，
       // 字顶笔画下方紧接着字的其余笔画。（先试过宽高比，但小字号图上真点只有 2×3 像素、比值不可靠，
       // 世上所有的民族的真低音点被误剔、音符 100→99.3。）
       } else if (gapBelow >= -1 && gapBelow < numH * 0.8 && (inkBelow(bin, kb, numH) < 0.12 || underOwnLine(kb) || overArc(kb) || aboveLyrics(kb)) &&
-          dotSized(kb) && !hasSideMate(kb) && !nearerOther(false)) {
+          dotSized(kb) && !hasSideMate(kb) && !nearerOther(false) && !inTextLine(kb)) {
         downDots.push(kb); }
     }
     // 八度点是**竖排叠放**的：第二、三个点各自摞在前一个点的正上/正下方——同一条竖线上、

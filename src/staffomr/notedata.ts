@@ -559,7 +559,7 @@ export function calcBeamLevels(beams: BeamShape[], stems: StemInfo[], sp: number
         continue;
       }
     }
-    // 定层：以组头的左端 x 为基准，按「离符头那一端有多远」从近到远排。
+    // 定层：按「离符头那一端有多远」从近到远排。
     // musicpp 是按符干朝向决定升序还是降序；本仓改用**到符头端的距离**——
     // 符干与符头常常有重叠，`Stem::up` 那条判据（符干是否伸到符头之上）会误判，
     // 一误判整组的层就反过来，十六分与八分互换。距离这个量与朝向无关。
@@ -569,12 +569,21 @@ export function calcBeamLevels(beams: BeamShape[], stems: StemInfo[], sp: number
     // 符头端 = 符干两端里离符头中心近的那一端（不问朝向，`Stem::up` 会误判）
     const noteY = anchor.notes.reduce((a, n) => a + (n.box.top + n.box.bottom) / 2, 0) / anchor.notes.length;
     const anchorY = Math.abs(anchor.seg.top - noteY) < Math.abs(anchor.seg.bottom - noteY) ? anchor.seg.top : anchor.seg.bottom;
-    grp.sort((a, b) => Math.abs(beamY(a, x) - anchorY) - Math.abs(beamY(b, x) - anchorY));
-    let last = beamY(grp[0], x);
+    // 各条杠**在自己的中点处**与组头（最长那条）比高低，不按各自的斜率外推到组头左端：
+    // 半截杠只有一格宽，斜率一点噪声外推六七十像素就排到主杠前面，两条都定成第一层
+    //（当我们回到天家 m7 附点八分 + 十六分，十六分读成八分）
+    const main = grp[0];
+    const toward = Math.sign(anchorY - beamY(main, x)) || 1;
+    const rel = new Map(grp.map((g) => {
+      const xc = (g.x0 + g.x1) / 2;
+      return [g, (beamY(g, xc) - beamY(main, xc)) * toward] as const;
+    }));
+    grp.sort((a, b) => rel.get(b)! - rel.get(a)!);
+    let last = rel.get(grp[0])!;
     let level = 1;
     grp[0].level = 1;
     for (let i = 1; i < grp.length; i++) {
-      const y = beamY(grp[i], x);
+      const y = rel.get(grp[i])!;
       if (Math.abs(y - last) >= sp / 4) level++;
       last = y;
       grp[i].level = level;

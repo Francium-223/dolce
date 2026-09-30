@@ -765,13 +765,15 @@ export function findPrimitives(
   }
   // **网点灰的杠被纹理横着切成上下两条**（当我们回到天家 m12：一条杠读成高 3、高 4 两条），被当成两层，
   // 附点八分读成十六分。x 范围基本重合、上下间隙不过一个线宽、合起来不过一根杠厚（0.8 格）的并成一条
-  // 独唱谱时值 92.21 → 92.31%（当我们回到天家 +3.2），合唱谱扫描档音符 +0.11、小节自检 +0.27
+  // 独唱谱时值 92.21 → 92.31%（当我们回到天家 +3.2），合唱谱扫描档音符 +0.11、小节自检 +0.27。
+  // x 重合按**较窄**那条算：切下来的一条常只有杠长的一半（当我们回到天家 m12 上面 40px × 2px 一条、下面 70px，
+  // 十六分读成三十二分）；真半截杠离主杠隔着 0.25 格以上的白缝、合起来也超过 0.8 格，下面两条照样拦得住
   for (let i = 0; i < beams.length; i++)
     for (let j = beams.length - 1; j > i; j--) {
       const a = beams[i].box;
       const b = beams[j].box;
       const ov = Math.min(a.x + a.w, b.x + b.w) - Math.max(a.x, b.x);
-      if (ov < Math.max(a.w, b.w) * 0.8) continue;
+      if (ov < Math.min(a.w, b.w) * 0.8) continue;
       const gap = Math.max(a.y, b.y) - Math.min(a.y + a.h, b.y + b.h);
       const y0 = Math.min(a.y, b.y);
       const y1 = Math.max(a.y + a.h, b.y + b.h);

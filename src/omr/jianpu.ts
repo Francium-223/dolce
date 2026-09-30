@@ -1323,9 +1323,20 @@ function meterCandidates(cores: DigitCore[], hlines: Component[], numH: number, 
     }
     // 分子分母都不宽于分数线（宽出去的多半是别的东西恰好上下夹着一条横线）
     if (up.bbox.w > hb.w * 1.5 || dn.bbox.w > hb.w * 1.5) continue;
+    // 上下还叠着一条横线的是双减时线，不是分数线：四声部谱上声部的 `2̳` 正下方隔着线就是下声部的 `4`
+    //（新编赞美诗·四声部 f6《哈利路亚赞美耶稣》凑成 2/4、6/4，下声部的十六分 4 被当分母摘走）
+    if (stackedHline(hlines, hb, numH)) { probe("meter.stackedLine"); continue; }
     out.push({ line: h, up, dn, bbox: unionRect(unionRect(up.bbox, dn.bbox), hb) });
   }
-  return out;
+  // 分子分母**各自**在同一高度左右都有别的数字：两头各属一个谱行（四声部上下两声部），是一个音符的减时线夹在两行之间。
+  // 真转拍号的分子分母悬在数字带上下、同高处没有音符；页眉连印的 `3/4 4/4` 邻居本身也是候选，不算
+  const inCand = new Set(out.flatMap((m) => [m.up, m.dn]));
+  const rowMate = (k: DigitCore) => cores.some((o) => o !== k && !inCand.has(o) && o.bbox.h >= k.bbox.h * 0.7 &&
+    Math.abs(rcy(o.bbox) - rcy(k.bbox)) <= numH * 0.2 && Math.abs(rcx(o.bbox) - rcx(k.bbox)) <= numH * 2.5);
+  return out.filter((m) => {
+    if (rowMate(m.up) && rowMate(m.dn)) { probe("meter.voiceRows"); return false; }
+    return true;
+  });
 }
 
 /** 转拍号候选：分数线 + 分子/分母两个数字格（值待 OCR）。 */

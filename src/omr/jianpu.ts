@@ -2630,6 +2630,20 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
         if (thin.length && n - thin.length >= 3) { probe("voices.dropThin"); for (const r of thin) drop.add(r); }
       }
       for (const r of drop) { delete r.system; delete r.voice; }
+      // 比别的系统多一行、系统里声部行本来就短，碎行按系统中位的四成剔不掉（117 第 4 系统：声部行 12 个音，
+      // 两声部之间那排歌词只剩 5 个窄核）：多出一行的系统里最短那行不到全页声部行中位一半时剔掉
+      {
+        const c0 = countOf(), fq = new Map<number, number>();
+        for (const n of c0.values()) fq.set(n, (fq.get(n) ?? 0) + 1);
+        const md = [...fq].sort((x, y) => y[1] - x[1] || y[0] - x[0])[0]?.[0] ?? 0;
+        const medPage = median(useRows.filter((r) => r.system !== undefined).map((r) => r.nums.length));
+        for (const [sys, n] of c0) {
+          if (md < 2 || n !== md + 1 || (fq.get(md) ?? 0) < 2) continue;
+          const g = useRows.filter((r) => r.system === sys);
+          const short = g.reduce((a, b) => (b.nums.length < a.nums.length ? b : a));
+          if (short.nums.length < medPage * 0.5) { probe("voices.dropExtraThin"); drop.add(short); delete short.system; delete short.voice; }
+        }
+      }
       let cnt = countOf();
       const freq = new Map<number, number>();
       for (const n of cnt.values()) freq.set(n, (freq.get(n) ?? 0) + 1);

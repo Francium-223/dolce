@@ -1393,12 +1393,16 @@ function buildJpNums(
   voiceMates: readonly Rect[] = [],
 ): JpNum[] {
   const out: JpNum[] = [];
-  // 本行歌词字顶线：数字底下一个字号内、整字高的块（汉字也归在数字块里）顶的中位数；不足三块不算
+  // 本行歌词字顶线：数字底下整字高的块（汉字也归在数字块里）顶的中位数；不足三块不算
   const rowBots = rowCores.map((c) => rbottom(c.bbox)).sort((a, b) => a - b);
   const rowBot = rowBots[rowBots.length >> 1] ?? 0;
   const rowX0 = Math.min(...rowCores.map((c) => c.bbox.x)), rowX1 = Math.max(...rowCores.map((c) => rright(c.bbox)));
-  const lyTops = cls.blocks.filter((k) => k.bbox.h >= numH * 0.7 && k.bbox.y > rowBot && k.bbox.y < rowBot + numH * 0.9 &&
+  // 先在 0.9 字号内找，不足三块再放到 1.4 字号（1218 230 歌词字顶在数字底下 1.2 字号，减时线、低音点都夹在中间）；
+  // 一上来就放宽，歌词挨得近的页会把更低处的块也收进来、把字顶线拉低（主祢真伟大 多出一个假低音点）
+  const topsWithin = (reach: number) => cls.blocks.filter((k) => k.bbox.h >= numH * 0.7 && k.bbox.y > rowBot && k.bbox.y < rowBot + numH * reach &&
     rright(k.bbox) > rowX0 && k.bbox.x < rowX1).map((k) => k.bbox.y).sort((a, b) => a - b);
+  let lyTops = topsWithin(0.9);
+  if (lyTops.length < 3) lyTops = topsWithin(1.4);
   const lyricTop = lyTops.length >= 3 ? lyTops[lyTops.length >> 1]! : -Infinity;
   // 八度点是**实心**圆点，包围盒里的墨迹填充率高；房号「2.」这类小字即便糊成一团（二值化把笔画泡粗、
   // 「2」和「.」连成一块），包围盒里也大半是空的。1697 二房的「2.」正摞在 `1̇` 的点上方，被数成第二个点（`1̈`）。
@@ -1501,6 +1505,8 @@ function buildJpNums(
         const dx = Math.abs(rcx(ob) - rcx(k));
         if (dx <= (k.w + ob.w) / 2 || dx > numH * 0.7) return false;
         if (Math.abs(rcy(ob) - rcy(k)) > Math.max(2, k.h * 0.8)) return false;
+        // 碎笔与点大小相当；几像素的墨渣不算（1218 144 剥线剥出的低音点 9×14，右下 4×2 的渣把它判成了碎笔）
+        if (ob.w * ob.h < k.w * k.h * 0.3) return false;
         return !rowCores.some((c2) => Math.abs(rcx(c2.bbox) - rcx(ob)) < numH * 0.3);
       });
       const gapAbove = d.y - rbottom(kb);  // 点在数字上方的间隙

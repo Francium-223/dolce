@@ -836,9 +836,10 @@ function attachDots(notes: StaffNote[], dots: Sym[], sp: number): void {
       if (d.px <= r && (d.box.left + d.box.right) / 2 <= r) continue;
       const dx = d.px - r;
       if (dx > sp * 1.5) continue;
-      // 线上音符的附点写在上方那个间里，差半格；再放一点余量
+      // 线上音符的附点写在上方那个间里，差半格；再放一点余量。0.75 → 0.85，与位图路找点的窗口（头心上 0.85 格）一致：
+      // 头盒偏下时点心离头心 0.79 格（主我敬拜你 m4 附点二分 G4）
       const dy = Math.abs(d.py - n.sym.py);
-      if (dy > sp * 0.75) continue;
+      if (dy > sp * 0.85) continue;
       if (got.get(n)?.some((x) => Math.abs(x - d.px) < sp * 0.3)) continue;
       // 能不能挂按和弦右缘判，**谁优先按自己的右缘**：两个声部错开画的二度（以马内利 m19 A4 在 G4 左边），
       // 点是右边那个的；同距离的，点在头上方的优先（线上音的点写在上方的间），再按高度差

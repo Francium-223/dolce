@@ -4213,12 +4213,19 @@ function midOfStaff(box: { y: number; h: number }, lines: { y: number }[], unit:
 
 /**
  * 符头右边的附点（见识别主流程「附点」那一段）。窗口：符头右缘往右 0.05~1.3 格、
- * 符头中心往上 0.85 格到往下 0.35 格。墨团要整个落在窗口里（孤立），
+ * 符头中心往上 0.85 格到往下 0.5 格（`DOT_BELOW`）。墨团要整个落在窗口里（孤立），
  * 大小 0.15~0.6 格、宽高比 0.6~1.7、填充过半；已经有符号压着的不算；
  * 同一列上下一格处还有一个这样的点，那是反复记号的两点，不算。
  */
-/** 附点窗口往下探多少格：线上的音附点写在上方的间，可和弦里上方那个间被别的音的点占了时写在下方（《恩友歌》G4）。 */
-const DOT_BELOW = 0.35;
+/** 附点窗口往下探多少格：线上的音附点写在上方的间，可和弦里上方那个间被别的音的点占了时写在下方（《恩友歌》G4）。
+ *  0.35 → 0.5：线上的音点写在下方的间，点心在头心下 0.4 格（齐来崇拜 m13 A3、敬拜万世之王 m18 D5）。 */
+const DOT_BELOW = 0.5;
+/** 附点心离间心的容差（格）：本语料附点 95% 以上在 0.15 格内，落在线上的是头旁谱线残渣。 */
+const DOT_SPACE_TOL = 0.3;
+/** 头位置取整到半格时的容差（格），见 `findDots`。 */
+const DOT_HEAD_TOL = 0.3;
+/** 头心下超过这么多格的点要整个落在间里（见 `findDots`）。 */
+const DOT_BELOW_SOLID = 0.35;
 /** 判「同列另一个点有自己的主人」时，主人可以是左右半格内的邻列头：二度错排的和弦两列头挨着、盒不重叠
  *  （恩友歌 C5/A4/G4 附点四分，右列 A4 的点因左列两个头差一个像素不算「同列」，被当成反复双点剔掉）。 */
 const TWIN_COL = 0.5;
@@ -4424,6 +4431,19 @@ function findDots(bin: Binary, syms: RasterSym[], unit: RasterUnit, staffYs: num
     }
     return true;
   };
+  /** 盒里不在谱线行上的墨的纵向重心（没有就取盒中心）。 */
+  const inkMidY = (o: Rect) => {
+    let n = 0;
+    let sy = 0;
+    for (let y = o.y; y < o.y + o.h; y++) {
+      if (onLine(y)) continue;
+      for (let x = o.x; x < o.x + o.w; x++) if (bin.data[y * bin.w + x]) {
+        n++;
+        sy += y;
+      }
+    }
+    return n ? sy / n + 0.5 : o.y + o.h / 2;
+  };
   /** 盒里有不在谱线行上的墨。 */
   const offLine = (o: Rect) => {
     for (let y = o.y; y < o.y + o.h; y++) {
@@ -4484,13 +4504,42 @@ function findDots(bin: Binary, syms: RasterSym[], unit: RasterUnit, staffYs: num
     // 取块的窗口上下各多放 0.3 格，再只留中心落在原窗口里的：窗口沿正切在点的边上时，
     // 一两个毛刺像素伸出窗口就整块作废（齐来称颂低音谱表 C♯4/A3 附点二分，两个点都这么丢了）
     const bl = below(b);
+    // 右边也放：点心在 1.3 格内、右缘伸出窗口的也要（敬拜万世之王 m18，8 像素宽的点被右沿切掉两列作废；只限谱表里，见下）
     // 左边也放：头盒偏宽（带进了圈外的毛边）时右缘罩住点的左边一两列，点伸出窗口就作废（齐来称颂 m18/m19 附点二分）
     // 靠这一放才收进来的（左缘在原窗口左边）要够大（两边都 0.3 格）：谱线在头右边的残渣原来被窗口切掉（我灵镇静 m21 多出一个点）
-    for (const d of blobsIn(r - sp * DOT_PAD, cy - sp * (0.85 + DOT_PAD), r + sp * 1.3, cy + sp * (bl + DOT_PAD)).filter((q) => {
+    for (const d of blobsIn(r - sp * DOT_PAD, cy - sp * (0.85 + DOT_PAD), r + sp * (1.3 + DOT_PAD), cy + sp * (bl + DOT_PAD)).filter((q) => {
       const qx = q.x + q.w / 2;
       const qy = q.y + q.h / 2;
       if (q.x < r + sp * 0.05 && (q.w < sp * 0.3 || q.h < sp * 0.3)) return false;
-      return qx > r + sp * 0.05 && qy > cy - sp * 0.85 && qy < cy + sp * bl;
+      if (!(qx > r + sp * 0.05 && qx < r + sp * 1.3 && qy > cy - sp * 0.85 && qy < cy + sp * bl)) return false;
+      const inStaff = staffYs.some((l) => qy > l[0] - sp && qy < l[l.length - 1] + sp);
+      // **按谱线定高差**：附点写在间里，点心离间心不过 `DOT_SPACE_TOL` 格；点所在的间与头的位置（按谱线取整到半格）
+      // 只差几档——间上的音同一个间（0）、线上的音上下相邻的间（±半格）、和弦挤着二度的往下挪一个间（+1）。
+      // 头盒中心不准（带进一截干、只罩住半个头），拿它直接量高差会错剔二十多个真附点，所以头位置取 ±`DOT_HEAD_TOL` 格内的半格。
+      // 点心取不在谱线行上的墨的重心：贴线的点盒子带进线行，中心被拉偏（我灵镇静 m10、父恩广大 m6）。
+      // 五线以外没有线，加线音的点常与头齐平（齐来崇拜 m8、m22 的 C4），那里不要求落在间里。谱表外一格半以外的不管
+      const l = staffYs.find((ys) => ys.length === 5 && qy > ys[0] - sp * 1.5 && qy < ys[4] + sp * 1.5);
+      if (l) {
+        const g = (l[4] - l[0]) / 4;
+        const pos = (inkMidY(q) - l[0]) / g;
+        const inside = pos > -DOT_SPACE_TOL && pos < 4 + DOT_SPACE_TOL;
+        const spaceOff = Math.abs(pos - Math.floor(pos) - 0.5);
+        if (inside && spaceOff > DOT_SPACE_TOL) return false;
+        const dotAt = inside ? Math.floor(pos) + 0.5 : Math.round(pos * 2) / 2;
+        const hp = (cy - l[0]) / g;
+        const heads = [Math.floor(hp * 2) / 2, Math.ceil(hp * 2) / 2].filter((h) => Math.abs(h - hp) <= DOT_HEAD_TOL);
+        const ks = [0, -0.5, 0.5, ...(bl === DOT_BELOW_PUSHED ? [1] : [])];
+        if (!heads.some((h) => ks.includes(dotAt - h))) return false;
+      }
+      // 伸出原窗口右沿的只在谱表里收：谱表外歌词行里字的一笔挨着被当成头的另一笔（破碎 p1/p2）
+      if (q.x + q.w > r + sp * 1.3 && !inStaff) return false;
+      // 头心下 `DOT_BELOW_SOLID` 格往下那一段只收谱表里、整个落在间里碰不到谱线行的点：
+      // 扫描件谱线下沿的鼓包、残渣正好在那儿（破碎 p6/p7 三处），谱表外歌词字的一笔也常落在这儿（望十架）
+      if (bl === DOT_BELOW && qy > cy + sp * DOT_BELOW_SOLID) {
+        if (!inStaff) return false;
+        for (let y = q.y - 1; y <= q.y + q.h; y++) if (onLine(y)) return false;
+      }
+      return true;
     })) {
       if (out.some((o) => overlapFrac(o, d) > 0)) continue;
       if (syms.some((s0) => overlapFrac(d, s0.box) > 0.3)) continue;

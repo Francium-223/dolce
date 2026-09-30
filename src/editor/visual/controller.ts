@@ -23,6 +23,8 @@ import {
 } from "./ops";
 import { actionOfKey, type VisualAction, type VisualMode } from "./keys";
 import { selectionInfo } from "./selinfo";
+import { inlineEditing, openInlineEditor } from "./inline";
+import { runModelAction, type ModelActionCtx } from "./modelops";
 import {
   type Box, boxInPage, charIndexAt, inkBoxInPage, clearOverlay, drawBlock, drawBreak, drawCaret, hitThroughOverlay, musicBox, rightEdgeInBand,
   sameRow, setBeatIssues, textCaretInPage,
@@ -57,18 +59,35 @@ export interface VisualHost {
   inlineSustainEls(id: ElementId): SVGGraphicsElement[];
   /** 谱面上点中的 `<g>` 对应哪个条目（从事件目标往上找） */
   entryAtTarget(target: EventTarget | null): SyncEntry | null;
-  /** 当前格式怎么改原文；null = 这种格式在谱面上只能选中、不能改 */
+  /** 当前格式怎么改原文；null = 这种格式在谱面上只能选中、不能改（`.musicxml` 走模型那一路，见 `modelEditing`） */
   editDialect(): EditDialect | null;
+  /** 这种格式改的是模型（`.musicxml`：没有原文 token 可补丁，动作经 `modelops.ts` 改 `ScoreDoc` 再整份重写） */
+  modelEditing(): boolean;
+  /** 按代码区当前原文新读一份模型（模型那一路在它上面改） */
+  freshModel(): ScoreDoc | null;
+  /** 模型 → 原文（唯一写出端） */
+  writeModel(doc: ScoreDoc): string;
   /** 建索引用的那份模型（与 `sync` 同一版） */
   syncDoc(): ScoreDoc | null;
   /** 改完原文马上重排（不等输入防抖） */
   reloadNow(): void;
+  /** 等在途的异步排版（五线谱 / 混排）落定、谱面元素绑好 */
+  whenIdle(): Promise<void>;
   /** 正在试听：按键发声让路 */
   playbackBusy(): boolean;
   /** 索引是不是按代码区当前的原文建的（代码区刚改过、重排还在防抖里时为 false） */
   syncFresh(): boolean;
   setStatus(text: string): void;
   saveSettings(): void;
+}
+
+const XML_ENT: Record<string, string> = { "&amp;": "&", "&lt;": "<", "&gt;": ">", "&quot;": '"', "&apos;": "'" };
+function unescapeXml(s: string): string {
+  return s.replace(/&(amp|lt|gt|quot|apos);|&#(\d+);|&#x([0-9a-f]+);/gi, (m, _n, dec, hex) =>
+    dec ? String.fromCodePoint(Number(dec)) : hex ? String.fromCodePoint(parseInt(hex, 16)) : XML_ENT[m] ?? m);
+}
+function escapeXml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 }
 
 /** 元素里的 `<text>`：简谱那一路是一个 `<g>` 里收着字，五线谱的歌词字本身就是 `<text>`。 */
@@ -643,6 +662,42 @@ export class VisualEditController {
     return false;
   }
 
+  /**
+   * 内联改字（`.musicxml`）：改的是 XML 原文里那几个字（纯文字改动直接局部补丁，不必整份重写）。
+   * 标题在 `<work-title>` 与 `<credit-words>` 里常各写一份，原字相同的一起改，免得两处对不上。
+   * 歌词里 Enter / Tab 提交后跳到同一段的下一个字接着改（Shift+Tab 往前），Esc 放弃。
+   */
+  private editTextInline(e: SyncEntry): void {
+    const el = this.host.textEls(e)[0];
+    if (!el) return;
+    const raw = this.host.view.state.doc.sliceString(e.from, e.to);
+    const sameVerse = (x: SyncEntry): boolean => x.kind === "lyric" && x.verseNo === e.verseNo;
+    const ord = this.host.sync.ordered().filter(sameVerse).findIndex((x) => x.from === e.from);
+    openInlineEditor(el, unescapeXml(raw), ({ value, nav }) => {
+      if (value !== null && value !== unescapeXml(raw)) {
+        const targets = e.kind === "header"
+          ? this.host.sync.ordered().filter((x) => x.kind === "header" && this.host.view.state.doc.sliceString(x.from, x.to) === raw)
+          : [e];
+        this.host.view.dispatch({
+          changes: targets.map((x) => ({ from: x.from, to: x.to, insert: escapeXml(value) })),
+          userEvent: "input.visual",
+        });
+        this.host.reloadNow();
+      }
+      const list = this.host.sync.ordered().filter(sameVerse);
+      const next = e.kind === "lyric" && nav !== 0 ? list[ord + nav] : undefined;
+      const cur = list[ord];
+      if (next) {
+        this.select(next.from, next.to);
+        // 谱面是异步重排的（五线谱档），等排完、元素绑好再开下一个框
+        void this.host.whenIdle().then(() => this.editTextInline(next));
+        return;
+      }
+      if (e.kind === "lyric" && cur) this.select(cur.from, cur.to);
+      this.host.scorePane.focus({ preventScroll: true });
+    });
+  }
+
   /** 点在空白处（`caretAtPoint` 那一行的最近元素）所在的那一小节：从上一条小节线（或换行）之后的第一个元素到下一条小节线之前的最后一个。 */
   private selectMeasureAt(cx: number, cy: number): boolean {
     const caret = this.caretAtPoint(cx, cy);
@@ -736,6 +791,11 @@ export class VisualEditController {
     // 双击小节里的空白：选中整小节（第一下 click 已落了插入光标，这里覆盖成选区；双击音符不做事）
     if (!entry) return this.selectMeasureAt(ev.clientX, ev.clientY);
     if (!isText(entry)) return false;
+    // 没有可见代码区（`.musicxml`）：就地弹输入框改字
+    if (this.host.modelEditing()) {
+      this.editTextInline(entry);
+      return true;
+    }
     const at = this.textCaretAt(entry, ev.clientX, ev.clientY);
     this.select(at, at);
     this.host.view.focus();
@@ -915,7 +975,7 @@ export class VisualEditController {
   // ---------------- 键盘 ----------------
 
   private onKeyDown(ev: KeyboardEvent): void {
-    if (!this.host.visualEnabled()) return;
+    if (!this.host.visualEnabled() || inlineEditing()) return;
     const a = actionOfKey(ev);
     if (!a) return;
     if (this.runChecked(a, ev.key)) {
@@ -933,6 +993,35 @@ export class VisualEditController {
 
   /** 给面板与菜单用的那一面 */
   private readonly runner: MenuRunner = this.makeRunner();
+
+  /** 模型那一路（`.musicxml`）向控制器要的东西 */
+  private readonly modelCtx: ModelActionCtx = this.makeModelCtx();
+
+  private makeModelCtx(): ModelActionCtx {
+    const ctl = this;
+    return {
+      get view() {
+        return ctl.host.view;
+      },
+      get sync() {
+        return ctl.host.sync;
+      },
+      get curDur() {
+        return ctl.curDur;
+      },
+      freshModel: () => ctl.host.freshModel(),
+      writeModel: (doc) => ctl.host.writeModel(doc),
+      syncDoc: () => ctl.host.syncDoc(),
+      reloadNow: () => ctl.host.reloadNow(),
+      setStatus: (t) => ctl.host.setStatus(t),
+      select: (f, t) => ctl.select(f, t),
+      navigable: () => ctl.navigable(),
+      selectedEntries: () => ctl.selectedEntries(),
+      play: (midi) => {
+        if (ctl.noteSound && !ctl.host.playbackBusy()) void ctl.preview.play(midi);
+      },
+    };
+  }
 
   private makeRunner(): MenuRunner {
     const ctl = this;
@@ -979,6 +1068,10 @@ export class VisualEditController {
 
   /** 执行一个动作（键盘、菜单、面板共用）。做了返回 true。`key` 是按下的键（唱名动作要知道是几）。 */
   run(a: VisualAction, key = ""): boolean {
+    if (this.host.modelEditing()) {
+      const r = runModelAction(this.modelCtx, a, key);
+      if (r !== null) return r;
+    }
     switch (a.id) {
       case "note.digit": return this.digit(Number(key));
       case "oct.up": return this.editNotes((c, f, t) => shiftOctave(c, f, t, 1), true);

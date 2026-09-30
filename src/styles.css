@@ -533,6 +533,7 @@ button:focus-visible, select:focus-visible {
 .visual-mode[data-mode="insert"] { border-style: dashed; }
 .sel-info { font-size: 12px; color: var(--muted, #667085); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 42ch; }
 .sel-info[hidden] { display: none; }
+.vis-inline { position: fixed; z-index: 40; padding: 0 4px; border: 1px solid #1565ff; border-radius: 3px; background: #fff; color: #111; outline: none; box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25); }
 .vis-marquee { position: fixed; z-index: 30; pointer-events: none; border: 1px dashed #1565ff; background: rgba(21, 101, 255, 0.08); }
 .format-marks-button { min-width: 26px; font-weight: 600; }
 .vis-overlay .vis-beat { fill: rgba(224, 49, 49, 0.12); stroke: rgba(224, 49, 49, 0.55); stroke-dasharray: 3 2; pointer-events: all; }

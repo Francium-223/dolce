@@ -27,7 +27,9 @@ export interface StaffSystemData {
 export type StaffLeafData =
   | { readonly staffRole: "lyric"; readonly chordId: ElementId; readonly verse: number }
   | { readonly staffRole: "slur"; readonly start: ElementId; readonly end: ElementId }
-  | { readonly staffRole: "barline"; readonly measure: number; readonly side: "before" | "after" };
+  | { readonly staffRole: "barline"; readonly measure: number; readonly side: "before" | "after" }
+  /** 标题块的一行字（credit）。自动铺排会按 `work-title` 重新合成 credit，下标对不上原文，所以按字认（同简谱档页眉） */
+  | { readonly staffRole: "credit"; readonly text: string };
 
 /** `data` 是不是 `StaffLeafData`。 */
 export function isStaffLeaf(data: unknown): data is StaffLeafData {
@@ -40,6 +42,7 @@ export function staffLeafKey(d: StaffLeafData): string {
     case "lyric": return `lyric:${d.chordId}:${d.verse}`;
     case "slur": return `slur:${d.start}:${d.end}`;
     case "barline": return `bar:${d.measure}:${d.side}`;
+    case "credit": return `credit:${d.text}`;
   }
 }
 

@@ -477,7 +477,9 @@ function autoLayoutHeader(score: StaffLayout): void {
     yTop += tenths(fs) * 1.3;
     creds.push({ page: 0, text, type, x: cx, y: d.pageHeight - yTop, justify: LCR.Center, fontSize: fs });
   };
-  const rest = score.credits.filter((c) => c.text);
+  // 标题已按 `score.title` 排了：credit 里的标题那条（带过版面坐标的谱改动后转自动铺排时就有）不再排第二遍
+  const norm = (t: string): string => t.replace(/\s+/g, "");
+  const rest = score.credits.filter((c) => c.text && !(score.title && (c.type === "title" || norm(c.text) === norm(score.title))));
   for (const c of rest) if (c.type === "subtitle") push(c.text, c.type, hf.subtitle?.size ?? creditFs);
   for (const t of score.scripture) push(t, "scripture", hf.scripture?.size ?? creditFs);
   for (const c of rest) if (c.type !== "subtitle") push(c.text, c.type, creditFs);

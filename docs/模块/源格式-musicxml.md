@@ -40,6 +40,11 @@ MusicXML 双向（导入为 `ScoreDoc`；简谱档与成书经 `model/jianpuinpu
 - MuseScore 兼容：有任何 `<credit>` 就不再用 `<work-title>` 生成标题 → 缺 title credit 时补一条；
   `<part-name>` 留空并 `print-object="no"`。
 
+## 在谱面上编辑
+
+没有代码区，谱面上改的是模型（`model/edit.ts`），改完经 `toxml.ts` 整份重写；索引按 DOM 节点的文档序对到隐藏代码区里的原文
+（`editor/sync.ts::buildXml`）。判据见 [可视化编辑](可视化编辑.md)「`.musicxml`：改模型」。增删音、改时值、拆并小节后整曲的版面坐标作废，改由五线谱引擎自动铺排。
+
 ## 已知限制
 
 - `.Repeat` 的 skip/limit **不表达**（`<ending>` 只能整小节）

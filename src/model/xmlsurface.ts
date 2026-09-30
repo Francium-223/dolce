@@ -221,6 +221,41 @@ export function hasEmbeddedLayout(song: Song): boolean {
   return false;
 }
 
+// ───────────────────────── 编辑后作废的表层 ─────────────────────────
+//
+// 谱面上改谱（`model/edit.ts`）时，原节点上有些版面信息跟着改动失效。编辑是在**新读出来的一份**模型上做的
+// （它的原节点只为这次重写而活），所以直接从原节点上删掉，写出端就不会回填。
+
+/** 音高变了：这个和弦各音原文的符干方向（`<stem>`）与纵坐标（`default-y`）作废，交给五线谱引擎按新音高推。 */
+export function forgetNoteLayout(chord: { notes: readonly Note[] }): void {
+  const nodes = new Set<Element>();
+  const own = surfaceOf(chord);
+  if (own) nodes.add(own);
+  for (const n of chord.notes) {
+    const el = surfaceOf(n);
+    if (el) nodes.add(el);
+  }
+  for (const el of nodes) {
+    el.removeAttribute("default-y");
+    for (const st of children(el, "stem")) st.remove();
+  }
+}
+
+/** 小节内容变了（增删音、改时值、拆并小节）：整曲的版面坐标作废——小节宽与音符横坐标一律去掉，
+ *  五线谱引擎见不到坐标就自动铺排（`hasEmbeddedLayout`）。只改一小节的坐标会与邻近照原坐标排的小节打架，所以整曲一起丢。 */
+export function dropEmbeddedLayout(song: Song): void {
+  for (const part of song.parts) {
+    for (const m of part.measures) {
+      surfaceOf(m)?.removeAttribute("width");
+      for (const el of m.elements) {
+        if (el.kind !== "chord") continue;
+        surfaceOf(el)?.removeAttribute("default-x");
+        for (const n of el.notes) surfaceOf(n)?.removeAttribute("default-x");
+      }
+    }
+  }
+}
+
 // ───────────────────────── 导出版面 ─────────────────────────
 
 /** 五线谱引擎给导出排出来的版面（`mixed/engrave.ts`），经 `ToXmlOptions.layout` 交给写出端。

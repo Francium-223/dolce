@@ -40,7 +40,7 @@ export function renderPageSvg(
 
 /** 页眉里画出来的一项：文字（标题、署名…）、调号、拍号。 */
 export interface HeaderPart {
-  el: SVGGElement;
+  el: SVGGraphicsElement;
   text: string;
   role: "text" | "key" | "time";
 }

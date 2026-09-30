@@ -759,7 +759,19 @@ export class ScorePainter {
 
   /** 页眉里画出来的东西（标题、署名、调号拍号）：`<g>`、所画的字、是不是调号拍号。可视化编辑按字对回原文字段。 */
   headerParts(): HeaderPart[] {
-    return this.staff ? [] : headerPartsOf(this.result?.pages.map((p) => p.root) ?? [], this.nodeMap);
+    if (this.staff) {
+      // 五线谱 / 混排：标题块各行（`StaffLeafData` 的 credit），按字认
+      const out: HeaderPart[] = [];
+      for (const hits of this.staffLeaves.values()) {
+        for (const h of hits) {
+          const d = h.item.data;
+          const el = this.leafMap.get(h.item);
+          if (isStaffLeaf(d) && d.staffRole === "credit" && el?.isConnected) out.push({ el, text: d.text, role: "text" });
+        }
+      }
+      return out;
+    }
+    return headerPartsOf(this.result?.pages.map((p) => p.root) ?? [], this.nodeMap);
   }
 
   // ---------------- SVG rendering ----------------

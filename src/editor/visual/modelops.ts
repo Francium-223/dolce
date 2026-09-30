@@ -1,0 +1,285 @@
+// 可视化编辑的**模型那一路**：`.musicxml` 没有可以局部补丁的原文 token，动作改的是 `ScoreDoc`（`model/edit.ts`），
+// 改完经唯一写出端整份重写，只把前后不同的那一段放进代码区（代码区隐藏着，里面就是 XML 原文），撤销重做仍是代码区那份 history。
+//
+// 与文本那一路（`ops.ts` + `EditDialect`）同一张动作表、同一份选区：选区在 XML 原文上（`SyncIndex.buildXml` 建的索引），
+// 动作按选区碰到的条目认音符。改完元素 id 会重编（重写再读回），按「第几声部第几小节哪个声线第几个」认回来落选区。
+// 导航、模式切换、全选、撤销这些与改法无关的动作不在这里（返回 null，控制器照旧处理）。
+
+import type { EditorView } from "@codemirror/view";
+import type { Chord, ElementId, ScoreDoc } from "../../model/doc";
+import {
+  addBeat, chordAtPos, deleteChords, insertChord, isEditError, locate, mergeMeasures, midiOf, type ChordPos, type EditHooks,
+  type InsertAnchor, type ModelEdit, posOf, scaleDuration, setBreakBefore, setDegree, shiftOctave, splitMeasure, stepDegree,
+  toggleAccidental, toggleDeco, toggleDot, toggleSlur, toggleTie,
+} from "../../model/edit";
+import { dropEmbeddedLayout, forgetNoteLayout } from "../../model/xmlsurface";
+import type { SyncEntry, SyncIndex } from "../sync";
+import type { NoteDuration } from "./dialect";
+import type { VisualAction } from "./keys";
+
+/** 模型那一路向控制器要的东西。 */
+export interface ModelActionCtx {
+  readonly view: EditorView;
+  readonly sync: SyncIndex;
+  /** 按代码区当前原文**新读一份**模型（改的是它：它的原节点只为这次重写而活，改表层不碍着谱面那份） */
+  freshModel(): ScoreDoc | null;
+  /** 模型 → 原文（唯一写出端） */
+  writeModel(doc: ScoreDoc): string;
+  /** 索引用的那份模型（重排后按它认回选区） */
+  syncDoc(): ScoreDoc | null;
+  reloadNow(): void;
+  setStatus(text: string): void;
+  select(from: number, to: number): void;
+  /** 按原文顺序、方向键能停的条目 */
+  navigable(): SyncEntry[];
+  /** 选区碰到的条目 */
+  selectedEntries(): SyncEntry[];
+  readonly curDur: NoteDuration;
+  /** 按键发声 */
+  play(midi: number): void;
+}
+
+const HOOKS: EditHooks = { forgetStem: forgetNoteLayout, forgetLayout: dropEmbeddedLayout };
+
+/** 两份原文前后相同的部分去掉，剩下中间不同的那一段。 */
+function diffRegion(a: string, b: string): { from: number; to: number; insert: string } {
+  let p = 0;
+  while (p < a.length && p < b.length && a[p] === b[p]) p++;
+  let q = 0;
+  while (q < a.length - p && q < b.length - p && a[a.length - 1 - q] === b[b.length - 1 - q]) q++;
+  return { from: p, to: a.length - q, insert: b.slice(p, b.length - q) };
+}
+
+type Target = { select: ChordPos[] } | { caretAfter: ChordPos } | { caretBefore: ChordPos } | null;
+
+/**
+ * 改一次模型并落地。`fn` 在新读出的模型上就地改，返回要选中的（和弦对象）；这里先把它们换成位置，
+ * 再写出、放进代码区、重排，最后在重排后的索引里按位置认回来落选区。`sound` 时响一下选中的第一个音。
+ */
+function commit(ctx: ModelActionCtx, fn: (doc: ScoreDoc) => ModelEdit, sound = false): boolean {
+  const doc = ctx.freshModel();
+  if (!doc) {
+    ctx.setStatus("这份 MusicXML 读不出来，没法在谱面上改");
+    return true;
+  }
+  const out = fn(doc);
+  if (isEditError(out)) {
+    ctx.setStatus(out.error);
+    return true;
+  }
+  const pos = (c: Chord): ChordPos | null => posOf(doc, c);
+  const target: Target = "select" in out
+    ? { select: out.select.map(pos).filter((p): p is ChordPos => p !== null) }
+    : "caretAfter" in out
+      ? (pos(out.caretAfter) ? { caretAfter: pos(out.caretAfter)! } : null)
+      : (pos(out.caretBefore) ? { caretBefore: pos(out.caretBefore)! } : null);
+  const xml = ctx.writeModel(doc);
+  const old = ctx.view.state.doc.toString();
+  if (xml !== old) {
+    ctx.view.dispatch({ changes: [diffRegion(old, xml)], userEvent: "input.visual", scrollIntoView: false });
+    ctx.reloadNow();
+  }
+  reselect(ctx, target);
+  if (sound) {
+    const first = ctx.selectedEntries().find((e) => e.kind === "note") ??
+      [...ctx.navigable()].reverse().find((e) => e.kind === "note" && e.to <= ctx.view.state.selection.main.head);
+    const d = ctx.syncDoc();
+    const midi = first && d ? midiOf(d, first.id) : null;
+    if (midi !== null) ctx.play(midi);
+  }
+  ctx.setStatus("");
+  return true;
+}
+
+function reselect(ctx: ModelActionCtx, t: Target): void {
+  const doc = ctx.syncDoc();
+  if (!doc || !t) return;
+  const spanOf = (p: ChordPos): { from: number; to: number } | null => {
+    const ch = chordAtPos(doc, p);
+    return ch ? ctx.sync.spanOfNote(ch.id) : null;
+  };
+  if ("select" in t) {
+    const spans = t.select.map(spanOf).filter((s): s is { from: number; to: number } => s !== null);
+    if (spans.length) ctx.select(Math.min(...spans.map((s) => s.from)), Math.max(...spans.map((s) => s.to)));
+  } else if ("caretAfter" in t) {
+    const s = spanOf(t.caretAfter);
+    if (s) ctx.select(s.to, s.to);
+  } else {
+    const s = spanOf(t.caretBefore);
+    if (s) ctx.select(s.from, s.from);
+  }
+}
+
+/** 选区里的音符 id（编辑模式）。 */
+function selectedNotes(ctx: ModelActionCtx): ElementId[] {
+  return ctx.selectedEntries().filter((e) => e.kind === "note").map((e) => e.id);
+}
+
+/** 插入模式光标前面那个条目（没有为 null）。 */
+function entryBeforeCaret(ctx: ModelActionCtx): SyncEntry | null {
+  const head = ctx.view.state.selection.main.head;
+  return [...ctx.navigable()].reverse().find((e) => e.to <= head) ?? null;
+}
+
+function entryAfterCaret(ctx: ModelActionCtx): SyncEntry | null {
+  const head = ctx.view.state.selection.main.head;
+  return ctx.navigable().find((e) => e.from >= head) ?? null;
+}
+
+/** 插入位置：光标前是音符就接在它后面；是小节线 / 换行就是下一小节开头；什么都没有就是第一小节开头。 */
+function insertAnchor(ctx: ModelActionCtx, doc: ScoreDoc): InsertAnchor | null {
+  const sel = ctx.view.state.selection.main;
+  const prev = sel.empty ? entryBeforeCaret(ctx) : ctx.selectedEntries().pop() ?? null;
+  if (prev?.kind === "note") return { after: prev.id };
+  if (prev && (prev.kind === "barline" || prev.kind === "break")) {
+    const l = locate(doc, prev.id);
+    return l ? { measureStart: { si: l.si, pi: l.pi, mi: l.mi + 1, voice: l.chord.voice } } : null;
+  }
+  const next = entryAfterCaret(ctx);
+  const l = next ? locate(doc, next.id) : null;
+  return l ? { measureStart: { si: l.si, pi: l.pi, mi: l.mi, voice: l.chord.voice } } : null;
+}
+
+/** 某个条目对应的音符 id：音符就是它；小节线、换行是它前面那个音。 */
+function anchorNote(ctx: ModelActionCtx): ElementId | null {
+  const sel = ctx.view.state.selection.main;
+  const e = sel.empty ? entryBeforeCaret(ctx) : ctx.selectedEntries().pop() ?? null;
+  return e ? e.id : null;
+}
+
+/** 删文字：歌词连同整个 `<lyric>` 元素去掉（连它前面的缩进）；标题清空（原字相同的几处一起）。纯文字改动，局部补丁。 */
+function removeText(ctx: ModelActionCtx, e: SyncEntry): boolean {
+  const doc = ctx.view.state.doc;
+  const text = doc.toString();
+  let changes: { from: number; to: number; insert: string }[];
+  if (e.kind === "lyric") {
+    const open = text.lastIndexOf("<lyric", e.from);
+    const close = text.indexOf("</lyric>", e.to);
+    if (open < 0 || close < 0) return true;
+    let from = open;
+    while (from > 0 && /[ \t]/.test(text[from - 1]!)) from--;
+    if (from > 0 && text[from - 1] === "\n") from--;
+    changes = [{ from, to: close + "</lyric>".length, insert: "" }];
+  } else {
+    const raw = doc.sliceString(e.from, e.to);
+    changes = ctx.sync.ordered().filter((x) => x.kind === "header" && doc.sliceString(x.from, x.to) === raw).map((x) => ({ from: x.from, to: x.to, insert: "" }));
+  }
+  ctx.view.dispatch({ changes, userEvent: "input.visual" });
+  ctx.reloadNow();
+  const at = changes[0]!.from;
+  ctx.select(at, at);
+  return true;
+}
+
+/** 删掉一个条目（或一段）：音符删音、小节线并小节、换行去掉、弧去掉。 */
+function removeEntries(ctx: ModelActionCtx, targets: SyncEntry[]): boolean {
+  if (targets.length === 0) return true;
+  const bar = targets.find((e) => e.kind === "barline");
+  const brk = targets.find((e) => e.kind === "break");
+  const slur = targets.find((e) => e.kind === "mark" && e.markKind === "slur");
+  const notes = targets.filter((e) => e.kind === "note").map((e) => e.id);
+  if (notes.length) return commit(ctx, (doc) => deleteChords(doc, notes, HOOKS));
+  if (bar) {
+    return commit(ctx, (doc) => {
+      const l = locate(doc, bar.id);
+      return l ? mergeMeasures(doc, l.si, l.mi, HOOKS) : { error: "找不到这条小节线" };
+    });
+  }
+  if (brk) {
+    return commit(ctx, (doc) => {
+      const l = locate(doc, brk.id);
+      return l ? setBreakBefore(doc, l.si, l.mi + 1, null) : { error: "找不到这处换行" };
+    });
+  }
+  if (slur && slur.end !== undefined) return commit(ctx, (doc) => toggleSlur(doc, slur.id, slur.end!));
+  ctx.setStatus("这个在 MusicXML 里暂不能在谱面上删");
+  return true;
+}
+
+/**
+ * 模型那一路处理这个动作；不归它管的（导航、模式、全选、撤销、格式标记、插入模式改「当前时值」）返回 null，控制器照旧处理。
+ */
+export function runModelAction(ctx: ModelActionCtx, a: VisualAction, key: string): boolean | null {
+  const sel = ctx.view.state.selection.main;
+  const edit = !sel.empty;
+  const ids = (): ElementId[] => selectedNotes(ctx);
+  const need = (fn: (doc: ScoreDoc, ids: ElementId[]) => ModelEdit, sound = false): boolean => {
+    const list = ids();
+    if (list.length === 0) {
+      ctx.setStatus("先选中一个音符");
+      return true;
+    }
+    return commit(ctx, (doc) => fn(doc, list), sound);
+  };
+  switch (a.id) {
+    case "note.digit": {
+      const d = Number(key);
+      if (edit) return need((doc, l) => setDegree(doc, l, d, HOOKS), true);
+      return commit(ctx, (doc) => {
+        const at = insertAnchor(ctx, doc);
+        return at ? insertChord(doc, at, d, ctx.curDur, HOOKS) : { error: "这里插不进音符" };
+      }, true);
+    }
+    case "oct.up": return need((doc, l) => shiftOctave(doc, l, 1, HOOKS), true);
+    case "oct.down": return need((doc, l) => shiftOctave(doc, l, -1, HOOKS), true);
+    case "step.up": return need((doc, l) => stepDegree(doc, l, 1, HOOKS), true);
+    case "step.down": return need((doc, l) => stepDegree(doc, l, -1, HOOKS), true);
+    case "acc.sharp": return need((doc, l) => toggleAccidental(doc, l, "sharp", HOOKS), true);
+    case "acc.flat": return need((doc, l) => toggleAccidental(doc, l, "flat", HOOKS), true);
+    case "acc.natural": return need((doc, l) => toggleAccidental(doc, l, "natural", HOOKS), true);
+    case "dur.dot": return need((doc, l) => toggleDot(doc, l, HOOKS));
+    case "dur.halve": return edit ? need((doc, l) => scaleDuration(doc, l, 0.5, HOOKS)) : null;
+    case "dur.double": return edit ? need((doc, l) => scaleDuration(doc, l, 2, HOOKS)) : null;
+    case "sus.add": {
+      // 模型里没有独立的增时线：给选中的（插入模式：光标前那个）音多一拍
+      const id = edit ? ids().pop() : (() => {
+        const p = entryBeforeCaret(ctx);
+        return p?.kind === "note" ? p.id : undefined;
+      })();
+      if (id === undefined) {
+        ctx.setStatus("先选中一个音符");
+        return true;
+      }
+      return commit(ctx, (doc) => addBeat(doc, id, HOOKS));
+    }
+    case "slur.toggle": {
+      const l = ids();
+      if (l.length < 2) {
+        ctx.setStatus("圆滑线要选中两个以上的音");
+        return true;
+      }
+      return commit(ctx, (doc) => toggleSlur(doc, l[0]!, l[l.length - 1]!));
+    }
+    case "tie.toggle": return need((doc, l) => toggleTie(doc, l[0]!));
+    case "deco.fermata": return need((doc, l) => toggleDeco(doc, l, "fermata"));
+    case "deco.accent": return need((doc, l) => toggleDeco(doc, l, "accent"));
+    case "bar.insert": {
+      const id = anchorNote(ctx);
+      if (id === null) return true;
+      return commit(ctx, (doc) => splitMeasure(doc, id, HOOKS));
+    }
+    case "brk.line":
+    case "brk.page": {
+      const id = anchorNote(ctx);
+      if (id === null) return true;
+      const page = a.id === "brk.page";
+      return commit(ctx, (doc) => {
+        const l = locate(doc, id);
+        if (!l) return { error: "找不到换行位置" };
+        const last = [...l.measure.elements].reverse().find((e) => e.kind === "chord" && e.voice === l.chord.voice);
+        if (last !== l.chord) return { error: "五线谱只能在小节线处换行：先在这里加一条小节线（|）" };
+        return setBreakBefore(doc, l.si, l.mi + 1, page ? "page" : "system");
+      });
+    }
+    case "del.forward":
+    case "del.back": {
+      // 选中的是一段文字（歌词、标题）：直接改原文里那几个字
+      const text = edit ? ctx.sync.range(sel.from, sel.to).find((e) => (e.kind === "lyric" || e.kind === "header") && e.from === sel.from && e.to === sel.to) : undefined;
+      if (text) return removeText(ctx, text);
+      if (edit) return removeEntries(ctx, ctx.selectedEntries());
+      const t = a.id === "del.forward" ? entryAfterCaret(ctx) : entryBeforeCaret(ctx);
+      return removeEntries(ctx, t ? [t] : []);
+    }
+  }
+  return null;
+}

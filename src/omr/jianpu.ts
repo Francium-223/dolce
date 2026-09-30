@@ -2413,7 +2413,8 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
       });
       if (!dotC) continue;
       const owner = m.rd.find((k) => Math.abs(rcx(k.bbox) - rcx(ab)) <= numH * 0.3 &&
-        k.bbox.y - rbottom(dotC.bbox) >= -2 && k.bbox.y - rbottom(dotC.bbox) <= numH * 0.5 &&
+        // 窗口同八度点（0.8 字号）：八度那边收得到的点，延长记号得先认（补充本 62 的小号延长记号离数字 0.64 字号，点被当成高音点）
+        k.bbox.y - rbottom(dotC.bbox) >= -2 && k.bbox.y - rbottom(dotC.bbox) <= numH * 0.8 &&
         k.bbox.h >= medH * 0.85);
       if (!owner) continue;
       // 延长记号的弧只罩一个音：弧横向盖住另一个数字过半，就是跨两音的圆滑线/连音线（新编赞美诗 384 两个紧挨的八分
@@ -2505,12 +2506,56 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
           return Infinity;
         };
         const dl = leg(-1), dr = leg(1);
-        if (dl < numH * 0.2 || dr < numH * 0.2 || !isFinite(dl) || !isFinite(dr) || Math.abs(dl - dr) > numH * 0.3) continue;
+        // 下限 0.1 字号：四声部下方声部印的是小号延长记号（约 0.4 字号宽，135 Q3 `3̂`），弧腿离点心不到 0.2 字号
+        if (dl < numH * 0.1 || dr < numH * 0.1 || !isFinite(dl) || !isFinite(dr) || Math.abs(dl - dr) > numH * 0.3) continue;
         const span: Rect = { x: Math.round(rcx(db) - dl), y: cy, w: dl + dr + 1, h: 1 };
         if (m.rd.some((k) => k !== owner && overlapX(k.bbox, span) >= k.bbox.w * 0.5)) continue;
         probe("fermata.legs");
         fermataOf.set(owner, true);
         fermataDots.add(dotC);
+      }
+    }
+  }
+  // 第四路：小号延长记号的点与弧粘成一块（四声部 135 下方声部 `3̂` 16×12），整块落进 dots 当了高音点。
+  // 八度点是实心圆，上下一样窄；这块上部是一道宽拱（最宽处 ≥1.5 倍于下部），拱下是空心——上半有一行分成左右两段墨。
+  {
+    for (const m of staff) {
+      const medH = median(m.rd.map((k) => k.bbox.h)) || numH;
+      for (const owner of m.rd) {
+        if (fermataOf.get(owner) || owner.bbox.h < medH * 0.85) continue;
+        const ob = owner.bbox;
+        for (const o of c.dots) {
+          const b = o.bbox, gap = ob.y - rbottom(b);
+          if (fermataDots.has(o) || Math.abs(rcx(b) - rcx(ob)) > numH * 0.25 || gap < -1 || gap > numH * 0.8) continue;
+          if (b.h < Math.max(6, numH * 0.28) || b.w > numH * 0.6) continue;
+          // 每行：横跨宽、墨段数、段间最大空隙
+          const spans: number[] = [], runsN: number[] = [], gaps: number[] = [];
+          for (let y = b.y; y < rbottom(b); y++) {
+            let lo = -1, hi = -1, runs = 0, prev = false, gap = 0, cur = 0;
+            for (let x = b.x; x < rright(b); x++) {
+              const v = bin.data[y * bin.w + x] === 1;
+              if (v) { if (lo >= 0 && cur > gap) gap = cur; if (lo < 0) lo = x; hi = x; if (!prev) runs++; cur = 0; } else if (lo >= 0) cur++;
+              prev = v;
+            }
+            spans.push(lo < 0 ? 0 : hi - lo + 1); runsN.push(runs); gaps.push(gap);
+          }
+          const half = spans.length >> 1;
+          const topW = Math.max(...spans.slice(0, half)), botW = Math.max(...spans.slice(spans.length - Math.max(2, Math.round(spans.length * 0.4))));
+          // 拱：上半有一行整段（拱顶），紧接其下连续两行以上分成左右两段、段间空 ≥2px（拱下空心）。
+          // 只看「上宽下窄 + 上半某行分段」会把顶上挂毛刺的扁点当成拱（1600《南非之行》12×8 的高音点）
+          let arch = false;
+          for (let i = 0; i + 2 <= half && !arch; i++) {
+            if (runsN[i] !== 1) continue;
+            let k = i + 1;
+            while (k < spans.length && runsN[k]! >= 2 && gaps[k]! >= 2) k++;
+            if (k - (i + 1) >= 2) arch = true;
+          }
+          if (topW < botW * 1.5 || !arch) continue;
+          probe("fermata.fusedDot");
+          fermataOf.set(owner, true);
+          fermataDots.add(o);
+          break;
+        }
       }
     }
   }

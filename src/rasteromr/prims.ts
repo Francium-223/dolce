@@ -785,6 +785,7 @@ export function findPrimitives(
       beams[i] = { ...A, y0: (A.y0 + B.y0) / 2, y1: (A.y1 + B.y1) / 2, lw: y1 - y0, maxLw: y1 - y0, box };
       beams.splice(j, 1);
     }
+  dropHeadEndBeams(beams, vSegs, unit);
   beams.push(...partialBeams(bin, beams, unit, vSegs));
   return { hSegs, vSegs, beams };
 }
@@ -966,6 +967,39 @@ function localLineCenters(bin: Binary, runs: Uint16Array, cy: number, unit: Rast
 /** 没成组的横线只抹竖游程不过这么多个线宽的列：谱线、加线约一个线宽，符杠约 0.5 格厚——
  *  粗线页上只有线宽的两倍（主使我喜乐线宽 4、杠厚 8 像素）。 */
 const THIN_ONLY_RUN = 1.6;
+/** 挂杠的干多长以内（格）算一根干：再长是两个声部共用一根贯穿的干，两头都可以有杠。 */
+const ONE_STEM_MAX = 4.5;
+
+/**
+ * **挂在干的另一头、比那头的杠短的「杠」是连成一条的符头**：扫描件上一组连桁里相邻的两个实心头
+ * 斜着粘成一条（破碎扫描版 p3 两个十六分头连成 2.5×0.6 格），过得了宽度、长宽比和杠厚匀那几道，
+ * 被当成一层杠抹掉，头跟着没了。一根干只有一头能挂杠：这「杠」碰到的每根干（不到 `ONE_STEM_MAX` 格）
+ * 另一头都挂着别的杠、且那条杠比它长，就不是杠，退给拆头那一路。
+ */
+function dropHeadEndBeams(beams: BeamQuad[], vSegs: LineSeg[], unit: RasterUnit): void {
+  const tol = unit.lineThick + 2;
+  const inBox = (x: number, y: number, b: Rect) => x >= b.x - tol && x <= b.x + b.w + tol && y >= b.y - tol && y <= b.y + b.h + tol;
+  const drop = new Set<BeamQuad>();
+  for (const q of beams) {
+    let touched = 0;
+    let fake = true;
+    for (const v of vSegs) {
+      const vx = (v.x0 + v.x1) / 2;
+      const top = Math.min(v.y0, v.y1);
+      const bot = Math.max(v.y0, v.y1);
+      const atTop = inBox(vx, top, q.box);
+      const atBot = inBox(vx, bot, q.box);
+      if (atTop === atBot) continue;
+      touched++;
+      if (bot - top > unit.space * ONE_STEM_MAX) { fake = false; break; }
+      const far = atTop ? bot : top;
+      if (!beams.some((o) => o !== q && o.box.w > q.box.w && inBox(vx, far, o.box))) { fake = false; break; }
+    }
+    if (touched && fake) drop.add(q);
+  }
+  for (let i = beams.length - 1; i >= 0; i--) if (drop.has(beams[i])) beams.splice(i, 1);
+}
+
 /** 两端各连着干的短杠：宽度下限（格）。 */
 const SHORT_BEAM_W = 0.9;
 /** 同上：两根干之间逐列墨厚的中位数（格）。杠约半格厚；比这薄的是连线、谱线残段，比这厚的是挨着两根干的实心头。 */

@@ -986,11 +986,25 @@ function beamStems(bin: Binary, beams: BeamQuad[], vSegs: LineSeg[], unit: Raste
   const onLine = (y: number) => lineYs.some((ly) => Math.abs(ly - y) <= lineHalf);
   const ink = (x: number, y: number) => x >= 0 && y >= 0 && x < w && y < h && data[y * w + x] === 1;
   /** 从 y0 起沿 dir 走，返回走到的最远一行（谱线行上断了也接着走）。 */
+  /** 这一行过 x 的横向墨宽。 */
+  const runAt = (x: number, y: number): number => {
+    let a = x;
+    let b = x;
+    while (ink(a - 1, y)) a--;
+    while (ink(b + 1, y)) b++;
+    return ink(x, y) ? b - a + 1 : 0;
+  };
   const walk = (x: number, y0: number, dir: number): number => {
     let last = y0 - dir;
     for (let y = y0; y >= 0 && y < h; y += dir) {
       if (ink(x, y)) last = y;
-      else if (!onLine(y)) break;
+      else if (!onLine(y)) {
+        // 干尖与头之间常断一两行（破碎扫描版 p7 十六分 E4 差 3px）：三行内接上的是头那么宽的墨，就续进去
+        let k = 1;
+        while (k <= 3 && !ink(x, y + dir * k)) k++;
+        if (k > 3 || runAt(x, y + dir * k) < sp * 0.8) break;
+        y += dir * (k - 1);
+      }
     }
     return last;
   };

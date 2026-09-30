@@ -786,6 +786,18 @@ function estimateNumH(comps: Component[]): number {
   // 只拿瘦高块再估一次；明显更大（>1.3 倍）且瘦高块够多才改用——歌词少的页两者本来就差不多，不动
   const tall = squarish.filter((k) => k.bbox.w / k.bbox.h <= 0.85);
   const est2 = tall.length >= 20 ? median(tall.map((k) => k.bbox.h)) : 0;
+  // 歌词字比数字大、段数又多时反过来估大：新编赞美诗 1《圣哉三一歌》四段词的汉字 h≈43 压过数字 h≈32，numH 估成 43，
+  // 12×31 的「1」过不了数字块的宽度门（0.3 字号）被整曲丢光。改拿**夹在小节线之间**的瘦高块再估一次：
+  // 小节线是细高竖条（宽 ≤ max(3, 0.12 高)），数字在它纵向中段、横向几个线高以内；歌词在线外，挨不上。
+  // 抽样 6 本 48 首与识别出的数字实高差 ≤1px（没小节线的页凑不够样本，照旧）。
+  const bars = comps.filter((k) => k.bbox.h >= 12 && k.bbox.w <= Math.max(3, k.bbox.h * 0.12));
+  const anchored = bars.length >= 3 ? tall.filter((k) => bars.some((b) =>
+    b.bbox.h >= k.bbox.h * 1.2 && Math.abs(b.bbox.x - k.bbox.x) <= b.bbox.h * 6 &&
+    Math.abs(rcy(b.bbox) - rcy(k.bbox)) < b.bbox.h * 0.3)) : [];
+  // 锚上的得占瘦高块的两成、且不小于原估计的 0.6：没几根真小节线的页（迦南诗选 1677《祷告》，16/385 块、中位 12 对数字 48）
+  // 凑上来的是碎笔
+  const est3 = anchored.length >= 15 && anchored.length >= tall.length * 0.2 ? median(anchored.map((k) => k.bbox.h)) : 0;
+  if (est3 && est > est3 * 1.15 && est3 >= est * 0.6) { probe("numH.barAnchored"); return est3; }
   return est2 > est * 1.3 ? est2 : est;
 }
 
@@ -1082,7 +1094,9 @@ function classify(comps: Component[], bin: Binary): { c: Classified; numH: numbe
     // 所以只记成候选、先当点，到 buildJpNums 按位置裁决（resolveDashLike）。
     // 扁度门比上面放低到 1.6：雅歌 1 的 `5̣ - - -` 第一根 12×7、平均墨厚 6.75，扁度 1.78 差一点；真圆点只有 1.0~1.1，
     // 候选还要过 resolveDashLike 的位置裁决
-    if (w >= numH * 0.28 && w >= (k.area / w) * 1.6 && h <= numH * 0.25 && k.area >= w * h * 0.75) {
+    // 宽下限 0.33 字号（原 0.28，雅歌的短横 12~13px 即 0.36~0.39）：新编赞美诗 100《万古磐石歌》末系统 `1̇.` 的附点 10×7
+    //（字号 33，0.30）扁得过 1.6，又正落在数字中线上，被当成增时线
+    if (w >= numH * 0.33 && w >= (k.area / w) * 1.6 && h <= numH * 0.25 && k.area >= w * h * 0.75) {
       c.dots.push(k); c.dashLike.push(k); continue;
     }
     // 小点：八度点/附点
@@ -1546,6 +1560,11 @@ function buildJpNums(
         if (up) return rbottom(ob) <= d.y && kb.y - rbottom(ob) >= -1 && kb.y - rbottom(ob) < gapAbove * 0.8;
         return ob.y >= rbottom(d) && ob.y - rbottom(kb) >= -1 && ob.y - rbottom(kb) < gapBelow * 0.8;
       });
+      // 数字与点之间隔着横过本音的减时线（`6̣̳`：数字 → 两道线 → 点），间隙从最下一道线量起：选本 499《哦你大能的圣灵》
+      // 字号 18，双线下的点离数字底 15px（0.83 字号），原先靠 numH 估大（21）才够着
+      const lineBot = Math.max(-Infinity, ...cls.hlines.filter((l) => l.bbox.y >= rbottom(d) - 2 && rbottom(l.bbox) <= kb.y + 1 &&
+        overlapX(l.bbox, d) >= d.w * 0.5 && rcx(kb) >= l.bbox.x && rcx(kb) <= rright(l.bbox)).map((l) => rbottom(l.bbox)));
+      const belowReach = gapBelow < numH * 0.8 || (kb.y - lineBot < numH * 0.4 && gapBelow < numH * 1.3);
       if (gapAbove >= -1 && gapAbove < numH * 0.8) {
         // 圆滑线弧帽的左/右"落脚"碎片常断成一个小斑、正落在弧端正下方、贴着数字顶——会被误当高八度点。
         // 判据：有一条弧线(宽薄连通块)横跨此斑、且其**底缘正落在斑的纵向区间内** (dotTop, dotBot+0.15字号]
@@ -1575,7 +1594,7 @@ function buildJpNums(
       // （14~15px vs 真点 3~13px），靠位置分不开。改看**它下方还有没有墨**：八度点孤立、下方留白，
       // 字顶笔画下方紧接着字的其余笔画。（先试过宽高比，但小字号图上真点只有 2×3 像素、比值不可靠，
       // 世上所有的民族的真低音点被误剔、音符 100→99.3。）
-      } else if (gapBelow >= -1 && gapBelow < numH * 0.8 && (inkBelow(bin, kb, numH) < 0.12 || underOwnLine(kb) || overArc(kb) || aboveLyrics(kb)) &&
+      } else if (gapBelow >= -1 && belowReach && (inkBelow(bin, kb, numH) < 0.12 || underOwnLine(kb) || overArc(kb) || aboveLyrics(kb)) &&
           dotSized(kb) && !hasSideMate(kb) && !nearerOther(false) && !inTextLine(kb)) {
         downDots.push(kb); }
     }

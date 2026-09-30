@@ -586,6 +586,8 @@ const HOLLOW_FILL = 0.3;
 const HOLLOW_CAVITY = 0.1;
 /** 封闭内腔那一路只看盒高不过这么多格的小头。 */
 const HOLLOW_SMALL_H = 0.8;
+/** 碎块并回判出的空心头，封闭内腔（最大一块）占盒的下限。 */
+const MERGE_HOLLOW_CAVITY = 0.05;
 /** 被符头隔断的竖段接回一根（`joinVSegs`）：中心差（px）、断口上限（格）。 */
 const VSEG_JOIN_DX = 2;
 const VSEG_JOIN_GAP = 1.2;
@@ -1559,6 +1561,9 @@ export async function recognizeRasterPage(
     // 位置闸与字典那一路一样：并出来的扁块也要贴着第二、三线
     if (isBarRest(code) && (!nearRestLine(box, staffLines, unit) || besideStem(box))) continue;
     if (code === "noteheadBlack" && beamStump(box, syms.filter((s0) => /^notehead/.test(s0.code)).map((s0) => s0.box))) continue;
+    // 并出来的空心头要有**封闭的内腔**（去线图上）：全音符下沿与谱线之间的空当也像个腔，谱线一去就通到外面了
+    //（我灵镇静 m8 加一线上 C4 全音符底下拼出一个 A3）。窗口只外扩 2 像素，别把上面那个全音符自己的内腔框进来
+    if (code === "noteheadHalf" && enclosedWhite(nl, { left: box.x, right: box.x + box.w, top: box.y, bottom: box.y + box.h }, unit.space, 2) < box.w * box.h * MERGE_HOLLOW_CAVITY) continue;
     for (const id of group) merged.add(id);
     syms.push({ box, code });
     ledger.claim(box, `merge:${code}`);
@@ -4223,8 +4228,7 @@ function fillAround(bin: Binary, b: Rect, unit: RasterUnit): { box: Rect; area: 
  * 外扩半格：小字号头的盒常只罩住头的上半截（以马内利来临歌 m11），内腔伸到盒外。
  * 只取最大一块：网点印刷的实心头里散着一两像素的白点，加起来也不小（万口欢唱）。
  */
-function enclosedWhite(bin: Binary, b: { left: number; right: number; top: number; bottom: number }, sp: number): number {
-  const pad = Math.round(sp * 0.5);
+function enclosedWhite(bin: Binary, b: { left: number; right: number; top: number; bottom: number }, sp: number, pad = Math.round(sp * 0.5)): number {
   const x0 = Math.max(0, Math.floor(b.left) - pad);
   const x1 = Math.min(bin.w - 1, Math.ceil(b.right) + pad);
   const y0 = Math.max(0, Math.floor(b.top) - pad);

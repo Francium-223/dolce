@@ -123,9 +123,9 @@ function stripUnderline(
   // 超过 0.6 的那段要扁长（宽 ≥ 1.8 倍高）：升号 ♯ 近方、两道横笔也够宽（新编赞美诗·四声部 1 的 `#4` 21×19）
   const flat = b.w >= b.h * 1.8;
   const lineMode = b.w >= numH * 0.6 && (b.h <= numH * 0.6 || (flat && b.h <= numH * 0.7));
-  // 几个数字一排直接坐在线上（宽 ≥1.4 字号那档）块高只是「字高 + 线粗」：新编赞美诗·四声部 f10 末系统 `1̲ 1̲ 1̲` 203×41，
-  // 字号 36，差 0.4px 够不上 1.15——那档放到 1.05（剥出来还得是三个整字高的数字，说不清照旧整块放弃）
-  const digitMode = !lineMode && b.h >= numH * (b.w >= numH * 1.4 ? 1.05 : 1.15) && b.h <= numH * 2 && b.w >= numH * 0.3;
+  // 块高下限 1.05 字号（原 1.15）：数字直接坐在线上，块高只是「字高 + 线粗」——新编赞美诗·四声部 f10 末系统 `1̲ 1̲ 1̲` 203×41、
+  // f14 单个 `1̲` 31×40（字号 36）都够不上 1.15。剥出来还得是整字高的数字、线带上方有颈，说不清照旧整块放弃
+  const digitMode = !lineMode && b.h >= numH * 1.05 && b.h <= numH * 2 && b.w >= numH * 0.3;
   if (!lineMode && !digitMode) return null;
   // 本块自己的像素（包围盒里可能还躺着别的块，如《同伴》那个 6 连线块的框里就有右邻的 7）。
   const sub: Binary = { w: b.w, h: b.h, data: new Uint8Array(b.w * b.h) };
@@ -1090,8 +1090,14 @@ function classify(comps: Component[], bin: Binary): { c: Classified; numH: numbe
         return mates.length > 0 && sp.dots.every((d) => [dg, ...mates].some((o) =>
           rcx(d.bbox) >= o.bbox.x && rcx(d.bbox) <= rright(o.bbox)));
       })();
-      if (sp && (pageClean || sp.digits.length >= 2 || dotsUnderDigits || pureLines || sharedLine)) {
-        if (!pageClean) probe(sp.digits.length >= 2 ? "stripUnderline.dirtyMulti" : sharedLine ? "stripUnderline.dirtySharedLine" : "stripUnderline.dirtyDotsUnderDigits");
+      // 一个数字坐在自己的减时线上、没剥出点：脏页那道门防的是碎渣冒充八度点，没有点就没这个顾虑
+      //（新编赞美诗·四声部 f14 第 4 声部 `1̲` 连线一块 31×40，整块当成没线的 1，这本 `1̲` 漏线近两百处）。
+      // 剥出的数字宽不过 0.9 字号：歌词汉字底下那一横也会被剥成「字 + 线」（1218 753「监」35×29、字号 30），数字最宽 0.8 上下
+      const ownLine = !!sp && sp.digits.length === 1 && !sp.dots.length && sp.lines.length > 0 &&
+        sp.digits[0]!.bbox.w <= numH * 0.9;
+      if (sp && (pageClean || sp.digits.length >= 2 || dotsUnderDigits || pureLines || sharedLine || ownLine)) {
+        if (!pageClean) probe(sp.digits.length >= 2 ? "stripUnderline.dirtyMulti" : sharedLine ? "stripUnderline.dirtySharedLine" :
+          ownLine ? "stripUnderline.dirtyOwnLine" : "stripUnderline.dirtyDotsUnderDigits");
         c.hlines.push(...sp.lines); c.dots.push(...sp.dots); c.blocks.push(...sp.digits); continue;
       }
     }
@@ -1427,12 +1433,14 @@ function stackedHline(hlines: Component[], kb: Rect, numH: number): boolean {
 /** 与 inkBelow 对称：点**正上方**紧挨着的那一小条墨占比。四声部谱第 3 声部头顶就是歌词（歌词夹在第 2、3
  *  声部之间），字底的撇点落在音符正上方，与高音点同位（《三一来临歌》末系统 Q3 `5` 头上「亲」字的点，
  *  读成了 `5̇`）；字底笔画上面紧接着字身，真高音点上方留白。 */
-function inkAbove(bin: Binary, r: Rect, numH: number): number {
+/** `skip`：这些框里的墨不算（压在点上的圆滑线） */
+function inkAbove(bin: Binary, r: Rect, numH: number, skip: readonly Rect[] = []): number {
   const y1 = Math.round(r.y) - 1, y0 = Math.max(0, Math.round(r.y - numH * 0.18));
   const x0 = Math.max(0, Math.round(r.x - numH * 0.2)), x1 = Math.min(bin.w - 1, Math.round(rright(r) + numH * 0.2));
   if (y1 <= y0 || x1 <= x0) return 0;
+  const inSkip = (x: number, y: number) => skip.some((s) => x >= s.x && x < s.x + s.w && y >= s.y && y < s.y + s.h);
   let ink = 0, tot = 0;
-  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) { tot++; if (bin.data[y * bin.w + x]) ink++; }
+  for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) { tot++; if (bin.data[y * bin.w + x] && !inSkip(x, y)) ink++; }
   return tot ? ink / tot : 0;
 }
 
@@ -1716,14 +1724,32 @@ function buildJpNums(
         // 碎片在**弧端或弧端外侧**：点心从近侧弧端往弧里伸进去不过 max(半个点宽, 0.15 字号)。
         // 基督更美 那几个碎片在弧左端外 2px；1218 35 `1̇⌒…` 的高音点在弧左端往里 12px（弧底下，属于这个音），原先被当弧脚剔了。
         const inward = (ab: Rect): number => (rcx(kb) - ab.x <= rright(ab) - rcx(kb) ? rcx(kb) - ab.x : rright(ab) - rcx(kb));
+        // **实心的点不是弧脚**：弧端断下的一截是弯笔画，墨只占包围盒一半上下（基督更美 12×12 0.50、马槽歌 78 弧右端下垂的钩 0.54）；
+        // 真八度点实心（0.69~0.84）。新编赞美诗·四声部 73 的 `1̇ 2̇`、`3̇ — 2̇`、`1̇⌒1` 弧紧挨着点起笔、点就在弧端里外 2px，
+        // 全被当弧脚剔掉（这本漏高音点二百来处）
+        // 实心、正对数字（横偏 ≤0.2 字号）、**比弧的笔画粗**（短边 ≥1.3 倍弧的逐列墨高中位数）才豁免：粗黑翻印件（1218）弧笔画
+        // 5~6px，断下的弧端也实心，但只有弧那么粗（1088 `6⌒5` 右端 6×7 对笔画 5，1.2 倍；403 弧左端外 7×5 对 6、还偏在数字左边 7.5px）；
+        // 真点 1.33~2.33 倍（四声部 73、172、177）
+        // 只在**声部行**上豁免：四声部排得紧，弧贴着音起笔、点就在弧端里外；单声部的粗黑翻印件（1218）弧端断块实心近方、
+        // 与弧笔画之比 1.4（750 `5⌒6` 右端 7×7），跟真点分不开，照旧按弧脚剔。另要近方（宽高比 ≤1.4）：弧端下垂的钩横着拉长（435 13×8）
+        const solidDot = voiceMates.length > 0 && inkFill(bin, kb) >= 0.65 && Math.abs(rcx(kb) - rcx(d)) <= numH * 0.2 &&
+          Math.max(kb.w, kb.h) <= Math.min(kb.w, kb.h) * 1.4;
         const isArcFoot = !cls.clean && arcs.some((arc) => {
           const ab = arc.bbox;
+          if (solidDot && Math.min(kb.w, kb.h) >= (median(columnInk(bin, ab, 0, ab.h).filter((v) => v > 0)) || 1) * 1.3) return false;
           return rbottom(ab) > kb.y && rbottom(ab) <= rbottom(kb) + numH * 0.15 &&
             rcx(kb) >= ab.x - footReach && rcx(kb) <= rright(ab) + footReach &&
             inward(ab) <= Math.max(kb.w / 2, numH * 0.15);
         });
         // 声部行才看上方有没有墨（单声部谱高音点头上常压着圆滑线，这条会误伤）。
-        const underText = voiceMates.length > 0 && inkAbove(bin, kb, numH) >= 0.12;
+        // 压在点上的**圆滑线**不算字：四声部 73 `1̇⌒7`、`1̇ 2̇` 弧紧挨着点起笔、正从点上方掠过（上方墨 0.14~0.43），
+        // 这本漏高音点二百来处。弧框里的墨不计（弧是扁宽的一条，字的笔画不会落在弧框里）
+        const underText = voiceMates.length > 0 && inkAbove(bin, kb, numH,
+          // 只扣**拱起来**的（框高是平均线厚的 2.2 倍以上）：上声部的减时线也在弧候选里，扣了它，线下的低音点就被下声部
+          // 收成高音点（249 `2̇·` 成了双高音点）
+          // 点还得在**弧端**（弧宽两头三成内）：弧正中下方一颗点是延长记号 ⌒·（四声部 10 行末 `1` 头上那个），照旧算墨挡掉
+          arcs.filter((a) => a.bbox.w >= numH * 0.7 && a.bbox.h <= numH * 0.8 && a.bbox.h >= numH * 0.2 &&
+            a.bbox.h > (a.area / a.bbox.w) * 2.2 && Math.abs(rcx(kb) - rcx(a.bbox)) >= a.bbox.w * 0.2).map((a) => a.bbox)) >= 0.12;
         if (!isArcFoot && dotSized(kb) && !hasSideMate(kb) && !nearerOther(true) && !underText && !inTextLine(kb)) upDots.push(kb); // 上点 → 高八度（几点算几个八度见下面的裁决）
       // 下点 → 低八度。额外一道门专防**歌词字的顶部笔画**：歌词带紧接在数字下方，字顶的短竖/点
       // （如「主」字上方那一笔）正落在数字正下方、dx≈0、间隙也与「减时线下方的低音点」几乎同高

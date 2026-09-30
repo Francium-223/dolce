@@ -1393,6 +1393,13 @@ function buildJpNums(
   voiceMates: readonly Rect[] = [],
 ): JpNum[] {
   const out: JpNum[] = [];
+  // 本行歌词字顶线：数字底下一个字号内、整字高的块（汉字也归在数字块里）顶的中位数；不足三块不算
+  const rowBots = rowCores.map((c) => rbottom(c.bbox)).sort((a, b) => a - b);
+  const rowBot = rowBots[rowBots.length >> 1] ?? 0;
+  const rowX0 = Math.min(...rowCores.map((c) => c.bbox.x)), rowX1 = Math.max(...rowCores.map((c) => rright(c.bbox)));
+  const lyTops = cls.blocks.filter((k) => k.bbox.h >= numH * 0.7 && k.bbox.y > rowBot && k.bbox.y < rowBot + numH * 0.9 &&
+    rright(k.bbox) > rowX0 && k.bbox.x < rowX1).map((k) => k.bbox.y).sort((a, b) => a - b);
+  const lyricTop = lyTops.length >= 3 ? lyTops[lyTops.length >> 1]! : -Infinity;
   // 八度点是**实心**圆点，包围盒里的墨迹填充率高；房号「2.」这类小字即便糊成一团（二值化把笔画泡粗、
   // 「2」和「.」连成一块），包围盒里也大半是空的。1697 二房的「2.」正摞在 `1̇` 的点上方，被数成第二个点（`1̈`）。
   // **不按大小判**：试过「比本页八度点统计值小得多就剔」，翻拍件上高音点常印得比别的点小一号，
@@ -1505,6 +1512,10 @@ function buildJpNums(
       // 声部行：单声部谱数字下面紧跟着歌词，汉字也是「数字块」，拿它们比会把真低音点抢走（17、1773 等十来首）。
       // 声部行上，点与数字之间隔着一条横过本音符的横线（减时线）：次序是数字 → 减时线 → 低音点，这就是低音点，
       // 不再看它下方有没有墨——四声部第 2 声部底下紧挨着歌词，点下 2px 就是字（78《马槽歌》Q2 `4̲̣5̲̣`）。
+      // 点整个在**歌词字顶线之上**：同一行歌词字顶是对齐的，真低音点在这条线之上；「主」字顶那一点是字的一部分，
+      // 顶与别的字平齐或更低。四声部第 2 声部底下紧挨着歌词，真低音点下 4px 就是字，按「下方有墨」会被剔掉
+      //（84《主为救人》Q2 `5̣ − 5̣ 5̣` 整行丢点，点底 528、字顶 532）。
+      const aboveLyrics = (dot: Rect): boolean => rbottom(dot) <= lyricTop - 2;
       const underOwnLine = (dot: Rect): boolean => voiceMates.length > 0 && cls.hlines.some((l) =>
         l.bbox.y >= rbottom(d) - 2 && rbottom(l.bbox) <= dot.y + 1 && overlapX(l.bbox, d) >= d.w * 0.5 &&
         rcx(dot) >= l.bbox.x && rcx(dot) <= rright(l.bbox));
@@ -1542,7 +1553,7 @@ function buildJpNums(
       // （14~15px vs 真点 3~13px），靠位置分不开。改看**它下方还有没有墨**：八度点孤立、下方留白，
       // 字顶笔画下方紧接着字的其余笔画。（先试过宽高比，但小字号图上真点只有 2×3 像素、比值不可靠，
       // 世上所有的民族的真低音点被误剔、音符 100→99.3。）
-      } else if (gapBelow >= -1 && gapBelow < numH * 0.8 && (inkBelow(bin, kb, numH) < 0.12 || underOwnLine(kb) || overArc(kb)) &&
+      } else if (gapBelow >= -1 && gapBelow < numH * 0.8 && (inkBelow(bin, kb, numH) < 0.12 || underOwnLine(kb) || overArc(kb) || aboveLyrics(kb)) &&
           dotSized(kb) && !hasSideMate(kb) && !nearerOther(false)) {
         downDots.push(kb); }
     }
@@ -2393,7 +2404,8 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
     for (const arc of comps) {
       const ab = arc.bbox;
       if (ab.w < numH * 0.5 || ab.w > numH * 1.6) continue;
-      if (ab.h < numH * 0.15 || ab.h > numH * 0.7 || ab.w / ab.h < 1.8) continue;
+      // 宽高比门 1.5（原 1.8）：新编赞美诗 250 的弧高一号（39×22、字号 32，1.77），点扣在弧里；点居中、正下方紧跟数字、弧拱得起来这几道门够严
+      if (ab.h < numH * 0.15 || ab.h > numH * 0.7 || ab.w / ab.h < 1.5) continue;
       const dotC = c.dots.find((o) => {
         const ob = o.bbox;
         return Math.abs(rcx(ob) - rcx(ab)) <= numH * 0.25 && ob.y >= ab.y &&
@@ -2404,6 +2416,9 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
         k.bbox.y - rbottom(dotC.bbox) >= -2 && k.bbox.y - rbottom(dotC.bbox) <= numH * 0.5 &&
         k.bbox.h >= medH * 0.85);
       if (!owner) continue;
+      // 延长记号的弧只罩一个音：弧横向盖住另一个数字过半，就是跨两音的圆滑线/连音线（新编赞美诗 384 两个紧挨的八分
+      // `2̇⌒3̇`，短弧宽同延长记号），弧下的点还给八度
+      if (m.rd.some((k) => k !== owner && overlapX(k.bbox, ab) >= k.bbox.w * 0.5)) { probe("fermata.spansTwo"); continue; }
       if (!arched(ab)) { probe("fermata.archReject"); continue; }
       probe("fermata.arc");
       fermataOf.set(owner, true);
@@ -2456,7 +2471,44 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
         const capOk = (f: { dx: number; top: number } | null) =>
           !!f && f.dx >= numH * 0.15 && f.dx <= numH * 0.45 && f.top - capTop >= numH * 0.12;
         if (!capOk(fl) || !capOk(fr)) continue;
+        const span: Rect = { x: Math.round(cx - fl!.dx), y: capTop, w: fl!.dx + fr!.dx + 1, h: 1 };
+        if (m.rd.some((k) => k !== owner && overlapX(k.bbox, span) >= k.bbox.w * 0.5)) { probe("fermata.spansTwo"); continue; }
         probe("fermata.cap");
+        fermataOf.set(owner, true);
+        fermataDots.add(dotC);
+      }
+    }
+  }
+  // 第三路：弧顶被别的弧粘上（新编赞美诗 386：圆滑线尾巴正落在延长记号的弧顶上，连成一块），沿上沿找弧脚会顺着圆滑线爬上去。
+  // 改看**点的两侧**：点中线这一行左右 0.2~0.65 字号处各有一条弧腿、两边差不多远（差 ≤0.3 字号），点正上方 0.35 字号内有墨（弧顶）。
+  // 高音点头上压着的圆滑线，两脚隔着一两个音距，够不着或一近一远。
+  {
+    for (const m of staff) {
+      const medH = median(m.rd.map((k) => k.bbox.h)) || numH;
+      for (const owner of m.rd) {
+        if (fermataOf.get(owner) || owner.bbox.h < medH * 0.85) continue;
+        const ob = owner.bbox;
+        const dotC = c.dots.find((o) => {
+          const b = o.bbox;
+          const gap = ob.y - rbottom(b);
+          return !fermataDots.has(o) && Math.abs(rcx(b) - rcx(ob)) <= numH * 0.25 && gap >= -1 && gap <= numH * 0.5 &&
+            b.w <= numH * 0.3 && b.h <= numH * 0.3;
+        });
+        if (!dotC) continue;
+        const db = dotC.bbox, cy = Math.round(rcy(db));
+        const at = (x: number, y: number) => x >= 0 && y >= 0 && x < bin.w && y < bin.h && bin.data[y * bin.w + x] === 1;
+        let cap = false;
+        for (let y = db.y - 2; y >= db.y - numH * 0.35 && !cap; y--) if (at(Math.round(rcx(db)), y)) cap = true;
+        if (!cap) continue;
+        const leg = (dir: number): number => {
+          for (let dx = Math.round(db.w / 2) + 2; dx <= numH * 0.65; dx++) if (at(Math.round(rcx(db) + dir * dx), cy)) return dx;
+          return Infinity;
+        };
+        const dl = leg(-1), dr = leg(1);
+        if (dl < numH * 0.2 || dr < numH * 0.2 || !isFinite(dl) || !isFinite(dr) || Math.abs(dl - dr) > numH * 0.3) continue;
+        const span: Rect = { x: Math.round(rcx(db) - dl), y: cy, w: dl + dr + 1, h: 1 };
+        if (m.rd.some((k) => k !== owner && overlapX(k.bbox, span) >= k.bbox.w * 0.5)) continue;
+        probe("fermata.legs");
         fermataOf.set(owner, true);
         fermataDots.add(dotC);
       }

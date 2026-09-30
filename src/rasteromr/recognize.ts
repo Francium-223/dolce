@@ -560,6 +560,8 @@ const DUP_HEAD_DY = 0.6;
 const DUP_HEAD_DX = 0.5;
 /** 上下贴着的两个实心头填满外框的九成以上（所信有根基 F4/D♭4 0.904），拆块的「太实是黑块」上限 0.9 对它放到这个数。 */
 const PAIR_FILL_MAX = 0.96;
+/** 空心头正上/正下一格、头宽×头高七成的窗里墨占这么多，算贴着一个实心头。 */
+const SOLID_NEIGHBOR_FILL = 0.9;
 
 /** 拍号数字与模板的签名距离上限。见 `bootstrapTimeSig` 那段的说明。 */
 const TIME_TEMPLATE_DIST = 180;
@@ -1421,6 +1423,41 @@ export async function recognizeRasterPage(
     }
     // 光杆干端头那一路收的实心头：干端正对着网纹粗杠时，杠身被收成头（耶和华是我的牧者 m11）
     for (let i = stacked.length - 1; i >= 0; i--) if (stacked[i].code === "noteheadBlack" && inBeamBody(stacked[i].box)) stacked.splice(i, 1);
+  }
+  // **空心头上下贴着一个实心头**（两声部三度叠放，一上一下各一根干）：实心头与空心头的轮廓连成一块，
+  // 整块被空心那一路认领，实心那个没人收（圣哉三一歌伴奏 m14，G4 二分下面贴着 E♭4 四分）。
+  // 空心头正上/正下一格处，头宽 × 头高七成的窗在原图上几乎全黑，窗左右两侧（非谱线行）是白的，就是实心头
+  {
+    const solidBoxes = [...heads.filter((h) => h.code === "noteheadBlack" && !dropHead.has(h.comp.id)).map((h) => h.box), ...split.map((q) => q.box), ...stacked.filter((q) => q.code === "noteheadBlack").map((q) => q.box)];
+    const allBoxes = () => [...heads.filter((h) => !dropHead.has(h.comp.id)).map((h) => h.box), ...stacked.map((q) => q.box), ...split.map((q) => q.box)];
+    const ink = (x: number, y: number) => x >= 0 && x < raster.bin.w && y >= 0 && y < raster.bin.h && !!raster.bin.data[y * raster.bin.w + x];
+    const onLine = (y: number) => gridYs.some((ly) => Math.abs(ly - y) <= unit.lineThick);
+    const bw = solidBoxes.length ? solidBoxes.map((b) => b.w).sort((p, q) => p - q)[solidBoxes.length >> 1] : unit.space * 1.25;
+    const bh = solidBoxes.length ? solidBoxes.map((b) => b.h).sort((p, q) => p - q)[solidBoxes.length >> 1] : unit.space;
+    const hollows = [...heads.filter((h) => h.code === "noteheadHalf" && !dropHead.has(h.comp.id)).map((h) => h.box), ...stacked.filter((q) => q.code === "noteheadHalf").map((q) => q.box)];
+    for (const hb of hollows) {
+      const cx = hb.x + hb.w / 2;
+      const cy = hb.y + hb.h / 2;
+      for (const dir of [-1, 1]) {
+        const ny = cy + dir * unit.space;
+        const win = { x: Math.round(cx - bw * 0.35), y: Math.round(ny - bh * 0.35), w: Math.round(bw * 0.7), h: Math.round(bh * 0.7) };
+        if (allBoxes().some((b) => Math.abs(b.x + b.w / 2 - cx) < bw * 0.5 && Math.abs(b.y + b.h / 2 - ny) < bh * 0.5)) continue;
+        let on = 0;
+        for (let y = win.y; y < win.y + win.h; y++) for (let x = win.x; x < win.x + win.w; x++) if (ink(x, y)) on++;
+        if (on < win.w * win.h * SOLID_NEIGHBOR_FILL) continue;
+        // 窗左右各外 0.35 格那一列：非谱线行都要白（杠、字的横笔会往外伸）
+        let side = 0;
+        let rows = 0;
+        for (let y = win.y; y < win.y + win.h; y++) {
+          if (onLine(y)) continue;
+          rows++;
+          if (ink(Math.round(cx - bw / 2 - unit.space * 0.35), y) || ink(Math.round(cx + bw / 2 + unit.space * 0.35), y)) side++;
+        }
+        if (!rows || side > rows * 0.2) continue;
+        if (process.env.SNDBG) console.error("solid neighbor", hb.x, hb.y, dir);
+        split.push({ box: { x: Math.round(cx - bw / 2), y: Math.round(ny - bh / 2), w: Math.round(bw), h: Math.round(bh) }, code: "noteheadBlack" });
+      }
+    }
   }
   const syms: RasterSym[] = [
     ...heads.filter((h) => !dropHead.has(h.comp.id)).map((h) => ({ box: h.box, code: h.code })),

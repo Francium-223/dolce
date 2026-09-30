@@ -948,8 +948,9 @@ export async function recognizeLyrics(
     const allSig = [...rawByKey].filter(([k]) => !k.startsWith("-1:") && !chordKeys.has(k)).flatMap(([, t]) => sig(t));
     const hanPage = allSig.length >= 20 && allSig.filter(isHanzi).length >= allSig.length * 0.6;
     // 只有一两个字母数字、一个汉字都没有的也算（选本 98：连音弧读成一个「O」单成一段）
+    // 「一」不算汉字：弧、横线碎块单独 rec 读成「-」「1」都被改判成了「一」（146、267 的「C l 一」）
     const junkLine = (t: string) => {
-      const cs = sig(t), han = cs.filter(isHanzi).length;
+      const cs = sig(t), han = cs.filter((c) => isHanzi(c) && c !== "一").length;
       return (cs.length >= 3 && han < cs.length * 0.3) || (cs.length >= 1 && cs.length <= 2 && han === 0);
     };
     // 附段挤进了末谱行/段末行的歌词带（选本 36：每调只两行谱，「二 纵我双手不罢休…」离第二行很近，封底线以内）：
@@ -968,7 +969,9 @@ export async function recognizeLyrics(
         // 下面紧挨的附段首行 20 来个字被当成第 2 段，fillLeadingVerses 再把第 1 段抄一遍，附段整体错后一段）
         const tooLong = nNotes > 0 && hanN(raw) > Math.max(nNotes * 1.5, hanN(rawByKey.get(`${r}:0`) ?? "") * 1.5);
         // 全曲别的谱行都没有这一段、只有这一行有（选本 127：别的行都只一段词，末行下方挤进附段第二段首行「爱主，自从当年…」）
-        const loneVerse = staff.length >= 3 && hanN(raw) >= 4 &&
+        // 两行谱（176）也认，只限末行的最后一段——附段首行只会挤在最底下
+        const lastOfLast = r === staff.length - 1 && !rawByKey.has(`${r}:${v + 1}`);
+        const loneVerse = (staff.length >= 3 || (staff.length === 2 && lastOfLast)) && hanN(raw) >= 4 &&
           ![...rawByKey.keys()].some((k2) => { const [r2, v2] = k2.split(":").map(Number); const t2 = rawByKey.get(k2)!; return r2 !== r && r2! >= 0 && v2 === v && !chordKeys.has(k2) && !(hanPage && junkLine(t2)) && sig(t2).length >= 2; });
         if ((m && m[1] !== "一") || tooLong || loneVerse) {
           stanzaFrom.set(r, v); probe(tooLong ? "lyrics.stanzaInBandLong" : loneVerse ? "lyrics.stanzaInBandLone" : "lyrics.stanzaInBand"); break;

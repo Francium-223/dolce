@@ -918,6 +918,9 @@ export function makeSystems(pg: SPage): void {
   pg.systems.forEach((s, i) => (s.index = i));
 }
 
+/** 系统内断开处的空白上限：本页系统间距的几倍（见 `joinByGap`）。 */
+const SYS_BREAK_GAP = 0.8;
+
 /** 谱行按系统分组（各组内自上而下）。`makeSystems` 与 `findBarlines` 的短小节线补收共用。 */
 function systemGroups(pg: SPage): Staff[][] {
   const marks: Box[] = [
@@ -941,6 +944,28 @@ function systemGroups(pg: SPage): Staff[][] {
     for (const st of arr) done.add(st);
   }
   for (const st of pg.staves) if (!done.has(st)) out.push([st]);
+  return joinByGap(out);
+}
+
+/**
+ * **系统线、括号断开的地方按间距并回去**：系统之间的空白比系统内断开处大。扫描件上钢琴两行左边的
+ * 系统线和花括号没印出来（望十架扫描版 p10 第二系统，纸面污损），按左端标记分成了 3 + 1 + 1。
+ * 系统间距取本页**两个相邻的多行系统**（都由左端标记连起来）之间最小的空白；没有左端标记的单行，
+ * 与上一组或下一组的空白小于它的 `SYS_BREAK_GAP` 倍，就是同一系统里断开的，并过去。
+ * 不拿系统内的最大空白当上限：人声行下面带歌词，系统内空白常比系统之间还大（宁静、破碎整页并乱）。
+ */
+function joinByGap(groups: Staff[][]): Staff[][] {
+  const gs = groups.slice().sort((a, b) => a[0].box.top - b[0].box.top);
+  const gapOf = (a: Staff[], b: Staff[]) => b[0].box.top - a[a.length - 1].box.bottom;
+  let inter = Infinity;
+  for (let i = 1; i < gs.length; i++) if (gs[i - 1].length > 1 && gs[i].length > 1) inter = Math.min(inter, gapOf(gs[i - 1], gs[i]));
+  if (!isFinite(inter)) return gs;
+  const out: Staff[][] = [];
+  for (const g of gs) {
+    const prev = out[out.length - 1];
+    if (prev && (prev.length === 1 || g.length === 1) && gapOf(prev, g) < inter * SYS_BREAK_GAP) prev.push(...g);
+    else out.push(g.slice());
+  }
   return out;
 }
 

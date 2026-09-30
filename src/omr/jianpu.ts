@@ -32,6 +32,7 @@ interface DigitCore {
 interface Classified {
   blocks: Component[];   // 数字（块，可能含下划线/粘连，待拆分）
   barlines: Component[]; // 小节线（高瘦竖条）
+  longBarlines: Component[]; // 6~14 字号的系统通长线（四声部本从首声部画到末声部），只供按行归线用
   hlines: Component[];   // 独立横线（增时线 '-' / 分隔线）
   dots: Component[];     // 小点（八度点/附点）
   /** 又短又厚的实心横块：尺寸上分不清是增时线还是压扁的点，先放在 dots 里；buildJpNums 里落在数字右侧、
@@ -935,7 +936,7 @@ function classify(comps: Component[], bin: Binary): { c: Classified; numH: numbe
   // 只有干净页才做下面的「减时线+八度点」粘连切分：脏页上碎渣挂在减时线下沿时长得跟八度点
   // 一模一样，切开就是凭空多一个八度。
   const pageClean = isCleanPage(comps, numH);
-  const c: Classified = { blocks: [], barlines: [], hlines: [], dots: [], dashLike: [], clean: pageClean };
+  const c: Classified = { blocks: [], barlines: [], longBarlines: [], hlines: [], dots: [], dashLike: [], clean: pageClean };
   const lineH = strokeLineH(comps, numH);
   // 高瘦竖块可能是"八度点 + 窄数字"粘连体（数字不含点）：优先切开、把点与数字笔各归其类，
   // 否则会被下面的小节线判据整块吞掉而丢音（实测高八度 "1̇" 在单行简谱里 h 恰同真小节线）。
@@ -958,8 +959,13 @@ function classify(comps: Component[], bin: Binary): { c: Classified; numH: numbe
     // 的 maxH）顶到 1977，全曲真小节线一根不剩。被挡下的边框列成了未归类块留在 comps 里，
     // 下游哪条通道都够不着（弧要 w ≥ 0.7 字号、波音 ≥0.25 字号、歌词带要 w ≥ 0.4 字宽、
     // 拍号补位池要 h < 0.55 字号），不必另行清理。
+    // 四声部本还有从首声部一直画到末声部、中间隔着四行歌词的系统通长线（343 第 1、2 系统，约 12 字号）：上限放到 14 字号，
+    // 另加不过页高三成——挡扫描边框靠的是它贯穿整页
+    // 这种线只进 longBarlines：进了 barlines，系统左边那道连线会被反复记号检测配上点、读成「|:」（三一来临歌）
+    const barMaxH = Math.min(numH * 14, bin.h * 0.3);
     if (h >= numH * 0.85 && w <= Math.max(2, numH * 0.35)) {
-      if (h > numH * 6) { probe("barline.tooTall"); }
+      if (h > barMaxH) { probe("barline.tooTall"); }
+      else if (h > numH * 6) { c.longBarlines.push(k); continue; }
       else { c.barlines.push(k); continue; }
     }
     // 终止线/粗小节线：比普通小节线粗（w 可达 ~0.5字号），但仍**明显更瘦长**——高于一个字号且
@@ -968,7 +974,7 @@ function classify(comps: Component[], bin: Binary): { c: Classified; numH: numbe
     // 早先用 h/w≥2.2 会把 "1" 当小节线整片丢掉（本行八处 "1" 全失，见「哦愿我有千万舌头」）。
     // 上限 6 字号（原 4）：四声部本里两个声部共用一根小节线（新编赞美诗·四声部 7：h118、numH≈28，4.2 倍），卡 4 倍整行丢线；
     // 这道上限挡的是贯穿整页的扫描边框（上千像素高），6 倍照样挡得住。
-    if (h >= numH * 1.3 && h <= numH * 6 && w <= numH * 0.6 && h / w >= 3.5) { c.barlines.push(k); continue; }
+    if (h >= numH * 1.3 && h <= barMaxH && w <= numH * 0.6 && h / w >= 3.5) { (h > numH * 6 ? c.longBarlines : c.barlines).push(k); continue; }
     // 减时线粘着低八度点 / 数字：剥掉线带，各归各类（判据见 stripUnderline）。
     // 脏页只收「剥出 ≥2 个数字」的：一排数字底都压在同一条减时线上（78《马槽歌》Q2 `1̲2̲` 连线成一块 101×42，
     // 读成一个 1），这形是明摆着的，碎渣冒充八度点的顾虑在这里不成立。
@@ -1739,24 +1745,29 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
     // 四声部谱跨两声部的小节线本就只从数字顶附近起画（《圣哉三一歌》第 2 系统 Q3：`♯` 把行顶抬到 1210，
     // 线从 1226 起，按包围范围重叠 0.68，按数字带 0.79）。两种量法任一够 0.7 就算贯穿。
     const bandTop = median(rd.map((k) => k.bbox.y)), bandBot = median(rd.map((k) => rbottom(k.bbox)));
-    const spanning = c.barlines.filter(
-      (b) => b.bbox.h <= rowH * 4 &&
+    const overlapsRow = (b: { bbox: Rect }) =>
         (Math.min(rbottom(b.bbox), botY) - Math.max(b.bbox.y, topY) >= rowH * 0.7 ||
           Math.min(rbottom(b.bbox), bandBot) - Math.max(b.bbox.y, bandTop) >= (bandBot - bandTop) * 0.7 ||
           // 下两个声部共用一根长线（新编赞美诗·四声部 313：1329~1437，第 3 声部数字带 1315~1352），线头落在上面那个声部的
           // 中腰，只重叠 0.62——长过数字带两倍的线放到 0.55，免得整行被当成没小节线的歌词行丢掉
           (b.bbox.h >= (bandBot - bandTop) * 2 &&
-            Math.min(rbottom(b.bbox), bandBot) - Math.max(b.bbox.y, bandTop) >= (bandBot - bandTop) * 0.55)),
-    );
+            Math.min(rbottom(b.bbox), bandBot) - Math.max(b.bbox.y, bandTop) >= (bandBot - bandTop) * 0.55));
+    const spanning = c.barlines.filter((b) => b.bbox.h <= rowH * 4 && overlapsRow(b));
+    // 系统通长线（四声部 343 第 1、2 系统：从首声部画到末声部、中间隔着四行歌词，约 12 字号）：比 4 倍行高还长，
+    // 单独收——落在本行音符横向范围内才算，也不进下面的行内相对门（不然本行正常的短线全被它压掉）
+    const x1 = Math.max(...rd.map((k) => rright(k.bbox)));
+    // 左边至少两个核：系统起始那道连线左边只有连谱号的钩（常被收成一个核，52 读成「0 |」）
+    const longBars = [...c.barlines, ...c.longBarlines].filter((b) => b.bbox.h > rowH * 4 && b.bbox.h <= rowH * 12 &&
+      rd.filter((k) => rcx(k.bbox) < rcx(b.bbox)).length >= 2 && rcx(b.bbox) < x1 + numH * 2 && overlapsRow(b));
     // 真小节线是贯穿整个谱行的高竖线（实测远高于数字行：基督更美 h118 vs 数字 h55）；而数字 "1"
     // 的竖笔、扫描里的细竖纹等"伪小节线"仅约一个字高、且常仅 1px 宽，会撞上面的贯穿判据。它们与真线
     // 同 x 反复出现 → 凭单条 overlap 难剔。但**同一谱行内真小节线高度集中成簇且明显最高**：按本行候选
     // 的最大高度设相对门（<0.6×行内最高 → 丢弃）即可干净分开——基督更美 h44<0.6×118 被剔，而日光
     // (45~70)、世上(真 35~49)行内最高与真线同簇，整簇保留。绝对/字号比阈值跨图不通，故用行内相对。
     const maxH = Math.max(0, ...spanning.map((b) => b.bbox.h));
-    const real = spanning.filter((b) => b.bbox.h >= maxH * 0.6).sort((a, b) => rcx(a.bbox) - rcx(b.bbox));
+    const real = [...spanning.filter((b) => b.bbox.h >= maxH * 0.6), ...longBars].sort((a, b) => rcx(a.bbox) - rcx(b.bbox));
     const barlineXs = real.map((b) => rcx(b.bbox));
-    return { rd, topY, botY, barlineXs, bars: real, tail: false };
+    return { rd, topY, botY, barlineXs, bars: real, long: new Set(longBars), tail: false };
   });
 
   // 少于三个数字的「行」多半是噪声（歌词碎笔、标题/页脚里的竖笔），一概不要——**除了末行
@@ -1846,7 +1857,8 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
     }
     return true;
   });
-  const medBarH = median(rowMeta.flatMap((m) => m.bars.map((b) => b.bbox.h)));
+  // 系统通长线不算：它比普通小节线长好几倍，算进来就把中位数抬上去，只有短线的行过不了下面 withBars 的门（343）
+  const medBarH = median(rowMeta.flatMap((m) => m.bars.filter((b) => !m.long.has(b)).map((b) => b.bbox.h)));
   if (medBarH > 0) {
     // 「之下」要跟**正经谱行**比，不能跟 rowMeta 里的歌词行/页脚比（歌词行也有三个以上的核，
     // 页脚更在末行下方一大截，拿它当界，末行永远进不来）。
@@ -1868,8 +1880,11 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
   // 0.45~0.55）。故按全谱中位高设 0.85 的门——中位数按**每条线一票**算，真谱行每行贡献三五条、
   // 伪行只有一两条，中位数稳落在真线上，不受伪行多寡影响。末行救回来的那些（终止线本就矮一截，
   // 判据见上）豁免。
+  // 一行里有三根以上够 1.3 字号高、又细（≤0.25 字号宽）的线也算（新编 370 末排歌词凑出三根竖笔 1.4 字号高、却宽 0.37 字号）：四声部 343 首声部是单声部短线（66px），全页中位却被下面两声部共用的长线
+  // 抬到 112，按 0.85 倍整行丢。伪线（页眉括号、和弦竖笔）一行只凑得出一两根
   const withBars = rowMeta.filter((m) => m.barlineXs.length > 0
-    && (m.tail || !(medBarH > 0) || m.bars.some((b) => b.bbox.h >= medBarH * 0.85)));
+    && (m.tail || !(medBarH > 0) || m.bars.some((b) => b.bbox.h >= medBarH * 0.85) ||
+      m.bars.filter((b) => b.bbox.h >= numH * 1.3 && b.bbox.w <= numH * 0.25).length >= 3));
   const staff = withBars.length ? withBars : rowMeta;
 
   // 多声部（四声部诗歌本）：一个系统上下叠着几条谱行，左侧一道连谱号 `[` 把它们括成一组，

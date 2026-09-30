@@ -45,7 +45,7 @@ import {
 import { Font } from "../layout/font";
 import { addEndingBracket } from "../layout/ending";
 import { layoutHarmonySegs } from "../layout/harmony";
-import { addLine, addSmufl, addSmuflScaled, chordGroup, STAFF_SYSTEM, translated, type StaffSystemData } from "./prims";
+import { addLine, addSmufl, addSmuflScaled, chordGroup, STAFF_SYSTEM, translated, type StaffLeafData, type StaffSystemData } from "./prims";
 import { drawJianpuOverlay } from "./jianpuoverlay";
 
 function addFilledQuad(
@@ -355,20 +355,25 @@ function drawSlurTied(
   plx: number, ply: number,
   prx: number, pry: number,
   above: boolean,
+  obj: Slur | Tied,
 ): void {
   const arc = new SlurArc();
   arc.init(new Point(plx, ply), new Point(prx, pry), mixedSlurStyle(above));
+  // 可视化编辑认弧：起止和弦的元素 id（见 `prims.ts::StaffLeafData`）
+  const s = obj.startNote?.chord.src.id;
+  const e = obj.endNote?.chord.src.id;
+  if (s !== undefined && e !== undefined) arc.data = { staffRole: "slur", start: s, end: e } satisfies StaffLeafData;
   container.add(arc);
 }
 
 function drawTied(sys: Sys, eng: MixedOptions, container: Group, obj: Tied, forceNota?: Notation): void {
   const e = tiedEnds(sys, eng, obj, forceNota);
-  if (e) drawSlurTied(container, e.plx, e.ply, e.prx, e.pry, e.above);
+  if (e) drawSlurTied(container, e.plx, e.ply, e.prx, e.pry, e.above, obj);
 }
 
 function drawSlur(sys: Sys, eng: MixedOptions, container: Group, slur: Slur, forceNota?: Notation): void {
   const e = slurEnds(sys, eng, slur, forceNota);
-  if (e) drawSlurTied(container, e.plx, e.ply, e.prx, e.pry, e.above);
+  if (e) drawSlurTied(container, e.plx, e.ply, e.prx, e.pry, e.above, slur);
 }
 
 // -----------------------------------------------------------------------
@@ -678,6 +683,7 @@ export function drawLrc(
     t.color = 0xff000000;
     t.x = x + lrc.xOffset;
     t.y = -lrc.y;
+    t.data = { staffRole: "lyric", chordId: lrc.chord.src.id, verse: lrc.src.number } satisfies StaffLeafData;
     // 标点挤压：`widthInfo` 量的就是挤压后的宽度，绘制拿同一串笔位（档位同为 `lrc.compress`）。
     if ([...lrc.text].length > 1) {
       const chars = [...lrc.text];
@@ -1034,6 +1040,7 @@ function drawBarlineItem(
   top: number,
   bot: number,
   repForBack = false,
+  tag: StaffLeafData | null = null,
 ): number {
   // 整组小节线右缘对齐到 x（向左生长），与谱线右端接齐（render.cpp drawBarlineItem）。
   const lw = eng.lineWidths;
@@ -1062,7 +1069,8 @@ function drawBarlineItem(
   let xx = x - w;
   for (const ww of widths) {
     const cx = xx + ww / 2;
-    addLine(container, cx, top, cx, bot, ww);
+    const l = addLine(container, cx, top, cx, bot, ww);
+    if (tag) l.data = tag;
     xx += dist + ww;
   }
   return w;
@@ -1157,6 +1165,10 @@ function drawBarline(eng: MixedOptions, container: Group, sys: Sys): void {
     let x = xpos[i];
     const rep = lightHeavyLight.has(i);
     let width = 0;
+    // 这条小节线的身份：系统开头那条是首小节之前，其余是第 i 小节（系统内从 1 数）之后
+    const tag: StaffLeafData = i === 0
+      ? { staffRole: "barline", measure: sys.firstMeasure, side: "before" }
+      : { staffRole: "barline", measure: sys.firstMeasure + i - 1, side: "after" };
 
     for (const [first, last] of grps) {
       const stb = sys.staves[last];
@@ -1169,10 +1181,10 @@ function drawBarline(eng: MixedOptions, container: Group, sys: Sys): void {
       if (mixStaves.has(first)) {
         const mixTop = miny + top - eng.mixStaffHeight - eng.mixStaffDist;
         const mixBot = mixTop + eng.mixStaffHeight;
-        drawBarlineItem(eng, container, st, x, mixTop, mixBot, rep);
+        drawBarlineItem(eng, container, st, x, mixTop, mixBot, rep, tag);
       }
 
-      width = drawBarlineItem(eng, container, st, x, top, bot, rep);
+      width = drawBarlineItem(eng, container, st, x, top, bot, rep, tag);
     }
 
     const mid = i + sys.firstMeasure;

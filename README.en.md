@@ -41,8 +41,8 @@ The interface is in Chinese.
   - **ABC notation**
 - **Visual editing.** Select, insert and change notes and marks directly on the score: pitch, octave, accidentals,
   duration, extension dashes, barlines, slurs and ties, fermatas, accents, and line and page breaks. You can use
-  the keyboard, a context menu or a symbol palette. Every edit is written back to the source text and shares one
-  undo history with the code editor.
+  the keyboard, a context menu or a symbol palette, in the jianpu, staff and mixed views alike. Every edit is
+  written back to the source text and shares one undo history with the code editor.
 - **Two-way navigation.** Clicking a note or lyric jumps to its place in the source, and the reverse. Measures
   whose beats don't add up to the time signature are outlined in red.
 - **Simplified ↔ Traditional Chinese conversion** covers lyrics, titles and credits and leaves the music code

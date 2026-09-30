@@ -22,8 +22,9 @@ import {
   isError, noteCtx, noteSpans, notesIn, setAccidental, setDegree, shiftOctave, toggleDeco, toggleDot, toggleSlur, toggleTie,
 } from "./ops";
 import { actionOfKey, type VisualAction, type VisualMode } from "./keys";
+import { selectionInfo } from "./selinfo";
 import {
-  type Box, boxInPage, charIndexAt, clearOverlay, drawBlock, drawBreak, drawCaret, hitThroughOverlay, musicBox, rightEdgeInBand,
+  type Box, boxInPage, charIndexAt, inkBoxInPage, clearOverlay, drawBlock, drawBreak, drawCaret, hitThroughOverlay, musicBox, rightEdgeInBand,
   sameRow, setBeatIssues, textCaretInPage,
 } from "./overlay";
 
@@ -32,24 +33,28 @@ export interface VisualHost {
   /** 当前的双向定位索引（每次重排后重建） */
   readonly sync: SyncIndex;
   readonly scorePane: HTMLElement;
-  /** 此刻能不能可视化编辑：有代码区、在简谱档、不在识别核对 */
+  /** 此刻能不能可视化编辑：有代码区、在简谱档或五线谱/混排档、不在识别核对 */
   visualEnabled(): boolean;
+  /** 谱面是哪一路画的。减时线、附点、token 里的增时线靠简谱字形的几何命中，只有 `jianpu` 那一路有 */
+  surfaceKind(): "jianpu" | "staff";
+  /** 光标竖线的纵向范围（页面 SVG 用户坐标）：五线谱取这个音所在系统的谱表带；null = 按元素框（简谱） */
+  caretBand(entry: SyncEntry): { svg: SVGSVGElement; y: number; h: number } | null;
   /** 条目在谱面上的 `<g>`（增时线、记号借宿主音符的） */
-  entryEl(entry: SyncEntry): SVGGElement | null;
+  entryEl(entry: SyncEntry): SVGGraphicsElement | null;
   /** 音符在谱面上的 `<g>` */
-  noteEl(id: ElementId): SVGGElement | null;
+  noteEl(id: ElementId): SVGGraphicsElement | null;
   /** 文字条目（歌词、页眉字段）在谱面上的 `<g>`：页眉的多行署名、调号拍号一组不止一个 */
-  textEls(entry: SyncEntry): SVGGElement[];
+  textEls(entry: SyncEntry): SVGGraphicsElement[];
   /** 音符的附点在谱面上的 `<g>`（每个点一个；可单独点选） */
-  augDotEls(id: ElementId): SVGGElement[];
+  augDotEls(id: ElementId): SVGGraphicsElement[];
   /** 小节线自己的 `<g>`（它没有 id，按「相邻音符 + 侧」认）；没画出来为 null */
-  barlineEl(entry: SyncEntry): SVGGElement | null;
+  barlineEl(entry: SyncEntry): SVGGraphicsElement | null;
   /** 一条增时线自己的 `<g>`；没画出来为 null */
-  sustainEl(entry: SyncEntry): SVGGElement | null;
+  sustainEl(entry: SyncEntry): SVGGraphicsElement | null;
   /** 一条圆滑线/延音线的弧本身的 `<g>`；没画出来（跨行时另一端不在本行）为 null */
-  slurEl(entry: SyncEntry): SVGGElement | null;
+  slurEl(entry: SyncEntry): SVGGraphicsElement | null;
   /** 写在音符 token 里的增时线（`.jpwabc` 的 `5---`）画出来的那几个格，按序 */
-  inlineSustainEls(id: ElementId): SVGGElement[];
+  inlineSustainEls(id: ElementId): SVGGraphicsElement[];
   /** 谱面上点中的 `<g>` 对应哪个条目（从事件目标往上找） */
   entryAtTarget(target: EventTarget | null): SyncEntry | null;
   /** 当前格式怎么改原文；null = 这种格式在谱面上只能选中、不能改 */
@@ -64,6 +69,11 @@ export interface VisualHost {
   syncFresh(): boolean;
   setStatus(text: string): void;
   saveSettings(): void;
+}
+
+/** 元素里的 `<text>`：简谱那一路是一个 `<g>` 里收着字，五线谱的歌词字本身就是 `<text>`。 */
+function textsOf(el: Element): SVGTextElement[] {
+  return el instanceof SVGTextElement ? [el] : [...el.querySelectorAll("text")];
 }
 
 /** 方向键能停的条目：音符、增时线、小节线、原文里有符号的换行 */
@@ -93,6 +103,10 @@ export class VisualEditController {
   private paletteBtn: HTMLButtonElement | null = null;
   private paletteRefresh: (() => void) | null = null;
   private modeEl: HTMLElement | null = null;
+  /** 选中元素的读数（声部、小节、拍、音高、时值），见 `selinfo.ts` */
+  private selInfoEl: HTMLElement | null = null;
+  /** 刚框选完：浏览器随后补发的那一下 `click` 不能再当单击（会把框出来的选区换成插入光标） */
+  private swallowClick = false;
   private marksBtn: HTMLButtonElement | null = null;
   /** 叠加层里画出来的换行符号 → 它那一处换行 */
   private breakEls = new Map<Element, BreakMark>();
@@ -108,7 +122,7 @@ export class VisualEditController {
 
   /** 谱面可聚焦、接键盘；工具条上的模式标签与格式标记开关。 */
   attach(els: {
-    mode: HTMLElement | null; marksBtn: HTMLButtonElement | null;
+    mode: HTMLElement | null; selInfo?: HTMLElement | null; marksBtn: HTMLButtonElement | null;
     beatBtn: HTMLButtonElement | null; beatCount: HTMLElement | null;
     palette: HTMLElement | null; paletteBtn: HTMLButtonElement | null;
   }): void {
@@ -133,7 +147,9 @@ export class VisualEditController {
       if (this.host.visualEnabled()) pane.focus({ preventScroll: true });
     });
     this.modeEl = modeEl;
+    this.selInfoEl = els.selInfo ?? null;
     this.marksBtn = marksBtn;
+    this.attachMarquee(pane);
     marksBtn?.addEventListener("click", () => this.toggleFormatMarks());
     this.beatBtn = beatBtn;
     this.beatEl = beatEl;
@@ -293,6 +309,13 @@ export class VisualEditController {
     clearOverlay(pages, undefined, "vis-beat");
     this.breakEls.clear();
     const on = this.host.visualEnabled();
+    if (this.selInfoEl) {
+      const first = on && !this.host.view.state.selection.main.empty ? this.selectedEntries().find((e) => e.kind === "note") : undefined;
+      const info = first ? selectionInfo(this.host.syncDoc(), first.id) : null;
+      this.selInfoEl.hidden = !info;
+      this.selInfoEl.textContent = info ?? "";
+      this.selInfoEl.title = info ?? "";
+    }
     if (this.modeEl) {
       this.modeEl.hidden = !on;
       this.modeEl.textContent = this.mode === "edit" ? "编辑" : `插入 · ${durName(this.curDur)}`;
@@ -318,12 +341,12 @@ export class VisualEditController {
 
   /** 一个条目在谱面上的 `<g>`。小节线与增时线有自己的（它们在模型里不按自己的 id 定位，
    *  见 `VisualHost.barlineEl` / `sustainEl`）；取不到就退回宿主音符那个（旧行为）。 */
-  private elOf(entry: SyncEntry): SVGGElement | null {
+  private elOf(entry: SyncEntry): SVGGraphicsElement | null {
     return this.ownEl(entry) ?? this.host.entryEl(entry);
   }
 
   /** 条目**自己**那个图元（没有就 null，不退回宿主音符）：小节线、增时线、弧。 */
-  private ownEl(entry: SyncEntry): SVGGElement | null {
+  private ownEl(entry: SyncEntry): SVGGraphicsElement | null {
     if (entry.kind === "barline") return this.host.barlineEl(entry);
     if (entry.kind === "sustain") return this.host.sustainEl(entry);
     if (entry.kind === "mark" && entry.markKind === "slur") return this.host.slurEl(entry);
@@ -332,7 +355,19 @@ export class VisualEditController {
 
   private boxOf(entry: SyncEntry): { svg: SVGSVGElement; box: Box } | null {
     const el = this.elOf(entry);
-    return el ? musicBox(el) : null;
+    return el ? this.elBox(el) : null;
+  }
+
+  /** 元素的框：简谱取音乐那部分（`musicBox`）；五线谱的和弦组没有「数字 + 歌词」那种结构，
+   *  整组就是音乐部分，而 Bravura 字形要按墨迹量（`inkBoxInPage`）。 */
+  private elBox(el: SVGGraphicsElement): { svg: SVGSVGElement; box: Box } | null {
+    return this.host.surfaceKind() === "staff" ? inkBoxInPage(el) : musicBox(el);
+  }
+
+  /** 光标竖线要罩的那一带：五线谱取谱表带（横向仍按元素框），简谱就是元素框本身。 */
+  private caretBox(entry: SyncEntry, hit: { svg: SVGSVGElement; box: Box }): Box {
+    const band = this.host.caretBand(entry);
+    return band && band.svg === hit.svg ? { x: hit.box.x, y: band.y, w: hit.box.w, h: band.h } : hit.box;
   }
 
   /** 拍数不对的小节：它的音符按行各圈一个淡红底；空小节圈前后两个音之间的空当。 */
@@ -342,7 +377,7 @@ export class VisualEditController {
       const boxes: { svg: SVGSVGElement; box: Box }[] = [];
       for (const id of issue.ids) {
         const el = this.host.noteEl(id);
-        const hit = el && musicBox(el);
+        const hit = el && this.elBox(el);
         if (!hit) continue;
         const same = boxes.find((b) => b.svg === hit.svg && sameRow(b.box, hit.box));
         if (same) same.box = union(same.box, hit.box);
@@ -376,7 +411,7 @@ export class VisualEditController {
     const cache = new Map<SVGSVGElement, Box[]>();
     for (const b of this.host.sync.breaks()) {
       const el = this.host.noteEl(b.after);
-      const hit = el && musicBox(el);
+      const hit = el && this.elBox(el);
       if (!hit) continue;
       const selected = b.span
         ? b.span.from >= selFrom && b.span.to <= selTo && selTo > selFrom
@@ -404,12 +439,19 @@ export class VisualEditController {
     const pb = prev && prev.kind !== "break" ? this.boxOf(prev) : null;
     const nb = next && next.kind !== "break" ? this.boxOf(next) : null;
     const brokeBetween = prev?.kind === "break";
+    const gap = (b: Box): number => Math.min(b.h, b.w * 2) * 0.12;
+    const staff = this.host.surfaceKind() === "staff";
+    // 五线谱：同一行的两个音之间，光标画在正中（贴着符头右缘会压在符干、符尾上）
+    if (staff && pb && nb && !brokeBetween && nb.svg === pb.svg && sameRow(pb.box, nb.box) && nb.box.x > pb.box.x) {
+      drawCaret(pb.svg, (pb.box.x + pb.box.w + nb.box.x) / 2, this.caretBox(prev!, pb));
+      return;
+    }
     if (pb && !brokeBetween && (!nb || nb.svg !== pb.svg || sameRow(pb.box, nb.box))) {
-      drawCaret(pb.svg, pb.box.x + pb.box.w + pb.box.h * 0.12, pb.box);
+      drawCaret(pb.svg, pb.box.x + pb.box.w + gap(pb.box), this.caretBox(prev!, pb));
     } else if (nb) {
-      drawCaret(nb.svg, nb.box.x - nb.box.h * 0.12, nb.box);
+      drawCaret(nb.svg, nb.box.x - gap(nb.box), this.caretBox(next!, nb));
     } else if (pb) {
-      drawCaret(pb.svg, pb.box.x + pb.box.w + pb.box.h * 0.12, pb.box);
+      drawCaret(pb.svg, pb.box.x + pb.box.w + gap(pb.box), this.caretBox(prev!, pb));
     }
   }
 
@@ -418,7 +460,7 @@ export class VisualEditController {
     const e = this.host.sync.ordered().find((x) => isText(x) && head >= x.from && head <= x.to);
     if (!e) return false;
     const src = this.host.view.state.doc.sliceString(e.from, e.to);
-    const texts = this.host.textEls(e).flatMap((el) => [...el.querySelectorAll("text")]);
+    const texts = this.host.textEls(e).flatMap(textsOf);
     for (const t of texts) {
       const disp = t.textContent ?? "";
       const shift = textShift(disp, src);
@@ -458,7 +500,7 @@ export class VisualEditController {
     const inline = this.pickedInlineSustain();
     if (inline) {
       const el = this.host.inlineSustainEls(inline.note.id)[inline.index];
-      const hit = el && musicBox(el);
+      const hit = el && this.elBox(el);
       if (hit) {
         drawBlock(hit.svg, hit.box);
         return;
@@ -497,7 +539,7 @@ export class VisualEditController {
       const el = this.elOf(e);
       if (!el || seen.has(el)) continue;
       seen.add(el);
-      const hit = musicBox(el);
+      const hit = this.elBox(el);
       if (!hit) continue;
       add(thin(e) ? { svg: hit.svg, box: plump(hit.box) } : hit);
     }
@@ -509,6 +551,10 @@ export class VisualEditController {
   /** 谱面上的点击。处理了返回 true（App 就不再走音符点选那条路）。 */
   handleClick(ev: MouseEvent, entry: SyncEntry | null): boolean {
     if (!this.host.visualEnabled()) return false;
+    if (this.swallowClick) {
+      this.swallowClick = false;
+      return true;
+    }
     // 点在换行符号上：选中它
     const t = ev.target instanceof Element ? ev.target.closest(".vis-break") : null;
     const brk = t ? this.breakEls.get(t) : undefined;
@@ -533,7 +579,8 @@ export class VisualEditController {
     }
     // 点在音符下方的减时线上：选中 token 里那串减时线。**要赶在文字分支之前**——
     // 减时线与歌词行挨得极近（歌词第一个字的顶就在音头外框下缘），落在减时线带里的点算减时线
-    if (!ev.shiftKey) {
+    const jianpu = this.host.surfaceKind() === "jianpu";
+    if (!ev.shiftKey && jianpu) {
       const beams = this.beamAtPoint(ev.clientX, ev.clientY);
       if (beams) {
         this.select(beams.from, beams.to);
@@ -547,7 +594,7 @@ export class VisualEditController {
       return true;
     }
     // 点在附点上（附点很小，四周放宽几像素）：只选中附点
-    if (!ev.shiftKey) {
+    if (!ev.shiftKey && jianpu) {
       const dot = this.dotAtPoint(ev.clientX, ev.clientY, entry);
       if (dot) {
         this.select(dot.from, dot.to);
@@ -596,13 +643,99 @@ export class VisualEditController {
     return false;
   }
 
+  /** 点在空白处（`caretAtPoint` 那一行的最近元素）所在的那一小节：从上一条小节线（或换行）之后的第一个元素到下一条小节线之前的最后一个。 */
+  private selectMeasureAt(cx: number, cy: number): boolean {
+    const caret = this.caretAtPoint(cx, cy);
+    if (caret === null) return false;
+    const nav = this.navigable();
+    const i = nav.findIndex((e) => e.from >= caret);
+    const at = i < 0 ? nav.length - 1 : i;
+    // 光标落在小节线前面：那是前一小节的尾巴，往回认
+    const pivot = nav[at]?.kind === "barline" || nav[at]?.kind === "break" || i < 0 ? at - 1 : at;
+    const isEdge = (e: SyncEntry | undefined): boolean => !e || e.kind === "barline" || e.kind === "break";
+    if (isEdge(nav[pivot])) return false;
+    let a = pivot;
+    while (!isEdge(nav[a - 1])) a--;
+    let b = pivot;
+    while (!isEdge(nav[b + 1])) b++;
+    this.select(nav[a]!.from, this.groupEnd(nav[b]!));
+    return true;
+  }
+
+  /** 全选：谱面上第一个到最后一个元素（不带页眉、文字）。 */
+  private selectAll(): boolean {
+    const nav = this.navigable().filter((e) => e.kind !== "break");
+    if (nav.length === 0) return false;
+    this.select(nav[0]!.from, this.groupEnd(nav[nav.length - 1]!));
+    return true;
+  }
+
+  /**
+   * 框选：鼠标**从空白处**按下拖动超过 4px 才开框（4px 内仍是单击，照旧落插入光标）；从音符、文字上起拖不开框。
+   * 松开时框里（元素框中心落在框内）的第一个到最后一个元素按原文顺序整段选中——选区只有一段，与代码区同一份。
+   * 触屏不开（拖动是平移）。
+   */
+  private attachMarquee(pane: HTMLElement): void {
+    let start: { x: number; y: number; id: number } | null = null;
+    let box: HTMLDivElement | null = null;
+    const rectOf = (x: number, y: number): { l: number; t: number; r: number; b: number } =>
+      ({ l: Math.min(start!.x, x), t: Math.min(start!.y, y), r: Math.max(start!.x, x), b: Math.max(start!.y, y) });
+    pane.addEventListener("pointerdown", (ev) => {
+      if (ev.pointerType !== "mouse" || ev.button !== 0 || ev.shiftKey || !this.host.visualEnabled()) return;
+      const t = hitThroughOverlay(ev);
+      if (!(t instanceof Element) || !t.closest("svg.score-page")) return;
+      if (this.host.entryAtTarget(t) || t.closest(".vis-break")) return;
+      start = { x: ev.clientX, y: ev.clientY, id: ev.pointerId };
+    });
+    pane.addEventListener("pointermove", (ev) => {
+      if (!start || ev.pointerId !== start.id) return;
+      if (!box && Math.hypot(ev.clientX - start.x, ev.clientY - start.y) < 4) return;
+      if (!box) {
+        box = document.createElement("div");
+        box.className = "vis-marquee";
+        document.body.appendChild(box);
+        pane.setPointerCapture(ev.pointerId);
+      }
+      const r = rectOf(ev.clientX, ev.clientY);
+      Object.assign(box.style, { left: `${r.l}px`, top: `${r.t}px`, width: `${r.r - r.l}px`, height: `${r.b - r.t}px` });
+    });
+    const end = (ev: PointerEvent): void => {
+      if (!start || ev.pointerId !== start.id) return;
+      const dragged = box !== null;
+      const r = rectOf(ev.clientX, ev.clientY);
+      box?.remove();
+      box = null;
+      start = null;
+      if (!dragged) return;
+      this.swallowClick = true;
+      setTimeout(() => (this.swallowClick = false), 0); // 松开在别处时不会补发 click，别让标志留到下一次
+      const inside = this.navigable().filter((e) => {
+        if (e.kind === "break") return false;
+        const el = this.elOf(e);
+        const b = el?.getBoundingClientRect();
+        if (!b || (b.width === 0 && b.height === 0)) return false;
+        const cx = (b.left + b.right) / 2;
+        const cy = (b.top + b.bottom) / 2;
+        return cx >= r.l && cx <= r.r && cy >= r.t && cy <= r.b;
+      });
+      if (inside.length === 0) return;
+      this.select(inside[0]!.from, this.groupEnd(inside[inside.length - 1]!));
+      this.host.scorePane.focus({ preventScroll: true });
+    };
+    pane.addEventListener("pointerup", end);
+    pane.addEventListener("pointercancel", end);
+  }
+
   /** 谱面上的双击：文字对象由此进插入模式——光标落在原文里点中的那个字前后，焦点交给代码区，
    *  接着打字就是改原文（谱面焦点下数字键是插音符，不能留在谱面上）。处理了返回 true。
    *
    *  浏览器先发两次 `click` 再发 `dblclick`：第一下已经把这个文字对象选中了，这里再覆盖成插入光标，
    *  所以不必自己做点击计时。 */
   handleDoubleClick(ev: MouseEvent, entry: SyncEntry | null): boolean {
-    if (!this.host.visualEnabled() || !entry || !isText(entry)) return false;
+    if (!this.host.visualEnabled()) return false;
+    // 双击小节里的空白：选中整小节（第一下 click 已落了插入光标，这里覆盖成选区；双击音符不做事）
+    if (!entry) return this.selectMeasureAt(ev.clientX, ev.clientY);
+    if (!isText(entry)) return false;
     const at = this.textCaretAt(entry, ev.clientX, ev.clientY);
     this.select(at, at);
     this.host.view.focus();
@@ -615,7 +748,7 @@ export class VisualEditController {
     let best: SVGTextElement | null = null;
     let bestD = Infinity;
     for (const el of this.host.textEls(e)) {
-      for (const t of el.querySelectorAll("text")) {
+      for (const t of textsOf(el)) {
         const r = t.getBoundingClientRect();
         const d = Math.max(0, r.left - cx, cx - r.right) + Math.max(0, r.top - cy, cy - r.bottom);
         if (d < bestD) {
@@ -872,6 +1005,7 @@ export class VisualEditController {
       case "nav.next": return this.move(1, false);
       case "nav.extendPrev": return this.move(-1, true);
       case "nav.extendNext": return this.move(1, true);
+      case "sel.all": return this.selectAll();
       case "nav.home": return this.rowEdge(-1);
       case "nav.end": return this.rowEdge(1);
       case "mark.next": return this.cycleMark(1);

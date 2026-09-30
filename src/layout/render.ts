@@ -130,8 +130,16 @@ export function svgVisitor(nodeMap?: WeakMap<PageItem, SVGGElement>): ItemVisito
 //   - 那边无条件递归子级；这边只递归 Group（叶子的子级会被丢掉）。
 // 真正共用的是 renderPageSvg（外壳）与 walkPageItem（骨架）。
 
-/** `nodeMap` 给了就记下每个 Group 造出的 `<g>`（编辑器按和弦组放播放线、认点选，见 `mixed/prims.ts::STAFF_CHORD`）。 */
-export function mixedVisitor(nodeMap?: WeakMap<PageItem, SVGGElement>): ItemVisitor<SVGGElement> {
+/** `nodeMap` 给了就记下每个 Group 造出的 `<g>`（编辑器按和弦组放播放线、认点选，见 `mixed/prims.ts::STAFF_CHORD`）。
+ *  `leafMap` 给了就记下**带 `data` 的图元**画出的那个元素（歌词字、小节线这些叶子，以及本身是组的弧，见
+ *  `mixed/prims.ts::StaffLeafData`）——只记不改，叶子照旧不带 class，SVG 输出不变。 */
+export function mixedVisitor(
+  nodeMap?: WeakMap<PageItem, SVGGElement>,
+  leafMap?: WeakMap<PageItem, SVGGraphicsElement>,
+): ItemVisitor<SVGGElement> {
+  const leaf = (item: PageItem, el: SVGGraphicsElement): void => {
+    if (leafMap && item.data !== null) leafMap.set(item, el);
+  };
   return {
     descend: (item, parent) => {
       // 只有 Group 产生新的 <g>；叶子直接落在父级的 <g> 里，自带 transform
@@ -141,6 +149,7 @@ export function mixedVisitor(nodeMap?: WeakMap<PageItem, SVGGElement>): ItemVisi
       if (item.classes.size > 0) g.setAttribute("class", [...item.classes].join(" ")); // staff-chord / staff-system
       parent.appendChild(g);
       nodeMap?.set(item, g);
+      leaf(item, g); // 弧（`Slur` 是个组）也带身份
       return g;
     },
     descendChildren: (item) => item instanceof Group,
@@ -155,6 +164,7 @@ export function mixedVisitor(nodeMap?: WeakMap<PageItem, SVGGElement>): ItemVisi
       el.setAttribute("stroke-linecap", "butt");
       if (!item.matrix.isIdentity) el.setAttribute("transform", item.matrix.toSvg());
       g.appendChild(el);
+      leaf(item, el);
     },
     text: (item, g) => {
       const el = document.createElementNS(SVG_NS, "text") as SVGTextElement;
@@ -171,6 +181,7 @@ export function mixedVisitor(nodeMap?: WeakMap<PageItem, SVGGElement>): ItemVisi
       el.textContent = item.text;
       el.setAttribute("transform", item.matrix.toSvg()); // matrix contains x,y translation
       g.appendChild(el);
+      leaf(item, el);
     },
     path: (item, g) => {
       const el = document.createElementNS(SVG_NS, "path") as SVGPathElement;
@@ -185,6 +196,7 @@ export function mixedVisitor(nodeMap?: WeakMap<PageItem, SVGGElement>): ItemVisi
       }
       if (!item.matrix.isIdentity) el.setAttribute("transform", item.matrix.toSvg());
       g.appendChild(el);
+      leaf(item, el);
     },
   };
 }

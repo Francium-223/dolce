@@ -110,9 +110,9 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
   /** 谱面 `<g>` → 索引条目（点谱面时从事件目标往上找） */
   private _syncEls = new Map<Element, SyncEntry>();
   /** 条目 → 谱面 `<g>`（光标移动时直接取） */
-  private _syncElOf = new Map<SyncEntry, SVGGElement>();
+  private _syncElOf = new Map<SyncEntry, SVGGraphicsElement>();
   /** 页眉字段 → 谱面上画它的那几个 `<g>`（多行署名、调号拍号一组都不止一个） */
-  private _syncHeaderEls = new Map<SyncEntry, SVGGElement[]>();
+  private _syncHeaderEls = new Map<SyncEntry, SVGGraphicsElement[]>();
   /** 当前被光标点亮的那些 `<g>` */
   private _syncMarked: Element[] = [];
   /** 防回环：两条方向互相触发时，被动的那一侧不要再反推一次 */
@@ -509,6 +509,8 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
   /** 派生五线谱（`mixedDoc`）的和弦 id ↔ 源模型的和弦 id（`_indexMixedSrcIds`）。`.musicxml` 为空。 */
   private _mixedToSrc = new Map<ElementId, ElementId>();
   private _srcToMixed = new Map<ElementId, ElementId[]>();
+  /** 派生五线谱里各和弦在第几小节（全曲下标）：五线谱上的小节线按小节认（`mixed/prims.ts::StaffLeafData`）。 */
+  private _mixedMeasureOf = new Map<ElementId, number>();
   /** 五线谱 / 混排上选中的和弦组（五线谱层与简谱叠层各一个）。 */
   private _staffSelected: SVGGElement[] = [];
 
@@ -748,6 +750,9 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
       if (this.docFormat === "musicxml") return true;
       if (this.adapter.caps.layout === "jpwabc") this._refreshJpwDoc(text); // 导出 MIDI 读它
       if (!this._ensureMixedDoc()) return false;
+      // 索引跟原文同步建（可视化编辑按它改原文），谱面元素等五线谱排完再绑（`_layoutStaff`）
+      const src = this.adapter.caps.layout === "jpwabc" ? this._jpwDoc : this.currentScoreDoc();
+      if (src && this.adapter.caps.textEditor) this._buildSyncIndex(src);
       void this._renderMixedPages();
       return true;
     }
@@ -883,11 +888,14 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
   private _indexMixedSrcIds(doc: ScoreDoc): void {
     this._mixedToSrc.clear();
     this._srcToMixed.clear();
+    this._mixedMeasureOf.clear();
     for (const song of doc.songs) {
       for (const part of song.parts) {
-        for (const m of part.measures) {
+        for (const [mi, m] of part.measures.entries()) {
           for (const el of m.elements) {
-            if (el.kind !== "chord" || el.srcId === undefined) continue;
+            if (el.kind !== "chord") continue;
+            this._mixedMeasureOf.set(el.id, mi);
+            if (el.srcId === undefined) continue;
             this._mixedToSrc.set(el.id, el.srcId);
             const list = this._srcToMixed.get(el.srcId);
             if (list) list.push(el.id);
@@ -1057,13 +1065,37 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
 
   /** 重建索引与「条目 ↔ 谱面 `<g>`」两张反查表。**每次重排后都要建**——页面节点全换了。 */
   private _buildSync(doc: ScoreDoc): void {
+    this._buildSyncIndex(doc);
+    this._bindSyncEls();
+  }
+
+  /** 只建索引（原文偏移 ↔ 元素 id），不碰谱面。五线谱档的排版是异步的，索引却要跟原文同步——
+   *  可视化编辑的动作按索引改原文，索引落后一拍就会按旧偏移改错地方——所以两步拆开：
+   *  `reload` 里先建索引，排完版再 `_bindSyncEls`。 */
+  private _buildSyncIndex(doc: ScoreDoc): void {
     this._sync.build(doc);
     this._syncDoc = doc;
     this._syncText = this.getText();
+    const fields = this.editDialect()?.headerFields?.(this._syncText) ?? [];
+    if (fields.length) this._sync.addHeader(fields);
     this._syncEls.clear();
     this._syncElOf.clear();
     this._syncHeaderEls.clear();
     this._syncMarked = [];
+  }
+
+  /** 索引条目 ↔ 谱面元素两张反查表。**每次重排后都要建**——页面节点全换了。 */
+  private _bindSyncEls(): void {
+    this._syncEls.clear();
+    this._syncElOf.clear();
+    this._syncHeaderEls.clear();
+    this._syncMarked = [];
+    if (this.mode === "mixed") {
+      this._bindStaffEls();
+      this._syncCursorToScore();
+      this.visual.afterRebuild();
+      return;
+    }
     for (const entry of this._sync.all()) {
       const el = this._syncGroupEl(entry);
       if (!el) continue;
@@ -1089,10 +1121,22 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
   }
 
   visualEnabled(): boolean {
-    return this.mode === "jp" && this.adapter.caps.textEditor && this._sync.size > 0;
+    return (this.mode === "jp" || this.mode === "mixed") && this.adapter.caps.textEditor && this._sync.size > 0;
   }
 
-  entryEl(entry: SyncEntry): SVGGElement | null {
+  /** 谱面是哪一路画的：简谱（简谱引擎 / 原样文档）还是五线谱 / 混排。几何命中（减时线、附点）只有简谱那一路有。 */
+  surfaceKind(): "jianpu" | "staff" {
+    return this.mode === "mixed" ? "staff" : "jianpu";
+  }
+
+  /** 五线谱 / 混排：光标竖线的高度取这个音所在系统的谱表带；简谱那一路为 null（按元素框）。 */
+  caretBand(entry: SyncEntry): { svg: SVGSVGElement; y: number; h: number } | null {
+    if (this.mode !== "mixed") return null;
+    const m = this._srcToMixed.get(entry.id)?.[0];
+    return m === undefined ? null : this.painter.staffBand(m);
+  }
+
+  entryEl(entry: SyncEntry): SVGGraphicsElement | null {
     return this._syncElOf.get(entry) ?? this._syncGroupEl(entry);
   }
 
@@ -1121,34 +1165,43 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     return this._syncEntryAt(target);
   }
 
-  noteEl(id: ElementId): SVGGElement | null {
+  noteEl(id: ElementId): SVGGraphicsElement | null {
+    if (this.mode === "mixed") {
+      const m = this._srcToMixed.get(id)?.[0];
+      return m === undefined ? null : this.painter.staffChordEls(m)[0] ?? null;
+    }
     return this.painter.entryEl(id, 0);
   }
 
-  augDotEls(id: ElementId): SVGGElement[] {
-    return this.painter.partEls(id, "aug-dot");
+  // 五线谱 / 混排上：附点、增时线不是单独的图元（附点是符头旁的点、增时线并进时值），小节线与弧走带身份的叶子
+  augDotEls(id: ElementId): SVGGraphicsElement[] {
+    return this.mode === "mixed" ? [] : this.painter.partEls(id, "aug-dot");
   }
 
-  barlineEl(entry: SyncEntry): SVGGElement | null {
+  barlineEl(entry: SyncEntry): SVGGraphicsElement | null {
+    if (this.mode === "mixed") return this._staffElsOf(entry)[0] ?? null;
     return this.painter.barlineEl(entry.id, entry.edge ?? "after");
   }
 
-  sustainEl(entry: SyncEntry): SVGGElement | null {
+  sustainEl(entry: SyncEntry): SVGGraphicsElement | null {
+    if (this.mode === "mixed") return null;
     return this.painter.sustainEl(entry.id, entry.ord ?? 0, entry.own, entry.verse ?? 0);
   }
 
-  slurEl(entry: SyncEntry): SVGGElement | null {
+  slurEl(entry: SyncEntry): SVGGraphicsElement | null {
+    if (this.mode === "mixed") return this._staffElsOf(entry)[0] ?? null;
     return entry.end === undefined ? null : this.painter.slurEl(entry.id, entry.end);
   }
 
-  inlineSustainEls(id: ElementId): SVGGElement[] {
-    return this.painter.sustainCellEls(id);
+  inlineSustainEls(id: ElementId): SVGGraphicsElement[] {
+    return this.mode === "mixed" ? [] : this.painter.sustainCellEls(id);
   }
 
   /** 一个条目对应的谱面 `<g>`：按元素 id 问排版器（歌词按段取那一个字）。
    *  小节线与增时线有自己的图元（它们不按自己的 id 定位，见 `ScorePainter.barlineEl` / `sustainEl`）——
    *  取到了就归它们自己，点击才落得到它们头上；取不到退回宿主音符（旧行为）。 */
-  private _syncGroupEl(entry: SyncEntry): SVGGElement | null {
+  private _syncGroupEl(entry: SyncEntry): SVGGraphicsElement | null {
+    if (this.mode === "mixed") return this._staffElsOf(entry)[0] ?? null;
     if (entry.kind === "mark") {
       // 弧有自己的图元（`(` 与 `)` 两条都指向同一条弧）；其余记号按类名在音符格里认
       if (entry.markKind === "slur") {
@@ -1164,16 +1217,58 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     return this.painter.entryEl(entry.id, entry.verse ?? 0);
   }
 
+  /** 五线谱 / 混排（文本格式）：索引条目按源 id 换成派生五线谱的 id，对上五线谱上画出的元素。
+   *  音符 → 和弦组（五线谱层与简谱叠层各一个）；歌词、弧、小节线 → 带身份的叶子（`mixed/prims.ts::StaffLeafData`）。
+   *  增时线在五线谱上不是单独的东西（并进时值 / 延音线），和弦名、装饰暂不认。 */
+  private _bindStaffEls(): void {
+    for (const entry of this._sync.all()) {
+      const els = this._staffElsOf(entry);
+      if (els.length === 0) continue;
+      this._syncElOf.set(entry, els[0]!);
+      if (els.length > 1) this._syncHeaderEls.set(entry, els);
+      for (const el of els) if (!this._syncEls.has(el)) this._syncEls.set(el, entry);
+    }
+  }
+
+  private _staffElsOf(entry: SyncEntry): SVGGraphicsElement[] {
+    const mids = (id: ElementId): ElementId[] => this._srcToMixed.get(id) ?? [];
+    const leaf = this.painter.staffLeafEls.bind(this.painter);
+    switch (entry.kind) {
+      case "note":
+        return mids(entry.id).flatMap((m) => this.painter.staffChordEls(m));
+      case "lyric": {
+        const verse = entry.verseNo ?? (entry.verse ?? 0) + 1;
+        return mids(entry.id).flatMap((m) => leaf({ staffRole: "lyric", chordId: m, verse }));
+      }
+      case "barline": {
+        const m = mids(entry.id)[0];
+        const measure = m === undefined ? undefined : this._mixedMeasureOf.get(m);
+        if (measure === undefined) return [];
+        if (entry.edge !== "before") return leaf({ staffRole: "barline", measure, side: "after" });
+        // 音符前面那条：系统开头是本小节的 before，其余是前一小节的 after
+        const own = leaf({ staffRole: "barline", measure, side: "before" });
+        return own.length ? own : leaf({ staffRole: "barline", measure: measure - 1, side: "after" });
+      }
+      case "mark": {
+        if (entry.markKind !== "slur" || entry.end === undefined) return [];
+        const s = mids(entry.id)[0];
+        const ends = mids(entry.end);
+        const e = ends[ends.length - 1];
+        return s === undefined || e === undefined ? [] : leaf({ staffRole: "slur", start: s, end: e });
+      }
+      default:
+        return [];
+    }
+  }
+
   /** 页眉：从原文认出字段（`EditDialect.headerFields`）并进索引，再按字对上谱面上画出来的页眉项。
    *  字对得上的（画出来的字就是原文的值、或包含它——署名会补「作词：」）归它；调号、拍号按角色归。 */
   private _bindHeader(): void {
-    const fields = this.editDialect()?.headerFields?.(this._syncText) ?? [];
-    if (fields.length === 0) return;
-    this._sync.addHeader(fields);
     const entries = this._sync.ordered().filter((e) => e.kind === "header");
+    if (entries.length === 0) return;
     const parts = this.painter.headerParts();
     const norm = (t: string): string => t.replace(/\s+/g, "");
-    const bind = (e: SyncEntry, el: SVGGElement): void => {
+    const bind = (e: SyncEntry, el: SVGGraphicsElement): void => {
       const list = this._syncHeaderEls.get(e) ?? [];
       if (list.length === 0) {
         this._syncHeaderEls.set(e, list);
@@ -1206,7 +1301,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     }
   }
 
-  textEls(entry: SyncEntry): SVGGElement[] {
+  textEls(entry: SyncEntry): SVGGraphicsElement[] {
     const hdr = this._syncHeaderEls.get(entry);
     if (hdr) return hdr;
     const el = this._syncElOf.get(entry);
@@ -1229,7 +1324,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
 
   /** 挂在音符上的记号自己的 `<g>`（和弦名、装饰、注记）：按类名在音符格里找，
    *  同类记号按原文顺序对第几个。弧、画不出来的记号（引擎只画延长号与重音）取不到，借宿主音符的 `<g>`。 */
-  private _markPartEl(entry: SyncEntry): SVGGElement | null {
+  private _markPartEl(entry: SyncEntry): SVGGraphicsElement | null {
     const role = entry.markKind === "harmony" || entry.markKind === "deco" || entry.markKind === "annotation" ? entry.markKind : null;
     if (!role) return null;
     const els = this.painter.partEls(entry.id, role);
@@ -1244,11 +1339,8 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     if (this._syncing) return;
     for (const el of this._syncMarked) el.classList.remove("cursor-at", "cursor-off");
     this._syncMarked = [];
-    if (this.mode === "mixed") {
-      this._syncCursorToStaff();
-      return;
-    }
-    if (this.mode !== "jp") return;
+    // 五线谱 / 混排（文本格式）与简谱档同一条路：条目 → `_bindStaffEls` 绑好的元素。`.musicxml` 没有代码区，不走
+    if (this.mode === "mixed" ? !this.adapter.caps.textEditor : this.mode !== "jp") return;
     const sel = this.view.state.selection.main;
     // 选中的是附点：只点亮附点
     const dotOf = this.visual.pickedDot();
@@ -1312,7 +1404,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
   }
 
   /** 某条目对应的谱面 `<g>`（按 `from` + `verse` 认，跨 evaluate 边界不能靠对象身份）。 */
-  syncElAt(from: number, verse: number | null): SVGGElement | null {
+  syncElAt(from: number, verse: number | null): SVGGraphicsElement | null {
     for (const [entry, el] of this._syncElOf) {
       if (entry.from === from && entry.verse === verse) return el;
     }
@@ -1592,9 +1684,22 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
 
   /** 五线谱 / 混排被点击：点中和弦就选中它（两层一起描蓝）、记为起播点，播放中直接跳过去。 */
   private _onStaffClick(ev: MouseEvent): void {
-    const id = this.painter.staffChordAt(ev.target as Element | null);
+    const target = hitThroughOverlay(ev);
+    const id = this.painter.staffChordAt(target as Element | null);
     this.deselectStaff();
     this.deselect();
+    // 文本格式：与简谱档同口径走可视化编辑（选中 / 光标 / 文字）；播放、暂停中点音符让给跳播
+    if (this.visualEnabled() && !(id !== null && this.playback.active)) {
+      if (id !== null) {
+        this._selectedId = id;
+        this._selectedVerse = 1;
+        this.playback.seekTo({ id, pass: 1 });
+      }
+      const entry = this._syncEntryAt(target);
+      if (this.visual.handleClick(ev, entry)) return;
+      if (entry) this._syncScoreToCursor(entry);
+      return;
+    }
     if (id === null) return;
     const els = this.painter.staffChordEls(id);
     for (const el of els) el.classList.add("selected");
@@ -1614,24 +1719,6 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     }
   }
 
-  /** 代码区光标 → 五线谱：光标/选区落在哪些音上，就把五线谱上对应的和弦组描蓝（`cursor-at`，同简谱档）。 */
-  private _syncCursorToStaff(): void {
-    if (!this.adapter.caps.textEditor || this._srcToMixed.size === 0) return;
-    const sel = this.view.state.selection.main;
-    const ids = new Set<ElementId>();
-    for (const e of this._sync.range(sel.from, sel.to)) {
-      if (e.kind === "header" || e.kind === "break") continue;
-      for (const mid of this._srcToMixed.get(e.id) ?? []) ids.add(mid);
-    }
-    for (const id of ids) {
-      for (const el of this.painter.staffChordEls(id)) {
-        el.classList.add("cursor-at");
-        this._syncMarked.push(el);
-      }
-    }
-    this._syncMarked[0]?.scrollIntoView({ block: "nearest", inline: "nearest" });
-  }
-
   private deselectStaff(): void {
     for (const el of this._staffSelected) el.classList.remove("selected");
     this._staffSelected = [];
@@ -1640,7 +1727,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
   /** 谱面被双击 → 文字对象进插入模式（单击只选中，见 `VisualEditController.handleDoubleClick`）。
    *  浏览器先发两次 `click` 再发这一下，所以选中在前、进编辑在后。 */
   private _onSyncDblClick(ev: MouseEvent): void {
-    if (this.mode !== "jp") return;
+    if (this.mode !== "jp" && this.mode !== "mixed") return;
     this.visual.handleDoubleClick(ev, this._syncEntryAt(hitThroughOverlay(ev)));
   }
 
@@ -2419,10 +2506,13 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
         svg.style.width = "100%";
         svg.style.display = "block";
         svg.addEventListener("click", (ev) => this._onStaffClick(ev));
+        svg.addEventListener("dblclick", (ev) => this._onSyncDblClick(ev));
       },
       resetPageIndex: true,
     });
-    this._syncCursorToScore(); // 代码区光标所在的音在新画的五线谱上描出来
+    // 代码区光标所在的音在新画的五线谱上描出来；可视化编辑的叠加层跟着重画
+    if (this.adapter.caps.textEditor && this._syncDoc) this._bindSyncEls();
+    else this._syncCursorToScore();
   }
 
   /** 等在途的异步排版（五线谱 / 混排）落定。简谱这一路是同步的，调用返回时已铺好。无头校验脚本用。 */

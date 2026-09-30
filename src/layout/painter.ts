@@ -22,7 +22,7 @@ import { computeStyleForPaper, THEMES } from "../style/themes";
 import { MixedOptions, type StaffLayout, type Sys } from "../mixed/model";
 import { layoutStaff } from "../mixed/layout";
 import { layoutStaffPages, PAGE_HEIGHT_FALLBACK } from "../mixed/staffpages";
-import { STAFF_CHORD, STAFF_SYSTEM, type StaffChordData, type StaffSystemData } from "../mixed/prims";
+import { isStaffLeaf, STAFF_CHORD, STAFF_SYSTEM, staffLeafKey, type StaffChordData, type StaffLeafData, type StaffSystemData } from "../mixed/prims";
 import { layoutOriginalDocument, type OriginalDocumentLayout } from "./original/compose";
 import type { PlacedPage } from "./original/place";
 import type { JianpuGrid } from "./original/metrics";
@@ -196,6 +196,12 @@ export class ScorePainter {
   } | null = null;
   /** 五线谱 / 混排：渲染出来的和弦组 `<g>` → 元素 id（点选按事件冒泡认）。 */
   private staffElId = new WeakMap<Element, ElementId>();
+  /** 五线谱 / 混排：带身份的叶子（歌词字、弧、小节线，见 `mixed/prims.ts::StaffLeafData`），按 `staffLeafKey` 收。 */
+  private staffLeaves = new Map<string, { page: number; item: PageItem }[]>();
+  /** 叶子画出的 SVG 元素（`mixedVisitor` 的 `leafMap`）。 */
+  private leafMap = new WeakMap<PageItem, SVGGraphicsElement>();
+  /** 画出来的叶子元素 → 它的身份（点选按事件目标认）。 */
+  private staffLeafOf = new WeakMap<Element, StaffLeafData>();
   /** 逐页高度。空 = 各页同高（`pageHeight`）；连续长纸那一档按内容逐页给。 */
   private pageHeights: number[] = [];
   private staff: StaffState | null = null;
@@ -370,7 +376,15 @@ export class ScorePainter {
   /** 五线谱各页页面树里的和弦组，按元素 id 收起来，连同它所在的系统组。 */
   private buildStaffIndex(pages: readonly Group[]): void {
     this.staffChords.clear();
+    this.staffLeaves.clear();
+    this.leafMap = new WeakMap();
     const walk = (item: PageItem, page: number, system: PageItem | null): void => {
+      if (isStaffLeaf(item.data)) {
+        const key = staffLeafKey(item.data);
+        const list = this.staffLeaves.get(key) ?? [];
+        list.push({ page, item });
+        this.staffLeaves.set(key, list);
+      }
       if (item.classes.has(STAFF_SYSTEM)) system = item;
       if (item.classes.has(STAFF_CHORD)) {
         const id = (item.data as StaffChordData).chordId;
@@ -612,6 +626,34 @@ export class ScorePainter {
     });
   }
 
+  /** 五线谱 / 混排：某个叶子身份（歌词字、弧、小节线）画出来的各个元素；没画出来为空。 */
+  staffLeafEls(d: StaffLeafData): SVGGraphicsElement[] {
+    return (this.staffLeaves.get(staffLeafKey(d)) ?? []).flatMap((h) => {
+      const el = this.leafMap.get(h.item);
+      return el?.isConnected ? [el] : [];
+    });
+  }
+
+  /** 五线谱 / 混排：事件目标是不是一个带身份的叶子（歌词字、弧、小节线）。 */
+  staffLeafAt(target: Element | null): StaffLeafData | null {
+    return target ? this.staffLeafOf.get(target) ?? null : null;
+  }
+
+  /** 五线谱 / 混排：和弦 `id` 所在系统的谱表带（混排连同简谱层），换成它所在页面 SVG 的用户坐标：光标竖线照这一带的高度画。 */
+  staffBand(id: ElementId): { svg: SVGSVGElement; y: number; h: number } | null {
+    const hit = this.staffChords.get(id)?.[0];
+    const sys = hit?.system;
+    const g = sys ? this.nodeMap.get(sys) : undefined;
+    const svg = g?.ownerSVGElement;
+    if (!sys || !g || !svg) return null;
+    const d = sys.data as StaffSystemData;
+    const m = svg.getScreenCTM()?.inverse().multiply(g.getScreenCTM() ?? new DOMMatrix());
+    if (!m) return null;
+    const y0 = new DOMPoint(0, d.top).matrixTransform(m).y;
+    const y1 = new DOMPoint(0, d.bottom).matrixTransform(m).y;
+    return { svg, y: Math.min(y0, y1), h: Math.abs(y1 - y0) };
+  }
+
   /** 元素 `id` 第一次出现在第几页（光标同步翻页用）；没画出来为 null。 */
   pageOf(id: ElementId): number | null {
     return this.noteHit(id)?.page ?? null;
@@ -728,11 +770,17 @@ export class ScorePainter {
       const page = this.result?.pages[pageIndex];
       if (!page) throw new Error(`ScorePainter: 没有第 ${pageIndex + 1} 页`);
       const { w, h } = page.geometry.viewBox;
-      const svg = renderPageSvg(page.root, w, h, { cls: "score-page mixed-page", visitor: mixedVisitor(this.nodeMap) });
+      const svg = renderPageSvg(page.root, w, h, { cls: "score-page mixed-page", visitor: mixedVisitor(this.nodeMap, this.leafMap) });
       for (const [id, hits] of this.staffChords) {
         for (const h of hits) {
           const el = h.page === pageIndex ? this.nodeMap.get(h.item) : undefined;
           if (el) this.staffElId.set(el, id);
+        }
+      }
+      for (const hits of this.staffLeaves.values()) {
+        for (const h of hits) {
+          const el = h.page === pageIndex ? this.leafMap.get(h.item) : undefined;
+          if (el && isStaffLeaf(h.item.data)) this.staffLeafOf.set(el, h.item.data);
         }
       }
       return svg;

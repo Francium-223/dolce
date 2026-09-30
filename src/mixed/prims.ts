@@ -18,6 +18,31 @@ export interface StaffSystemData {
   readonly bottom: number;
 }
 
+/**
+ * 五线谱层里**叶子图元**（歌词字、弧、小节线）的身份，挂在 `PageItem.data` 上。编辑器按它认点选（可视化编辑）。
+ * 只挂数据、不加类名不包组：`mixedVisitor` 对叶子不写 class，所以 SVG 输出一字不变（`mixed-tree-dump` 指纹不动）；
+ * 渲染时由 `mixedVisitor` 的 `leafMap` 记下它画出的那个 SVG 元素。
+ * 小节线没有 id：按「第几小节（全曲下标）+ 在它哪一侧」认（系统开头那条是首小节的 `before`，其余是前一小节的 `after`）。
+ */
+export type StaffLeafData =
+  | { readonly staffRole: "lyric"; readonly chordId: ElementId; readonly verse: number }
+  | { readonly staffRole: "slur"; readonly start: ElementId; readonly end: ElementId }
+  | { readonly staffRole: "barline"; readonly measure: number; readonly side: "before" | "after" };
+
+/** `data` 是不是 `StaffLeafData`。 */
+export function isStaffLeaf(data: unknown): data is StaffLeafData {
+  return typeof data === "object" && data !== null && "staffRole" in data;
+}
+
+/** 叶子身份的查表键（同一身份可能画成好几个图元：小节线每个谱表组一段、混排的简谱层再一段）。 */
+export function staffLeafKey(d: StaffLeafData): string {
+  switch (d.staffRole) {
+    case "lyric": return `lyric:${d.chordId}:${d.verse}`;
+    case "slur": return `slur:${d.start}:${d.end}`;
+    case "barline": return `bar:${d.measure}:${d.side}`;
+  }
+}
+
 /** 和弦 `id` 的组（见 `STAFF_CHORD`）。 */
 export function chordGroup(id: ElementId): Group {
   const g = new Group();
@@ -26,13 +51,14 @@ export function chordGroup(id: ElementId): Group {
   return g;
 }
 
-export function addLine(g: Group, x1: number, y1: number, x2: number, y2: number, lw: number): void {
+export function addLine(g: Group, x1: number, y1: number, x2: number, y2: number, lw: number): GraphicLine {
   const l = new GraphicLine();
   l.p0 = new Point(x1, y1);
   l.p1 = new Point(x2, y2);
   l.strokeColor = 0xff000000;
   l.strokeWidth = lw;
   g.add(l);
+  return l;
 }
 
 /** SMuFL glyph via TextFrame with Bravura family. */

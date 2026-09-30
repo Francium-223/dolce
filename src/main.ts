@@ -70,6 +70,7 @@ async function boot() {
   app.loadSettings();
   app.visual.attach({
     mode: document.getElementById("visual-mode"),
+    selInfo: document.getElementById("sel-info"),
     marksBtn: document.getElementById("btn-format-marks") as HTMLButtonElement | null,
     beatBtn: document.getElementById("btn-beat-check") as HTMLButtonElement | null,
     beatCount: document.getElementById("beat-count"),

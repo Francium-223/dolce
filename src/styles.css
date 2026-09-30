@@ -531,6 +531,9 @@ button:focus-visible, select:focus-visible {
 .cm-vis-break { color: #7c8b9a; background: rgba(124, 139, 154, 0.12); border-radius: 2px; }
 .visual-mode { font-size: 12px; padding: 1px 6px; border-radius: 4px; border: 1px solid #1565ff; color: #1565ff; }
 .visual-mode[data-mode="insert"] { border-style: dashed; }
+.sel-info { font-size: 12px; color: var(--muted, #667085); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 42ch; }
+.sel-info[hidden] { display: none; }
+.vis-marquee { position: fixed; z-index: 30; pointer-events: none; border: 1px dashed #1565ff; background: rgba(21, 101, 255, 0.08); }
 .format-marks-button { min-width: 26px; font-weight: 600; }
 .vis-overlay .vis-beat { fill: rgba(224, 49, 49, 0.12); stroke: rgba(224, 49, 49, 0.55); stroke-dasharray: 3 2; pointer-events: all; }
 .cm-vis-beat { text-decoration: underline wavy rgba(224, 49, 49, 0.8); text-underline-offset: 3px; }

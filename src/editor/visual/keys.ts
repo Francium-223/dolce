@@ -45,6 +45,8 @@ export const VISUAL_ACTIONS: readonly VisualAction[] = [
     help: "选区往前多罩一个元素" },
   { id: "nav.extendNext", label: "向后扩选", group: "移动与选择", keys: [{ key: "ArrowRight", shift: true }], keyText: "Shift+→",
     help: "选区往后多罩一个元素" },
+  { id: "sel.all", label: "全选", group: "移动与选择", keys: [{ key: "a", mod: true }], keyText: "Ctrl/⌘+A",
+    help: "谱面有焦点时选中全曲（代码区有焦点时照旧全选文本）" },
   { id: "nav.home", label: "行首", group: "移动与选择", keys: [{ key: "Home" }], keyText: "Home",
     help: "跳到本行（到上一个换行符为止）的第一个元素" },
   { id: "nav.end", label: "行尾", group: "移动与选择", keys: [{ key: "End" }], keyText: "End",

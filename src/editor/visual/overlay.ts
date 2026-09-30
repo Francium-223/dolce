@@ -36,6 +36,58 @@ export function boxInPage(el: SVGGraphicsElement): { svg: SVGSVGElement; box: Bo
   return { svg, box: { x, y, w: Math.max(...xs) - x, h: Math.max(...ys) - y } };
 }
 
+let inkCtx: CanvasRenderingContext2D | null | undefined;
+
+/**
+ * 元素（或它里面各图元）**墨迹**的并集，页面 SVG 用户坐标。五线谱那一路用它：符头、谱号是 Bravura 的字，
+ * `getBBox()` 给的是整行字体盒（ascent−descent 约 4 em），一个符头就量出好几个谱表高（CLAUDE.md 的那条）。
+ * 文字按 canvas `measureText` 的 `actualBoundingBox*` 量（基线在本地 y = 0，`layout/render.ts` 一律这么画），
+ * 线与路径照 `getBBox()`。同 `editor/help.ts::inkBox` 的口径。
+ */
+export function inkBoxInPage(el: SVGGraphicsElement): { svg: SVGSVGElement; box: Box } | null {
+  const svg = el.ownerSVGElement;
+  const toSvg = svg?.getScreenCTM()?.inverse();
+  if (!svg || !toSvg) return null;
+  if (inkCtx === undefined) inkCtx = document.createElement("canvas").getContext("2d");
+  const leaves = el instanceof SVGGElement
+    ? [...el.querySelectorAll<SVGGraphicsElement>("text, path, line, rect, polyline, polygon, circle, ellipse, use")]
+    : [el];
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+  for (const e of leaves) {
+    let b: DOMRect;
+    try {
+      b = e.getBBox();
+    } catch {
+      continue;
+    }
+    let left = b.x, right = b.x + b.width, top = b.y, bottom = b.y + b.height;
+    if (e instanceof SVGTextElement && inkCtx && e.textContent) {
+      const cs = getComputedStyle(e);
+      inkCtx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+      const m = inkCtx.measureText(e.textContent);
+      top = -m.actualBoundingBoxAscent;
+      bottom = m.actualBoundingBoxDescent;
+      // 单个字形（符头、谱号）横向也取墨迹；多字的一串仍按前进宽度（逐字笔位由 `x` 列表给，canvas 量不出来）
+      if (e.textContent.length === 1) {
+        left = -m.actualBoundingBoxLeft;
+        right = m.actualBoundingBoxRight;
+      }
+    }
+    if (right - left <= 0 && bottom - top <= 0) continue;
+    const ctm = e.getScreenCTM();
+    if (!ctm) continue;
+    const m = toSvg.multiply(ctm);
+    for (const [px, py] of [[left, top], [right, top], [left, bottom], [right, bottom]] as const) {
+      const q = new DOMPoint(px, py).matrixTransform(m);
+      x0 = Math.min(x0, q.x);
+      y0 = Math.min(y0, q.y);
+      x1 = Math.max(x1, q.x);
+      y1 = Math.max(y1, q.y);
+    }
+  }
+  return x0 === Infinity ? null : { svg, box: { x: x0, y: y0, w: x1 - x0, h: y1 - y0 } };
+}
+
 /** 音符 `<g>` 里**音乐那一部分**的包围盒：简谱引擎的音符格把各段歌词也收在同一个 `<g>` 里
  *  （第一个子节点是数字，后面是逐段歌词），整格的包围盒会一直拖到最后一段词。
  *  这里以第一个子节点（数字）为准，只并进顶端落在数字框之内的子节点（八度点、增时线、减时线）；

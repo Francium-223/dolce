@@ -39,6 +39,7 @@ interface Classified {
    *  与数字中线对齐的挪去 hlines 当增时线（八度点、波音不在中线上），见 classify「更短的 '-'」 */
   dashLike: Component[];
   clean: boolean;        // 干净谱面（isCleanPage）：几条专治翻拍件毛病的判据在这种页上不开
+  lineH: number;         // 本页统计线粗（strokeLineH），0 = 页上横线太少、量不出
 }
 
 // jianpu.cpp: findBarline/analyze_barline/analyze_hline/analyze_dot —— 按形状分类连通域。
@@ -988,8 +989,8 @@ function classify(comps: Component[], bin: Binary): { c: Classified; numH: numbe
   // 只有干净页才做下面的「减时线+八度点」粘连切分：脏页上碎渣挂在减时线下沿时长得跟八度点
   // 一模一样，切开就是凭空多一个八度。
   const pageClean = isCleanPage(comps, numH);
-  const c: Classified = { blocks: [], barlines: [], longBarlines: [], hlines: [], dots: [], dashLike: [], clean: pageClean };
   const lineH = strokeLineH(comps, numH);
+  const c: Classified = { blocks: [], barlines: [], longBarlines: [], hlines: [], dots: [], dashLike: [], clean: pageClean, lineH };
   // 高瘦竖块可能是"八度点 + 窄数字"粘连体（数字不含点）：优先切开、把点与数字笔各归其类，
   // 否则会被下面的小节线判据整块吞掉而丢音（实测高八度 "1̇" 在单行简谱里 h 恰同真小节线）。
   const barCand = (w: number, h: number) =>
@@ -1629,7 +1630,124 @@ function buildJpNums(
     }
     out.push({ digit, bbox: d, dot, octave, div, augment, augmentRects });
   }
+  recountUnderlines(bin, out, numH, cls, barlineXs, voiceMates);
   return out;
+}
+
+/** **补判减时线**：按横线块数出 0 条的音符，直接到像素里量。块分类那条路靠连通域，线跟数字、低音点、连接墨粘成一块时
+ *  （赞美诗歌1218 粗黑翻印件大片如此，1188 整页数字都压在线上），块认不出、线就跟着丢了。这里不认块，只量：
+ *  · **逐音取样**：数字正下方等距取 5 列，从本行数字中位高处往下（框被粘上来的线撑高了也不受影响）数墨段——厚度像本页线粗
+ *    （0.5~1.6 倍 lineH）、该行墨横贯数字宽八成的才是一道线；第一道紧贴数字（≤0.45 字号），层距 ≤0.4 字号，碰到别的
+ *    （低音点、歌词笔画这些不横贯或太厚的）就停。5 列取中位数，连接墨、毛刺只占一两列，压不过多数。
+ *  · **两数之间有横线**：相邻两音的空隙在数字下部（中位高的七成五以下）有一行墨横贯整个空隙、并伸进两边数字底下，
+ *    厚度像线，就两个音都至少一道。线跟数字粘死、数字底下量不清时，空隙里那一段线是干净的。
+ *    增时线在数字中线上、够不着这个高度；隔着小节线的不连（减时线不跨小节线）。
+ *  只补不减：已数出线的音不动。 */
+function recountUnderlines(bin: Binary, nums: JpNum[], numH: number, cls: Classified, barlineXs: number[], voiceMates: readonly Rect[]): void {
+  const lineH = cls.lineH;
+  if (lineH <= 0 || !nums.length) return;
+  const hs = nums.map((n) => n.bbox.h).sort((a, b) => a - b);
+  const medH = hs[hs.length >> 1]!;
+  const ink = (x: number, y: number) => x >= 0 && y >= 0 && x < bin.w && y < bin.h && bin.data[y * bin.w + x] === 1;
+  const rowFull = (y: number, x0: number, x1: number) => { for (let x = x0; x <= x1; x++) if (!ink(x, y)) return false; return true; };
+  const thickOk = (t: number) => t >= Math.max(1, lineH * 0.5) && t <= lineH * 1.6 + 1;
+  // 这一行从 x 起向左右连着的墨跨过小节线就不是减时线（减时线不跨小节线）：四声部 36 下一声部一道又长又平的连音弧
+  // 从上一声部 `1 1 0` 底下横穿过去、跨过小节线，逐列量全像一道线
+  const crossesBar = (x: number, y: number) => {
+    let l = x, r = x;
+    while (ink(l - 1, y)) l--;
+    while (ink(r + 1, y)) r++;
+    return barlineXs.some((bx) => bx > l + 2 && bx < r - 2);
+  };
+  const baseOf = (d: Rect) => Math.min(rbottom(d), d.y + medH);
+  // 下界：下一声部行的数字顶（四声部两行挨得近，`5`、`7` 的顶横笔又平又横贯字宽，四声部 333 上一声部 `1̇` 下量出两道线）
+  const floorOf = (x0: number, x1: number, yb: number) => {
+    let f = bin.h;
+    for (const m of voiceMates) if (m.y > yb - numH * 0.3 && m.x < x1 + numH * 0.5 && rright(m) > x0 - numH * 0.5) f = Math.min(f, m.y - 1);
+    return f;
+  };
+  // 一列里从数字底往下数线
+  const colCount = (d: Rect, x: number): number => {
+    const yb = baseOf(d), limit = Math.min(bin.h, yb + Math.round(numH * 1.2), floorOf(d.x, rright(d), yb));
+    const cx0 = Math.round(d.x + d.w * 0.1), cx1 = Math.round(d.x + d.w * 0.9);
+    let n = 0, lastEnd = yb, y = yb;
+    while (y < limit) {
+      if (!ink(x, y)) { y++; continue; }
+      const start = y;
+      while (y < limit && ink(x, y)) y++;
+      if (start === yb) continue;                                  // 紧贴基线那段是数字自己的底笔（或粘着的线，交给下一条规则）
+      if (start - lastEnd > numH * (n ? 0.4 : 0.45)) break;
+      const ym = start + ((y - start) >> 1);
+      if (!thickOk(y - start) || !rowFull(ym, cx0, cx1) || crossesBar(x, ym) || !usable(x, ym)) break;
+      n++; lastEnd = y;
+    }
+    return n;
+  };
+  // **一块墨只作一种用**：量到的线所在的连通块已经归给了别的（小节线、点、增时线、别的声部的数字），就不再当减时线；
+  // 不粘数字的游离块若是拱起来的（上沿中间比两头高出一个线粗以上）就是弧。
+  // 四声部 36 下一声部那道长弧从上一声部 `1 1 0` 底下穿过去，逐列量全像一道线。粘着本行数字的块（1218 1188）照用。
+  const same = (a: Rect, b: Rect) => a.x === b.x && a.y === b.y && a.w === b.w && a.h === b.h;
+  const owned: Rect[] = [...cls.barlines, ...cls.dots].map((k) => k.bbox).concat(nums.flatMap((n) => n.augmentRects ?? []));
+  const compCache = new Map<number, boolean>();
+  const usable = (x0: number, y0: number): boolean => {
+    const key = y0 * bin.w + x0;
+    const hit = compCache.get(key);
+    if (hit !== undefined) return hit;
+    const seen = new Set<number>([key]), stack = [key];
+    let minX = x0, maxX = x0, minY = y0, maxY = y0;
+    while (stack.length && seen.size < 60000) {
+      const cur = stack.pop()!, cy = (cur / bin.w) | 0, cx = cur - cy * bin.w;
+      if (cx < minX) minX = cx; if (cx > maxX) maxX = cx; if (cy < minY) minY = cy; if (cy > maxY) maxY = cy;
+      for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+        const nx = cx + dx, ny = cy + dy, k = ny * bin.w + nx;
+        if ((dx || dy) && ink(nx, ny) && !seen.has(k)) { seen.add(k); stack.push(k); }
+      }
+    }
+    const box: Rect = { x: minX, y: minY, w: maxX - minX + 1, h: maxY - minY + 1 };
+    const fused = nums.some((n) => overlapX(n.bbox, box) > 0 && n.bbox.y < rbottom(box) && rbottom(n.bbox) > box.y && box.y <= n.bbox.y + n.bbox.h * 0.5);
+    let ok = !owned.some((r) => same(r, box)) &&
+      !voiceMates.some((m) => m.x >= box.x && rright(m) <= rright(box) && m.y >= box.y && rbottom(m) <= rbottom(box));
+    if (ok && !fused && box.h >= numH * 0.2 && box.w >= numH * 0.6) {
+      // 弯不弯看**上沿**：左、中、右三处上沿高度，弧中间比两头高出一截；线下挂着低音点的块包围盒也高，但上沿是平的
+      const top = new Map<number, number>();
+      const cols = [0.1, 0.5, 0.9].map((f) => Math.round(box.x + (box.w - 1) * f));
+      for (const k of seen) { const cy = (k / bin.w) | 0, cx = k - cy * bin.w; if (cols.includes(cx) && cy < (top.get(cx) ?? Infinity)) top.set(cx, cy); }
+      const [l, m, r] = cols.map((c) => top.get(c) ?? box.y);
+      if ((l! + r!) / 2 - m! >= Math.max(2, lineH)) ok = false;
+    }
+    for (const k of seen) compCache.set(k, ok);
+    return ok;
+  };
+  const found = nums.map((n) => {
+    if (n.div || n.augment) return 0;
+    const d = n.bbox;
+    const cs = [0.2, 0.35, 0.5, 0.65, 0.8].map((f) => colCount(d, Math.round(d.x + d.w * f))).sort((a, b) => a - b);
+    return cs[2]!;
+  });
+  for (let i = 0; i + 1 < nums.length; i++) {
+    const a = nums[i]!, b = nums[i + 1]!;
+    if ((a.div || found[i]) && (b.div || found[i + 1])) continue;
+    if (a.augment) continue;
+    const x0 = rright(a.bbox), x1 = b.bbox.x - 1;
+    if (x1 - x0 < 1 || x1 - x0 > numH * 1.2) continue;
+    if (barlineXs.some((x) => x >= x0 - 2 && x <= x1 + 2)) continue;
+    const ext0 = Math.round(x0 - a.bbox.w * 0.3), ext1 = Math.round(x1 + b.bbox.w * 0.3);
+    const yb = Math.max(baseOf(a.bbox), baseOf(b.bbox));
+    const floor = floorOf(a.bbox.x, rright(b.bbox), yb);
+    const yTop = Math.round(Math.max(a.bbox.y, b.bbox.y) + medH * 0.75), yEnd = Math.min(Math.round(yb + numH * 0.45), floor - lineH * 2 - 1);
+    // 线带上下两行在空隙里得基本是空的：升号 ♯ 的横笔也横贯空隙，但有两根竖笔穿过它（四声部 333 下一声部 `#5`
+    // 的升号正落在上一声部 `1̇ 1̇` 之间的空隙下方，被读成两个音的减时线）
+    const rowInk = (y: number) => { let n = 0; for (let x = x0; x <= x1; x++) if (ink(x, y)) n++; return n / (x1 - x0 + 1); };
+    let bands = 0, run = 0;
+    for (let y = yTop; y <= yEnd + lineH * 2; y++) {
+      if (rowFull(y, ext0, ext1)) { run++; continue; }
+      if (run) { if (thickOk(run) && y - run <= yEnd && rowInk(y - run - 2) < 0.3 && rowInk(y + 1) < 0.3 && !crossesBar(x0, y - 1 - (run >> 1)) && usable(x0, y - 1 - (run >> 1))) bands++; run = 0; }
+    }
+    if (!bands) continue;
+    if (!a.div && !found[i]) found[i] = Math.min(bands, 2);
+    if (!b.div && !found[i + 1]) found[i + 1] = Math.min(bands, 2);
+  }
+  nums.forEach((n, i) => { if (!n.div && found[i]) { n.div = found[i]!; probe("recountUnderlines"); } });
 }
 
 /** 数字框中央横带的前景占比（x∈[0.28,0.72]×y∈[0.42,0.58]）：简谱 "0" 是空心椭圆环，中带几乎无墨

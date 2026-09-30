@@ -1683,6 +1683,10 @@ export async function recognizeRasterPage(
       // 竖笔要**紧贴着块**（左边或右边都算）、纵向要与块搭上
       if (vx < b.x - unit.space * 0.5 || vx > b.x + b.w + unit.space * 0.5) continue;
       if (vBot < b.y || vTop > b.y + b.h) continue;
+      // 一端扎进实心头（横向落在头盒里、端点在头盒上下沿之间）的是符干，块是它的符尾：
+      // 低分辨率页上干加八分尾拼成一个还原号（万福泉源歌 m4，G4/E♭4 带尾和弦的干被摘走）
+      const tl = Math.max(1, unit.lineThick);
+      if (syms.some((h) => h.code === "noteheadBlack" && vx >= h.box.x - tl && vx <= h.box.x + h.box.w + tl && ((vBot >= h.box.y && vBot <= h.box.y + h.box.h) || (vTop >= h.box.y && vTop <= h.box.y + h.box.h)))) continue;
       const x0 = Math.min(b.x, Math.round(vx - v.maxLw / 2));
       const y0 = Math.min(b.y, Math.round(vTop));
       const box = {

@@ -2784,13 +2784,33 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
       const actual = digits[i] ?? 0;
       // normal = 不大于 actual 的最大 2 的幂（3→2、5/6/7→4）。4 连音是「4 占 3」、
       // 2 连音是「2 占 3」，都只出现在复拍子里且这条推法不成立，故不收。
-      if (![3, 5, 6, 7].includes(actual) || cand.notes.length !== actual) return;
+      if (![3, 5, 6, 7].includes(actual) || cand.notes.length < actual) return;
+      // 密排（1218 746「1̇1̇7 1̇1̇7」一组挨一组）：左右放宽半个字号会罩进邻组的音。多出来时取中心离括线数字最近的连续 actual 个
+      if (cand.notes.length > actual) {
+        const cx = rcx(cand.numeral);
+        let bi = 0, bd = Infinity;
+        for (let i = 0; i + actual <= cand.notes.length; i++) {
+          const w = cand.notes.slice(i, i + actual);
+          const d = Math.abs((rcx(w[0]!.bbox) + rcx(w[actual - 1]!.bbox)) / 2 - cx);
+          if (d < bd) { bd = d; bi = i; }
+        }
+        probe("tuplet.trimDense");
+        cand.notes = cand.notes.slice(bi, bi + actual);
+      }
       const normal = Math.pow(2, Math.floor(Math.log2(actual)));
       cand.notes.forEach((n, k) => {
         if (k === 0) probe("tuplet");
         n.tuplet = { actual, normal, start: k === 0, stop: k === cand.notes.length - 1 };
       });
       for (const a of cand.arcs) tupComps.add(a);
+      // 括线上的数字先前被当成了倚音（方括号式「┌3┐」离数字带近，1218 746 读出一串 `{3}`）：认成多连音后摘掉
+      const nb = cand.numeral;
+      for (const row of useRows) for (const n of row.nums) {
+        if (!n.grace) continue;
+        const kept = n.grace.filter((g) => Math.min(rright(g.bbox), rright(nb)) - Math.max(g.bbox.x, nb.x) <= 0 ||
+          Math.min(rbottom(g.bbox), rbottom(nb)) - Math.max(g.bbox.y, nb.y) <= 0);
+        if (kept.length !== n.grace.length) { probe("tuplet.dropGrace"); n.grace = kept.length ? kept : undefined; }
+      }
     });
   }
 

@@ -170,7 +170,7 @@ export interface TupletCand {
  *
  * 判据（都不依赖 OCR，数字读几由上层补）：
  *   ① 小号数字块：高 0.35~0.8 字号、宽高比 0.4~1.3、墨占比 ≥0.35，整块落在数字带**上方**；
- *   ② 左右各有一段**细弧**：与数字纵向重叠、墨占比 ≤0.4、宽 ≥0.6 字号，横向缝隙 ≤0.6 字号。
+ *   ② 左右各有一段**细弧**：与数字纵向重叠、墨占比 ≤0.5、宽 ≥0.5 字号，横向缝隙 ≤0.6 字号（方括号式「┌3┐」的钩墨多一点、也短一点，1218 746）。
  *      两侧都要有——只认这一种谱面写法（手头只有这一种样张，不照着猜别的形状）。
  * 括线罩住的音符按与 `detectSlurs` 同一口径取（质心落在跨度内、左右各放宽 0.5 字号）。
  *
@@ -199,11 +199,12 @@ export function tupletCandidates(bin: Binary, comps: Component[], rows: StaffRow
       // 左右两段细弧：与数字纵向重叠、横向紧挨着。
       const arcAt = (side: -1 | 1) => above.find((c) => {
         const b = c.bbox;
-        if (b === nb || b.w < numH * 0.6 || b.h > numH * 0.9) return false;
+        if (b === nb || b.w < numH * 0.5 || b.h > numH * 0.9) return false;
         const gap = side < 0 ? nb.x - rright(b) : b.x - rright(nb);
         if (gap < -numH * 0.15 || gap > numH * 0.6) return false;
         if (rbottom(b) < nb.y || b.y > rbottom(nb)) return false;   // 纵向不重叠
-        return inkFill(b) <= 0.4;
+        // 方括号式「┌3┐」（1218 746）的钩比细弧墨多：实测 0.39、0.42，宽 0.6 字号上下
+        return inkFill(b) <= 0.5;
       });
       const left = arcAt(-1), right = arcAt(1);
       if (!left || !right) continue;

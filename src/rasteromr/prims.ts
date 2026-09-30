@@ -788,6 +788,8 @@ export function findPrimitives(
   dropHeadEndBeams(beams, vSegs, unit);
   beams.push(...partialBeams(bin, beams, unit, vSegs));
   vSegs.push(...beamStems(bin, beams, vSegs, unit, staffLineYs));
+  // 杠上补出的干也能揭出头那一端的假杠，再剔一遍
+  dropHeadEndBeams(beams, vSegs, unit);
   return { hSegs, vSegs, beams };
 }
 
@@ -1077,7 +1079,10 @@ function dropHeadEndBeams(beams: BeamQuad[], vSegs: LineSeg[], unit: RasterUnit)
       touched++;
       if (bot - top > unit.space * ONE_STEM_MAX) { fake = false; break; }
       const far = atTop ? bot : top;
-      if (!beams.some((o) => o !== q && o.box.w > q.box.w && inBox(vx, far, o.box))) { fake = false; break; }
+      // 那一头挂的常是半截杠：比的是那一摞（横向重叠、上下 1.5 格内的几层）里最长的一条
+      const at = beams.filter((o) => o !== q && inBox(vx, far, o.box));
+      const stack = beams.filter((o) => o !== q && at.some((a) => o.box.x < a.box.x + a.box.w && a.box.x < o.box.x + o.box.w && Math.abs(o.box.y - a.box.y) <= unit.space * 1.5));
+      if (!stack.some((o) => o.box.w > q.box.w)) { fake = false; break; }
     }
     if (touched && fake) drop.add(q);
   }

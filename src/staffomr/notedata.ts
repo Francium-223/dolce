@@ -432,13 +432,17 @@ export function buildStems(pg: SPage, sp: number): StemInfo[] {
   const heads = pg.symbols.filter((s) => s.hasTag("Note") && !isRest(s.code) && s.ownerStaff);
   const flagSyms = pg.symbols.filter((s) => s.hasTag("Tail"));
   const out: StemInfo[] = [];
+  // 窗口与 `findStems` 打 Stem 标签同口径（两倍谱线粗）兜底：粗线扫描件上头盒右缘离自己的干 4.5~5 像素，
+  // 1/4 格只有 4.7，干标上了 Stem、头却没挂上，落单的头被并进邻头的和弦（破碎扫描版 p6 十六分 A4）
+  const win0 = (nt: Sym) => Math.max(sp / 4, (nt.ownerStaff?.lines[0]?.lw ?? 0) * 2);
   for (const seg of pg.segsWithTag("Stem")) {
     const notes: Sym[] = [];
     for (const nt of heads) {
       if (!overlapY(seg.box, nt.box)) continue;
       const dx0 = Math.abs(nt.box.left - seg.cx);
       const dx1 = Math.abs(nt.box.right - seg.cx);
-      if (dx0 > sp / 4 && dx1 > sp / 4) continue;
+      const win = win0(nt);
+      if (dx0 > win && dx1 > win) continue;
       notes.push(nt);
     }
     if (!notes.length) continue;
@@ -457,7 +461,7 @@ export function buildStems(pg: SPage, sp: number): StemInfo[] {
   // **一个头挂上了两根干，只留贴在正经那一侧的**：朝上的干贴头的右缘、朝下的贴左缘；贴在反侧的是二度和弦错开的头。
   // 相邻两个十六分挨得近时（破碎扫描版 p7 E4、F4 隔一个头宽），后一个头的左缘也落在前一根朝上的干旁边，
   // 被前一根干当成错开的二度收走、并成一枚和弦，它自己那根干反倒空了。它另有一根干贴在正经那一侧的，从反侧那根上摘掉
-  const proper = (st: StemInfo, nt: Sym) => Math.abs((st.up ? nt.box.right : nt.box.left) - st.seg.cx) <= sp / 4;
+  const proper = (st: StemInfo, nt: Sym) => Math.abs((st.up ? nt.box.right : nt.box.left) - st.seg.cx) <= win0(nt);
   for (const st of out)
     st.notes = st.notes.filter((nt) => proper(st, nt) || !out.some((o) => o !== st && o.notes.includes(nt) && proper(o, nt)));
   return out.filter((st) => st.notes.length);

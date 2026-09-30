@@ -31,3 +31,5 @@ export { JpwFile, RepeatSection } from "../jpword/jpwfile";
 export { relayoutDocBreaks, relayoutJpwabcText, spliceComments } from "../model/relayout";
 export { applyBreaks, breaksOf } from "../model/breaks";
 export { phraseCuts, puPhraseLines } from "../pu/phrase";
+// 小节时值自检（私有仓库的对比报告拿它查手工谱各小节满不满）
+export { checkMeasureDurations, describeBeatIssue } from "../model/beatcheck";

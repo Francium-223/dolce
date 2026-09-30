@@ -123,7 +123,9 @@ function stripUnderline(
   // 超过 0.6 的那段要扁长（宽 ≥ 1.8 倍高）：升号 ♯ 近方、两道横笔也够宽（新编赞美诗·四声部 1 的 `#4` 21×19）
   const flat = b.w >= b.h * 1.8;
   const lineMode = b.w >= numH * 0.6 && (b.h <= numH * 0.6 || (flat && b.h <= numH * 0.7));
-  const digitMode = !lineMode && b.h >= numH * 1.15 && b.h <= numH * 2 && b.w >= numH * 0.3;
+  // 几个数字一排直接坐在线上（宽 ≥1.4 字号那档）块高只是「字高 + 线粗」：新编赞美诗·四声部 f10 末系统 `1̲ 1̲ 1̲` 203×41，
+  // 字号 36，差 0.4px 够不上 1.15——那档放到 1.05（剥出来还得是三个整字高的数字，说不清照旧整块放弃）
+  const digitMode = !lineMode && b.h >= numH * (b.w >= numH * 1.4 ? 1.05 : 1.15) && b.h <= numH * 2 && b.w >= numH * 0.3;
   if (!lineMode && !digitMode) return null;
   // 本块自己的像素（包围盒里可能还躺着别的块，如《同伴》那个 6 连线块的框里就有右邻的 7）。
   const sub: Binary = { w: b.w, h: b.h, data: new Uint8Array(b.w * b.h) };
@@ -1107,6 +1109,34 @@ function classify(comps: Component[], bin: Binary): { c: Classified; numH: numbe
     // 单独放宽到 0.5。但**只放窄块**：宽而矮的块多是下划线/碎片，放进来会凭空多识一个音（实测
     // 日光末行 w52 h24 误成 "7"）。
     if (w >= numH * 0.3 && w <= numH * 0.6 && h >= numH * 0.5 && h <= numH * 2.0) { c.blocks.push(k); continue; }
+  }
+  // 断成上下几截的小节线接回一根：新编赞美诗 293《耶稣住我心歌》第 2 行 `3·3̲|3̲` 那根断成 29+34px（同行整根 64px），
+  // 两截各自过不了 buildRowMeta 的行内相对门（最高线的 0.6），整根丢掉。只接**细**的（≤ max(3, 0.2 字号) 宽，数字 1 宽 ≥0.28 字号）、
+  // 同一竖直线上（中心差 ≤2px）、上下相隔不过 max(3, 0.15 字号) 的。只接已归为小节线的几截：连没归类的细竖碎块一起接，
+  // 会把歌词、段号的竖笔接到线上（四声部 95、115、155 首谱行被当伪行丢、歌词整段错位）
+  {
+    // 每截都得够短（≤1.4 字号）：四声部上下两声部各自的整根小节线也是上下相接、只隔几像素（360《小小水滴歌》），接成一根就把两个声部连成一组
+    const thin = (k: Component) => k.bbox.w <= Math.max(3, numH * 0.2) && k.bbox.h <= numH * 1.4;
+    const gapMax = Math.max(3, numH * 0.15);
+    const joinable = (a: Rect, b: Rect) => Math.abs(rcx(a) - rcx(b)) <= 2 &&
+      Math.max(a.y, b.y) - Math.min(rbottom(a), rbottom(b)) <= gapMax;
+    const merged: Component[] = [];
+    const used = new Set<Component>();
+    for (const k of c.barlines) {
+      if (used.has(k)) continue;
+      if (!thin(k)) { merged.push(k); continue; }
+      let bb = k.bbox, n = 1, area = k.area, grew = true;
+      while (grew) {
+        grew = false;
+        for (const o of c.barlines) {
+          if (o === k || used.has(o) || !thin(o) || !joinable(bb, o.bbox)) continue;
+          used.add(o); bb = unionRect(bb, o.bbox); area += o.area; n++; grew = true;
+        }
+      }
+      if (n > 1) { probe("barline.rejoined"); merged.push({ id: k.id, bbox: bb, area, cx: rcx(bb), cy: rcy(bb) }); }
+      else merged.push(k);
+    }
+    c.barlines = merged;
   }
   // 「细高竖条」既可能是小节线，也可能是数字 "1"（一条竖笔）。二者宽都很窄、高都 ≳ 字号，
   // 形状难分；但真小节线会明显高于数字带，而 "1" 的高度通常不超过 1.25×字号、笔宽仍至少约
@@ -2095,7 +2125,9 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
   if (medBarH > 0) {
     // 「之下」要跟**正经谱行**比，不能跟 rowMeta 里的歌词行/页脚比（歌词行也有三个以上的核，
     // 页脚更在末行下方一大截，拿它当界，末行永远进不来）。
-    const staffY = rowMeta.filter((m) => m.barlineXs.length > 0).map((m) => m.botY);
+    // 线也要够高（同下面 withBars 的 0.85 倍中位线高）：新编赞美诗整本曲末都有一行「阿们」`1--- | 1---‖`，底下的歌词「(阿 们)」
+    // 凑出 5 个核、括号竖笔（46px，中位线高 63）又算一根线，它成了「末谱行」，阿们那行反倒在它之上、救不回来
+    const staffY = rowMeta.filter((m) => m.bars.some((b) => b.bbox.h >= medBarH * 0.85)).map((m) => m.botY);
     const lastY = staffY.length ? Math.max(...staffY) : Infinity;
     const tail = rowMetaAll
       .filter((m) => m.rd.length && m.rd.length < 3 && m.topY > lastY && m.topY < noteRuleY)
@@ -2225,6 +2257,9 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
       if (k.bbox.y > nx.bbox.y + medH * 0.15 || rbottom(k.bbox) > rbottom(nx.bbox) + medH * 0.1) continue;
       const kind = accidentalOf(bin, k.bbox);
       if (!kind) continue;
+      // 还原号要**悬高**：底比右邻数字底高出 0.1 字高以上（四声部实测 0.14~0.62）。粗体窄字本（赞美诗歌1218）的「1」紧贴下一个数字、
+      // 同顶同底（底差 0.00~0.03），形状判据当成 ♮，`1_ 2_` 读成 `♮2_`——全本真还原号为 0，识别出 151 个
+      if (kind === "natural" && rbottom(nx.bbox) - rbottom(k.bbox) < medH * 0.1) { probe("accidental.naturalFlush"); continue; }
       probe("accidental");
       accidentals.set(nx, kind);
       accCores.add(k);

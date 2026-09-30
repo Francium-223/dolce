@@ -187,7 +187,7 @@ function bootstrapFlags(bin: Binary, pg: SPage, beams: BeamQuad[], unit: RasterU
     const dBot = Math.min(...ys.map((y) => Math.abs(st.bottom - y)));
     // 两端都贴着符头：这是两个头之间被切出来的一截符干（加线、谱线把符干切断），没有自由端
     if (Math.max(dTop, dBot) < sp * FLAG_BOTH_ENDS) continue;
-    const far = dTop > dBot ? st.top : st.bottom;
+    let far = dTop > dBot ? st.top : st.bottom;
     const hy = far === st.top ? Math.min(...ys) : Math.max(...ys);
     // 符杠横在这个窗口里的，不看（理由见上）
     // 符杠斜着搭在符干中段的也算（不只远端那一小截）
@@ -227,7 +227,30 @@ function bootstrapFlags(bin: Binary, pg: SPage, beams: BeamQuad[], unit: RasterU
       ? Math.min(sp * 0.5, unit.lineThick * 3)
       : onLineTip ? sp * 0.5 : Math.max(0, Math.min(sp * 0.5, Math.abs(hy - far) - sp * (0.6 + FLAG_TIP_Y)));
     while (frac(offset, offset + FLAG_TIP_Y) < FLAG_TIP && offset * sp < reach) offset += 1 / sp;
-    if (frac(offset, offset + FLAG_TIP_Y) < FLAG_TIP || frac(offset, offset + FLAG_Y) < FLAG_INK) {
+    /** 干尖顺着干那一列往外延到墨断（上限 `FLAG_TIP_EXT` 格）。 */
+    const tipOf = (from: number) => {
+      const cx = Math.round(st.cx);
+      const inkAt = (y: number) => y >= 0 && y < bin.h && [cx - 1, cx, cx + 1].some((x) => x >= 0 && x < bin.w && bin.data[y * bin.w + x]);
+      let tip = from;
+      while (Math.abs(tip - toward - from) <= sp * FLAG_TIP_EXT && inkAt(Math.round(tip - toward))) tip -= toward;
+      return tip;
+    };
+    const noFlag = () => frac(offset, offset + FLAG_TIP_Y) < FLAG_TIP || frac(offset, offset + FLAG_Y) < FLAG_INK;
+    let bareHere = noFlag();
+    // **钩整个长在认出的干尖外边**：钩和干尖粘成一团、横游程太宽，干只认到钩团之前，
+    // 干尖处的窗口是空的（万古磐石歌低音 m3、m9 的八分读成四分）——从延出的真干尖再看一次
+    if (bareHere) {
+      const tip = tipOf(far);
+      if (Math.abs(tip - far) >= sp * FLAG_GLUED) {
+        const keep = far;
+        far = tip;
+        offset = 0;
+        while (frac(offset, offset + FLAG_TIP_Y) < FLAG_TIP && offset < 0.5) offset += 1 / sp;
+        bareHere = noFlag();
+        if (bareHere) far = keep;
+      }
+    }
+    if (bareHere) {
       bare.push({ cx: st.cx, far, up: far < hy });
       continue;
     }
@@ -278,7 +301,55 @@ function bootstrapFlags(bin: Binary, pg: SPage, beams: BeamQuad[], unit: RasterU
       }
       return false;
     };
-    const two = twoEnd - (offset + 1.0) >= 0.6 && frac(offset + 1.0, twoEnd) >= FLAG_INK2 && (twoPeaks() || hookRuns() >= 2);
+    /**
+     * **沿干右侧逐列竖扫黑白游程**：从干尖往头走，数黑段数（谱线行不算、隔不到 0.15 格的空白不断开、
+     * 薄于 0.15 格的去线残渣不算一段），返回数出两段以上的列占比。两道钩在干边粘成一段、右缘又对齐的，
+     * 离干 0.2–0.6 格的竖线上还是穿过两道钩（万古磐石歌低分辨率本、来敬拜荣耀王朝下的粗体钩）；
+     * 八分在这一带全是一段。
+     */
+    const colRuns = (tip: number, end: number) => {
+      const gapMin = Math.max(2, sp * 0.15);
+      const runMin = Math.max(2, sp * 0.15);
+      const lineRow = (y: number) => lineYs.some((ly) => Math.abs(ly - y) <= unit.lineThick);
+      let cols = 0;
+      let twos = 0;
+      for (let x = Math.round(st.cx + unit.lineThick + sp * 0.1); x <= st.cx + sp * FLAG_COLS_X; x++) {
+        if (x < 0 || x >= bin.w) continue;
+        let runs = 0;
+        let len = 0;
+        let gap = gapMin;
+        for (let dy = 0; dy < end * sp; dy++) {
+          const y = Math.round(tip + toward * dy);
+          if (y < 0 || y >= bin.h) continue;
+          if (lineRow(y)) {
+            if (gap === 0) len++;
+            continue;
+          }
+          if (bin.data[y * bin.w + x]) {
+            if (gap >= gapMin) {
+              if (len >= runMin) runs++;
+              len = 0;
+            }
+            len++;
+            gap = 0;
+          } else gap++;
+        }
+        if (len >= runMin) runs++;
+        cols++;
+        if (runs >= 2) twos++;
+      }
+      return cols ? twos / cols : 0;
+    };
+    // **两道钩粘着干尖**：干只认到钩团之前（万古磐石歌低音 m1 十六分，干尖少了 1.7 格，钩窗口朝头那边只剩 0.7 格），
+    // 从延出的真干尖再竖扫一次。延出的尖只拿来补判第二道钩，不挪出块和一道钩的判断：
+    // 普通八分的干尖本来就埋在钩里 0.6 格上下，全按延出的尖量，整批错位（信心使我得胜音符 97.8 → 96.7）
+    const glued = () => {
+      const tip = tipOf(far);
+      if (Math.abs(tip - far) < sp * FLAG_GLUED) return false;
+      const end = Math.min(2.4, Math.abs(hy - tip) / sp - 0.6);
+      return end >= 1.6 && colRuns(tip, end) >= FLAG_COLS2;
+    };
+    const two = twoEnd - (offset + 1.0) >= 0.6 && frac(offset + 1.0, twoEnd) >= FLAG_INK2 && (twoPeaks() || hookRuns() >= 2 || colRuns(far + toward * offset * sp, Math.min(2.4, room - offset)) >= FLAG_COLS2) || glued();
     const code = two ? (up ? "flag16thUp" : "flag16thDown") : up ? "flag8thUp" : "flag8thDown";
     const h = sp * (two ? 2.2 : 1.5);
     // 出块也从**连接点**起算：`offset` 找到的才是符尾真正长出来的地方，
@@ -574,6 +645,14 @@ const FLAG_REACH_LW = 0.15;
 const HOOK_PROM = 0.15;
 /** 符尾窗口与和弦字母条交叠超过这一成就不认。 */
 const FLAG_AVOID = 0.2;
+/** 干尖顺着干往外延的上限（格）。 */
+const FLAG_TIP_EXT = 2.0;
+/** 干尖顺着干要延出这么多（格），才从延出的真干尖重找符尾、补判第二道钩。 */
+const FLAG_GLUED = 0.5;
+/** 第二道钩：干右侧竖扫能数出两段黑的列至少占这么多。 */
+const FLAG_COLS2 = 0.25;
+/** 竖扫只扫到干右侧这么远（格）：再往外，八分长尾回弯的尖也会被数成第二段。 */
+const FLAG_COLS_X = 0.6;
 /** 符干两端离干上的头心都不过这么多格：是两个头之间被切出来的一截干，没有自由端，不找符尾。
  *  0.75 → 1.0：我灵镇静低音谱表 C4/A3 和弦的干被加线切成两截，上一截下端离 A3 头心 0.94 格，
  *  A3 头的右半边被当成了八分符尾。 */

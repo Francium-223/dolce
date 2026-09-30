@@ -1042,6 +1042,16 @@ function classify(comps: Component[], bin: Binary): { c: Classified; numH: numbe
     // 上限 6 字号（原 4）：四声部本里两个声部共用一根小节线（新编赞美诗·四声部 7：h118、numH≈28，4.2 倍），卡 4 倍整行丢线；
     // 这道上限挡的是贯穿整页的扫描边框（上千像素高），6 倍照样挡得住。
     if (h >= numH * 1.3 && h <= barMaxH && w <= numH * 0.6 && h / w >= 3.5) { (h > numH * 6 ? c.longBarlines : c.barlines).push(k); continue; }
+    // 粗体本的终止线 ‖ 细粗两根糊成一块：赞美诗歌1218 599 末尾 24×51（字号 34），宽过 0.6 字号、h/w 只有 2.1，落进数字块读成 `0`。
+    // 认法看墨：填充 ≥0.7、六成以上的列墨贯通 0.85 倍块高（实测 0.81、16/24 列）；数字 0 的填充 0.4 上下，粗体 8 也就 0.6
+    if (h >= numH * 1.3 && h <= numH * 6 && w <= numH * 0.9 && k.area >= w * h * 0.7) {
+      const cols = columnInk(bin, k.bbox, 0, h);
+      // 还得是**两根**：中间有一道墨不到三成高的谷列，谷的左右两侧都有贯通列（599 那块第 10 列只 4px）。粗体「1」也实心、列墨贯通，
+      // 但只有一根竖笔（哦，愿我有千万舌头 三个 `1` 被收成了线）
+      const full = (v: number) => v >= h * 0.85;
+      const valley = cols.some((v, x) => v <= h * 0.3 && cols.slice(0, x).some(full) && cols.slice(x + 1).some(full));
+      if (valley && cols.filter(full).length >= w * 0.6) { probe("barline.fusedFinal"); c.barlines.push(k); continue; }
+    }
     // 减时线粘着低八度点 / 数字：剥掉线带，各归各类（判据见 stripUnderline）。
     // 脏页只收「剥出 ≥2 个数字」的：一排数字底都压在同一条减时线上（78《马槽歌》Q2 `1̲2̲` 连线成一块 101×42，
     // 读成一个 1），这形是明摆着的，碎渣冒充八度点的顾虑在这里不成立。
@@ -1467,6 +1477,13 @@ function buildJpNums(
   // 其中 1600《南非之行》、17《不失足》都有 GT）。
   const dotSized = (kb: Rect) => !cls.clean || inkFill(bin, kb) >= 0.6;
   resolveDashLike(cls, rowCores, numH);
+  // 各音符正下方有没有「疑似低音点」（见 aboveLyrics 的成片放宽）：正下方 0.8 字号内的小点，点顶在字顶线之上、点底不过字顶线 4px
+  const looseLow = (dot: Rect): boolean => dot.y < lyricTop && rbottom(dot) <= lyricTop + 4;
+  const lowSuspect = rowCores.map((c) => cls.dots.some((k) => {
+    const kb = k.bbox, gap = kb.y - rbottom(c.bbox);
+    return Math.abs(rcx(kb) - rcx(c.bbox)) <= numH * 0.35 && gap >= -1 && gap < numH * 0.8 &&
+      kb.w <= numH * 0.45 && kb.h <= numH * 0.45 && (rbottom(kb) <= lyricTop - 2 || looseLow(kb));
+  }));
   for (let i = 0; i < rowCores.length; i++) {
     const d = rowCores[i].bbox;
     const next = rowCores[i + 1]?.bbox;
@@ -1533,9 +1550,15 @@ function buildJpNums(
       const overDigit = rowCores.some((c) => Math.abs(rcx(c.bbox) - rcx(kb)) < numH * 0.3);
       const onBaseline = rcy(kb) > dcy && kb.y >= d.y && rbottom(kb) <= rbottom(d) + numH * 0.1;
       // 尺寸门按宽高之和量：淡印的附点常一边削掉一两像素（同首实测 5×7，字号 36，宽差 0.4px 够不着 0.15）。
-      if (rcx(kb) > rright(d) && rcx(kb) < dotMaxX && !overDigit &&
+      // 外延窗口：点心落在空隙 60%~85% 的也收，但得压在数字中线附近（|Δcy| < 0.3 字号，下一个音的八度点离中线至少半个字号；选本 86 `3·5·` 的点偏下 0.22、点心恰在 60% 线上）——附点不会印在音符前面，
+      // 中线上的点只能是左边这个音的；下一个音的八度点在它上下方，过不了中线这道门。选本 490 小图（字号 18）`4̲.7̳`
+      // 的点 3×4、点心在空隙 68% 处，窗口一卡就丢（雅歌、选本「识别只差附点」三百多处多是这类）
+      // 外延的要是**实心**点（墨占包围盒六成以上）：迦南诗选 1717 倚音 `{3}` 底下那道连音小弧的弧钩 7×5 也落在这里，一笔细弧、墨不到一半
+      const farDotX = next ? Math.min(rright(d) + (next.x - rright(d)) * 0.85, rightLimit) : dotMaxX;
+      const inWin = rcx(kb) < dotMaxX || (rcx(kb) < farDotX && Math.abs(rcy(kb) - dcy) < numH * 0.3 && k.area >= kb.w * kb.h * 0.6);
+      if (rcx(kb) > rright(d) && inWin && !overDigit &&
           kb.w >= numH * 0.12 && kb.h >= numH * 0.12 && kb.w + kb.h >= numH * 0.3 &&
-          (Math.abs(rcy(kb) - dcy) < numH * 0.35 || onBaseline)) { dot++; dotSizes.push((kb.w + kb.h) / 2); continue; }
+          (Math.abs(rcy(kb) - dcy) < numH * 0.35 || onBaseline)) { if (rcx(kb) >= dotMaxX) probe("dot.farWindow"); dot++; dotSizes.push((kb.w + kb.h) / 2); continue; }
       // 八度点：须足够大(排除噪点小斑)、水平居中于数字、且紧贴上/下方（间隙 < 0.8×字号）。
       // 阈值据实测分布定（真八度点 w/h≈0.21~0.30×numH、|dx|≤0.14；噪点误判那个是 0.09×0.11、dx=0.45）：
       // 尺寸下限 0.15、居中收到 0.4，两道独立门都能剔除噪点，且对真点留足余量。
@@ -1576,7 +1599,10 @@ function buildJpNums(
       // 点整个在**歌词字顶线之上**：同一行歌词字顶是对齐的，真低音点在这条线之上；「主」字顶那一点是字的一部分，
       // 顶与别的字平齐或更低。四声部第 2 声部底下紧挨着歌词，真低音点下 4px 就是字，按「下方有墨」会被剔掉
       //（84《主为救人》Q2 `5̣ − 5̣ 5̣` 整行丢点，点底 528、字顶 532）。
-      const aboveLyrics = (dot: Rect): boolean => rbottom(dot) <= lyricTop - 2;
+      // 声部行上点常直接压在字顶上（新编赞美诗·四声部 11 第 2 声部：点底 540~543、字顶线 539）。点顶在字顶线之上、点底不过字顶线 4px 的
+      // 只在**成片**时收：前后相邻的音符下面也有疑似低音点（一排低音声部）；前后都没有、只这一个的照旧从严——字顶的点画单个出现
+      const aboveLyrics = (dot: Rect): boolean => rbottom(dot) <= lyricTop - 2 ||
+        (voiceMates.length > 0 && looseLow(dot) && (lowSuspect[i - 1] || lowSuspect[i + 1]));
       // 点与**歌词字同高**：左右 2.5 字号内有整字高的汉字块、点心落在它的上下沿之间——是歌词的标点（逗号、顿号），
       // 归歌词行，不是八度点。1218 61 上一行歌词「苦，」的逗号正落在 `6̣` 正上方，收成高音点，与真低音点一加一减抵消成 `6`。
       // 汉字块：高 ≥0.85 字号、近方（宽 ≥0.7 倍高），且同一高度上至少两块成一行——和弦字母、小号数字（1801、714 的 15×22）不算
@@ -2394,6 +2420,36 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
       if (digitCache.get(k.bbox) === 1 && k.bbox.w >= oneW * 1.35 && topBar(k.bbox)) { probe("digit.wideOneIsSeven"); digitCache.set(k.bbox, 7); }
     }
   }
+  // 读成 0 的矮块得有**封闭的洞**：赞美诗歌1218 通本倚音与主音之间那道侧放的小连线（ᶜ 形，125、631 实测 23×19 / 22×19，
+  // 数字 34）读成休止 0，凭空多一个音。只查比本行数字矮一截（<0.75）的：正常大小的 0 不动（粗黑页上 0 的洞可能糊死）
+  {
+    const hasHole = (b: Rect): boolean => {
+      const W = b.w + 2, H = b.h + 2;
+      const seen = new Uint8Array(W * H);
+      const ink = (x: number, y: number) => x >= 1 && y >= 1 && x <= b.w && y <= b.h && bin.data[(b.y + y - 1) * bin.w + b.x + x - 1] === 1;
+      const stack = [0];
+      seen[0] = 1;
+      while (stack.length) {
+        const p = stack.pop()!, x = p % W, y = (p - x) / W;
+        for (const [nx, ny] of [[x + 1, y], [x - 1, y], [x, y + 1], [x, y - 1]]) {
+          if (nx < 0 || ny < 0 || nx >= W || ny >= H) continue;
+          const q = ny * W + nx;
+          if (seen[q] || ink(nx, ny)) continue;
+          seen[q] = 1; stack.push(q);
+        }
+      }
+      let holes = 0;
+      for (let y = 1; y <= b.h; y++) for (let x = 1; x <= b.w; x++) if (!seen[y * W + x] && !ink(x, y)) holes++;
+      return holes >= 2;
+    };
+    // 0 占三成以上的行不动：多半是歌词/页眉凑成的伪行，要留给后面「休止占比」那道门整行剔掉（先剔了 0 占比就降下来，伪行反倒活了，1218 347）
+    for (const m of staff) {
+      const medH = median(m.rd.map((k) => k.bbox.h));
+      if (m.rd.filter((k) => digitCache.get(k.bbox) === 0).length >= m.rd.length * 0.3) continue;
+      const drop = m.rd.filter((k) => digitCache.get(k.bbox) === 0 && k.bbox.h < medH * 0.75 && !hasHole(k.bbox));
+      if (drop.length) { probe("rest.openArc"); m.rd = m.rd.filter((k) => !drop.includes(k)); }
+    }
+  }
   const ocrDigit = (b: Rect) => digitCache.get(b) ?? 0;
 
   // 圆滑线弧帽候选（宽而薄的连通块）：用于在 buildJpNums 里把弧脚碎片从"高八度点"中剔除。
@@ -2860,7 +2916,12 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
 
   const allRows: StaffRow[] = staff.map((m) => {
     const mySys = sysOf.get(m)?.sys;
-    const mates = mySys !== undefined ? staff.filter((o) => o !== m && sysOf.get(o)?.sys === mySys).flatMap((o) => o.rd.map((k) => k.bbox)) : [];
+    // 歌词行不算别的声部：四声部谱夹在第 2、3 声部之间的几行歌词此时还在系统里（新编赞美诗·四声部 11《荣归天父歌》三行词 41px 见方，
+    // 数字 38×22），第 2 声部压在字顶上的低音点被 nearerOther 判成「离下面那个数字更近」、整排丢掉（全本第 2 声部漏低音点七百多处）。
+    // 汉字核近方（宽 ≥0.85 高）且比本行数字高，一半以上的核是这样的行就是歌词
+    const myH = median(m.rd.map((k) => k.bbox.h));
+    const lyricRow = (o: typeof m) => o.rd.filter((k) => k.bbox.w >= k.bbox.h * 0.85 && k.bbox.h >= myH * 1.05).length * 2 >= o.rd.length;
+    const mates = mySys !== undefined ? staff.filter((o) => o !== m && sysOf.get(o)?.sys === mySys && !lyricRow(o)).flatMap((o) => o.rd.map((k) => k.bbox)) : [];
     const nums = buildJpNums(bin, m.rd, numH, c, ocrDigit, arcCands, m.barlineXs, dotSizes, mates);
     // buildJpNums 与 rd 一一对应，故按下标把摘出来的变音记号挂回它所修饰的那个音符。
     m.rd.forEach((k, j) => {

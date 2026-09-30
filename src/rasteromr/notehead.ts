@@ -323,15 +323,40 @@ function trimLedger(bin: Binary, b: Rect, unit: RasterUnit): { box: Rect; area: 
   return { box: { x: b.x + l, y: b.y + top, w: r - l + 1, h: bottom - top + 1 }, area, trimmed, ledgerY };
 }
 
+/** 竖段端点离头盒不到这么多格、中间那一列一路是墨的，也算挂着（给了去线图 `nl` 时）：
+ *  竖段表把干截在谱线上，头在加线上、干从头底到顶线那几像素没进段（我灵镇静 m23 C4，差 4 像素）。 */
+const STEM_JOIN = 0.3;
+
+/** 竖段端点没够到盒的，补到盒缘（`stemOf` 按 `STEM_JOIN` 连上的），后面挂干（`findStems`）才对得上。 */
+function extendStem(s: LineSeg, b: Rect): void {
+  const top = Math.min(s.y0, s.y1);
+  const bottom = Math.max(s.y0, s.y1);
+  const up = s.y0 <= s.y1;
+  if (top > b.y + b.h) up ? (s.y0 = b.y + b.h) : (s.y1 = b.y + b.h);
+  else if (bottom < b.y) up ? (s.y1 = b.y) : (s.y0 = b.y);
+}
+
 /** 贴在这个符头左缘或右缘、且纵向相交的竖段。 */
-function stemOf(b: Rect, stems: LineSeg[], unit: RasterUnit): LineSeg | null {
+function stemOf(b: Rect, stems: LineSeg[], unit: RasterUnit, nl?: Binary): LineSeg | null {
   const tol = Math.max(unit.lineThick * 2, unit.space * 0.25);
   for (const s of stems) {
     const x = (s.x0 + s.x1) / 2;
     if (Math.abs(x - b.x) > tol && Math.abs(x - (b.x + b.w)) > tol) continue;
     const top = Math.min(s.y0, s.y1);
     const bottom = Math.max(s.y0, s.y1);
-    if (bottom < b.y || top > b.y + b.h) continue;
+    const gy = nl ? unit.space * STEM_JOIN : 0;
+    if (bottom < b.y - gy || top > b.y + b.h + gy) continue;
+    if (bottom < b.y || top > b.y + b.h) {
+      if (!nl) continue;
+      // 竖段端点离盒差几像素：那一列（段宽内任一列）一路是墨才算连着
+      const [y0, y1] = top > b.y + b.h ? [b.y + b.h, top] : [bottom, b.y];
+      let joined = false;
+      for (let xx = Math.round(Math.min(s.x0, s.x1) - 1); xx <= Math.round(Math.max(s.x0, s.x1) + 1) && !joined; xx++) {
+        joined = true;
+        for (let y = Math.round(y0); y <= Math.round(y1); y++) if (!nl.data[y * nl.w + xx]) { joined = false; break; }
+      }
+      if (!joined) continue;
+    }
     // **符头要在符干的某一端**，不能在中间——小节线也常擦着符头过
     // （与矢量路 `page.ts::findStems` 同一条闸）。
     const cy = b.y + b.h / 2;
@@ -478,7 +503,7 @@ export function hollowHeadsFromHoles(
     });
     if (walled) continue;
     let box: Rect = { x: hole.x - ring, y: hole.y - ring, w: hole.w + ring * 2, h: hole.h + ring * 2 };
-    if (round && (hole.w / hole.h < HOLE_RATIO_ROUND || (!stemOf(box, stems, unit) && !stemThrough(box, stems, unit)))) {
+    if (round && (hole.w / hole.h < HOLE_RATIO_ROUND || (!stemOf(box, stems, unit, nl) && !stemThrough(box, stems, unit)))) {
       // 没干（或更瘦）的近圆内腔只可能是**全音符**：这类字体的全音符圈厚、内腔斜得竖起来（我一生要赞美你，
       // 头 25px 宽 1.7 格、内腔被谱线豁开并回来 9×11），内腔外扩一圈的盒只有 1 格、够不上全音符宽。
       // 头盒按图上的圈量到外缘，够全音符宽的才往下走。
@@ -517,7 +542,7 @@ export function hollowHeadsFromHoles(
     if (fill < FILL_RING[0] || fill > FILL_RING[1]) continue;
     // 已经认出来的符头不重复收
     if (taken.some((t) => overlaps(t, box, sp * 0.4))) continue;
-    let stem: LineSeg | true | null = stemOf(box, stems, unit);
+    let stem: LineSeg | true | null = stemOf(box, stems, unit, nl);
     if (!stem) {
       // 竖段表里没有的干：闭合谱男声 B3 往下一根干穿过整个谱表到 G♯2（齐来称颂），
       // 长得像小节线，没进竖段表。照 Audiveris `HeadLinker` 的做法直接在图上沿盒边量墨柱，
@@ -538,6 +563,7 @@ export function hollowHeadsFromHoles(
     // 靠墨柱认下的头标 `weak`：不进空心头模板的样本（`buildHollowMasks`）。它们多半拖着
     // 一根穿过窗口的长干，混进去模板就偏了——善牧恩慈歌两处真二分头认出来，却让模板
     // 再也配不上后面的全音符和弦（音符 90.0% → 89.3%，不进样本 → 91.4%）。
+    if (stem && stem !== true) extendStem(stem, box);
     out.push({ box, code: w >= W_WHOLE && !stem ? "noteheadWhole" : "noteheadHalf", ...(stem === true ? { weak: true } : {}) });
     taken.push(box);
   }

@@ -454,7 +454,13 @@ export function buildStems(pg: SPage, sp: number): StemInfo[] {
     }
     out.push({ seg, up, notes, beams: [], flags });
   }
-  return out;
+  // **一个头挂上了两根干，只留贴在正经那一侧的**：朝上的干贴头的右缘、朝下的贴左缘；贴在反侧的是二度和弦错开的头。
+  // 相邻两个十六分挨得近时（破碎扫描版 p7 E4、F4 隔一个头宽），后一个头的左缘也落在前一根朝上的干旁边，
+  // 被前一根干当成错开的二度收走、并成一枚和弦，它自己那根干反倒空了。它另有一根干贴在正经那一侧的，从反侧那根上摘掉
+  const proper = (st: StemInfo, nt: Sym) => Math.abs((st.up ? nt.box.right : nt.box.left) - st.seg.cx) <= sp / 4;
+  for (const st of out)
+    st.notes = st.notes.filter((nt) => proper(st, nt) || !out.some((o) => o !== st && o.notes.includes(nt) && proper(o, nt)));
+  return out.filter((st) => st.notes.length);
 }
 
 /** `Beam::connect` 的结果。 */
@@ -473,11 +479,16 @@ function beamConnect(b: BeamShape, st: StemInfo, sp: number): BeamHit {
   // （实测这是全书时值的头号错误，一条判据吃掉 158 处）。
   // 所以再补一个窗口：从符干**离符头远的那一端**朝符头量，两格以内都算接上
   // （三条符杠正好一格半）。反方向不放宽——那一侧不该有符杠。
+  const noteY = st.notes.reduce((a, n) => a + (n.box.top + n.box.bottom) / 2, 0) / st.notes.length;
+  const far = Math.abs(st.seg.top - noteY) > Math.abs(st.seg.bottom - noteY) ? st.seg.top : st.seg.bottom;
+  const toward = Math.sign(noteY - far) || 1;
+  // **杠不会在头的外侧**：干从杠伸向头，越过最外那个头心还往外的「杠」挂在头那一端（我全心颂赞 p172 八分 D4
+  // 头下贴着一截横墨，被算成第二层读成十六分）。
+  const cys = st.notes.map((n) => (n.box.top + n.box.bottom) / 2);
+  const headEnd = toward > 0 ? Math.max(...cys) : Math.min(...cys);
+  if ((y - headEnd) * toward > 0) return "none";
   const near = Math.abs(st.seg.top - y) < sp || Math.abs(st.seg.bottom - y) < sp;
   if (!near) {
-    const noteY = st.notes.reduce((a, n) => a + (n.box.top + n.box.bottom) / 2, 0) / st.notes.length;
-    const far = Math.abs(st.seg.top - noteY) > Math.abs(st.seg.bottom - noteY) ? st.seg.top : st.seg.bottom;
-    const toward = Math.sign(noteY - far) || 1;
     const d = (y - far) * toward;
     if (d < 0 || d > sp * 2) return "none";
   }

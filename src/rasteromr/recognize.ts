@@ -1492,7 +1492,6 @@ export async function recognizeRasterPage(
           if (ink(Math.round(cx - bw / 2 - unit.space * 0.35), y) || ink(Math.round(cx + bw / 2 + unit.space * 0.35), y)) side++;
         }
         if (!rows || side > rows * 0.2) continue;
-        if (process.env.SNDBG) console.error("solid neighbor", hb.x, hb.y, dir);
         split.push({ box: { x: Math.round(cx - bw / 2), y: Math.round(ny - bh / 2), w: Math.round(bw), h: Math.round(bh) }, code: "noteheadBlack" });
       }
     }

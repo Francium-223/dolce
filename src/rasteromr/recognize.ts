@@ -1180,6 +1180,24 @@ export async function recognizeRasterPage(
     restIds.add(c.id);
     restSyms.push({ box: full.box, code: "rest8th" });
   }
+  // **被谱线切成两截的八分休止**：球在线上、斜笔在线下（破碎扫描版 p8 女低 m?），去线后是两块，
+  // 上面那一路回填不过谱线。没人认领的小球，正下方隔着一条谱线（间隙不过一个线宽加 3 像素）、横向重叠的另一块，
+  // 合起来按八分休止的形状判
+  for (const c of cmap.contours) {
+    if (ledger.claimsOf(c.id).length) continue;
+    const b = c.bbox;
+    if (b.w < unit.space * 0.5 || b.w > unit.space * 1.2 || b.h < unit.space * 0.3 || b.h > unit.space * 1.0) continue;
+    if (!inBand(b.y + b.h / 2)) continue;
+    const gapMax = unit.lineThick + 3;
+    const d = cmap.contours.find((o) => o !== c && !ledger.claimsOf(o.id).length && o.bbox.y >= b.y + b.h * 0.5 && o.bbox.y - (b.y + b.h) <= gapMax &&
+      o.bbox.y + o.bbox.h > b.y + b.h + unit.lineThick && o.bbox.x < b.x + b.w && b.x < o.bbox.x + o.bbox.w && o.bbox.w <= unit.space * 1.2);
+    if (!d) continue;
+    const x0 = Math.min(b.x, d.bbox.x);
+    const box = { x: x0, y: b.y, w: Math.max(b.x + b.w, d.bbox.x + d.bbox.w) - x0, h: d.bbox.y + d.bbox.h - b.y };
+    if (!isEighthRest(nl, box, c.area + d.area, unit)) continue;
+    if (restSyms.some((r) => overlapFrac(r.box, box) > 0.3)) continue;
+    restSyms.push({ box, code: "rest8th" });
+  }
 
   /** 块的中心压在某条符杠的中线上（半个杠厚以内）：那是提走符杠之后剩下的杠头，不是符头。 */
   const onBeamLine = (b: Rect, ext = 0) => {

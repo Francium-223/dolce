@@ -647,6 +647,8 @@ const HOOK_PROM = 0.15;
 const FLAG_AVOID = 0.2;
 /** 干尖顺着干往外延的上限（格）。 */
 const FLAG_TIP_EXT = 2.0;
+/** 谱表外的头按墨定高时，墨高（格）要在这个范围里才算一个头。 */
+const HEAD_INK_H = [0.8, 1.3] as const;
 /** 干尖顺着干要延出这么多（格），才从延出的真干尖重找符尾、补判第二道钩。 */
 const FLAG_GLUED = 0.5;
 /** 第二道钩：干右侧竖扫能数出两段黑的列至少占这么多。 */
@@ -2976,6 +2978,81 @@ export async function recognizeRasterPage(
     pg.symbols = pg.symbols.filter(
       (s0) => !(s0.hasTag("Note") && inFlag(s0) && ((s0.code === "noteheadHalf" && besideHead(s0)) || ((s0.code === "noteheadHalf" || s0.code === "noteheadWhole") && otherEndBlack(s0) && walled(s0)))),
     );
+  }
+  // **谱表外的头按实际加线定音高**：加线上下一格就是一级，按整行线距外推，头心偏出小半格就读错一级。
+  // 两种偏法：头盒偏了（当我们回到天家 m14 加一线上的 C4，头盒比墨低 4 像素，读成 B3；你的信实广大 m10、耶和华是我的牧者 m4 同），
+  // 加线画得不按线距（晨曦破晓一页的加一线比外推的位置高 3 像素）。
+  // 头心：在头中段那几列里，从头盒中心往上下走到墨断，墨高像一个头（0.8~1.3 格）、没碰到五线的，取这段墨的中心；
+  // 和弦叠头连成两格高、空心头的内腔把墨断开、「8」字叠头顺着谱线连到里面那个头（万古磐石歌），仍用头盒中心。
+  // 格子：谱表边线加上头左右那一段的加线，从边线往外逐条排；头心落在哪条线上（离线不到格距的 0.25）、哪个间里，就是哪一级。
+  // 超出最外一条加线 0.9 格的不管（照旧按线距外推）
+  {
+    const sp0 = unit.space;
+    const B = raster.bin;
+    const legers = pg.segsWithTag("Leger").filter((sg) => sg.isH);
+    for (const h of pg.symbols) {
+      if (!h.hasTag("Note") || !/^notehead/.test(h.code) || !h.ownerStaff || h.ownerStaff.lineYs.length !== 5) continue;
+      const stf = h.ownerStaff;
+      const hx = (h.box.left + h.box.right) / 2;
+      const ys = stf.lineYsAt ? stf.lineYsAt(hx) : stf.lineYs;
+      if (h.py > ys[0] - sp0 * 0.3 && h.py < ys[4] + sp0 * 0.3) continue;
+      const above = h.py < ys[0];
+      const lineRow = (y: number) => ys.some((ly) => Math.abs(ly - y) <= unit.lineThick);
+      let yc = h.py;
+      {
+        const w = h.box.right - h.box.left;
+        const x0 = Math.max(0, Math.round(h.box.left + w * 0.2));
+        const x1 = Math.min(B.w - 1, Math.round(h.box.right - w * 0.2));
+        const rowInk = (y: number) => {
+          if (y < 0 || y >= B.h) return false;
+          for (let x = x0; x <= x1; x++) if (B.data[y * B.w + x]) return true;
+          return false;
+        };
+        const cy = Math.round(h.py);
+        if (rowInk(cy)) {
+          let t = cy;
+          let b = cy;
+          while (rowInk(t - 1) && cy - t < sp0 * 1.5) t--;
+          while (rowInk(b + 1) && b - cy < sp0 * 1.5) b++;
+          const hh = (b - t + 1) / sp0;
+          let crosses = false;
+          for (let y = t; y <= b && !crosses; y++) crosses = lineRow(y);
+          if (hh >= HEAD_INK_H[0] && hh <= HEAD_INK_H[1] && !crosses) yc = (t + b) / 2;
+        }
+      }
+      // 边线往外的格子：边线、加线（同一条加线常拆成几段，按 y 并起来）
+      const edge = above ? ys[0] : ys[4];
+      const out = above ? -1 : 1;
+      const spL = (ys[4] - ys[0]) / 4;
+      const grid = [edge];
+      const ly = legers
+        // 加线比头宽，至少一侧伸出头外：只在头里面的横墨是粗体头自己的笔画（我一生要赞美你）
+        .filter((sg) => sg.left < h.box.right + sp0 * 0.3 && sg.right > h.box.left - sp0 * 0.3)
+        .filter((sg) => sg.left <= h.box.left - sp0 * 0.15 || sg.right >= h.box.right + sp0 * 0.15)
+        .map((sg) => (sg.y0 + sg.y1) / 2)
+        .filter((y) => (y - edge) * out > sp0 * 0.5 && (y - yc) * out < sp0 * 0.5)
+        .sort((p, q) => (p - q) * out);
+      for (const y of ly) {
+        const last = grid[grid.length - 1];
+        const d = (y - last) * out;
+        if (d < sp0 * 0.5) continue; // 同一条加线拆成的几段
+        // 间距要像一格：近了是别的横墨，远了是中间缺了一条，往外的都不可靠
+        if (d < spL * 0.8 || d > spL * 1.25) break;
+        grid.push(y);
+      }
+      let pos = -1; // 从边线往外的半格数
+      const gapAt = (i: number) => (i + 1 < grid.length ? (grid[i + 1] - grid[i]) * out : i > 0 ? (grid[i] - grid[i - 1]) * out : sp0);
+      let j = 0;
+      for (let i = 1; i < grid.length; i++) if (Math.abs(yc - grid[i]) < Math.abs(yc - grid[j])) j = i;
+      const dj = (yc - grid[j]) * out;
+      if (Math.abs(dj) <= gapAt(j) * 0.25) pos = j * 2;
+      else if (dj > 0) pos = j + 1 < grid.length || dj < sp0 * 0.9 ? j * 2 + 1 : -1;
+      else pos = j > 0 ? j * 2 - 1 : -1;
+      if (pos < 0) continue;
+      // 换成这一级的理想 y，交给 `middleStep` 读；级数没变的不动（临时记号按 py 配对，挪了会配岔：信心使我得胜）
+      const py = edge + (out * (pos * spL)) / 2;
+      if (stf.middleStep(py, hx) !== stf.middleStep(h.py, hx)) h.py = py;
+    }
   }
   const notes = buildNotes(pg, ctx, beams, stems, hollowish);
   attachAccidentalsByPitch(pg, ctx, notes);

@@ -1836,6 +1836,42 @@ export async function recognizeRasterPage(
     syms.push({ box: b, code });
     ledger.claim(b, `qrest:${code}`);
   }
+  // **中段被抽成竖段的四分休止**：扫描件上休止笔画粗、中段笔直（破碎扫描版 p4 m? 1.1×3 格），原语那一步当竖段提走，
+  // 块图里只剩碎块，上面那一路见不到它；那根竖段又被「贴着长干」那条当成了干。改在**没抹过的连通块**上认：
+  // 尺寸、填充、位置各闸同上（宽度放到 `QREST_SPINE_W`：扫描笔画粗），块里有根竖段**整根包在块内**（休止自己的脊），
+  // 就收成休止，那根竖段摘掉（不然当成干或小节线）
+  for (const c of cmap.contours) {
+    if (ledger.claimsOf(c.id).length) continue;
+    const b = c.bbox;
+    const w = b.w / unit.space;
+    const h = b.h / unit.space;
+    if (w < QREST_W[0] || w > QREST_SPINE_W || h < QREST_H[0] || h > QREST_H[1]) continue;
+    const fill = c.area / Math.max(1, b.w * b.h);
+    if (fill < QREST_FILL[0] || fill > QREST_FILL[1]) continue;
+    if (!midOfStaff(b, lines, unit)) continue;
+    if (nearStaffStart(b, groups, staffLefts, unit) || afterKey(b) < unit.space * KEY_TAIL || sharpCrossbars(nl, b, unit)) continue;
+    if (syms.some((s0) => overlapFrac(b, s0.box) > 0.3)) continue;
+    const inside = (v: LineSeg) => {
+      const x = (v.x0 + v.x1) / 2;
+      // 竖段是在带谱线的图上抽的，两端会伸进压着的谱线：上下各容半格
+      return x >= b.x + 1 && x <= b.x + b.w - 1 && Math.min(v.y0, v.y1) >= b.y - unit.space * 0.5 && Math.max(v.y0, v.y1) <= b.y + b.h + unit.space * 0.5;
+    };
+    const spine = prims.vSegs.filter(inside);
+    if (!spine.length) continue;
+    // 块外还有贴着的长竖段（真干）就不是
+    const stemOut = prims.vSegs.some((v) => {
+      if (spine.includes(v)) return false;
+      const x = (v.x0 + v.x1) / 2;
+      if (Math.max(v.y0, v.y1) - Math.min(v.y0, v.y1) < unit.space * 2.5) return false;
+      if (Math.abs(x - b.x) > unit.space * 0.5 && Math.abs(x - (b.x + b.w)) > unit.space * 0.5) return false;
+      return Math.min(Math.max(v.y0, v.y1), b.y + b.h) - Math.max(Math.min(v.y0, v.y1), b.y) >= b.h * 0.5;
+    });
+    if (stemOut) continue;
+    for (const v of spine) usedSegs.add(v);
+    const code = isEighthRest(nl, b, c.area, unit) ? "rest8th" : "restQuarter";
+    syms.push({ box: b, code });
+    ledger.claim(b, `qrest:${code}`);
+  }
 
   // ── 拍号：位置自举 + 模板验 ────────────────────────────────────────────────
   //
@@ -4224,6 +4260,8 @@ export type { Binary };
 const QREST_W = [0.75, 1.1] as const;
 const QREST_H = [2.2, 3.1] as const;
 const QREST_FILL = [0.33, 0.62] as const;
+/** 中段被抽成竖段的四分休止：宽度上限（格）。扫描件笔画粗，比 `QREST_W` 宽一点。 */
+const QREST_SPINE_W = 1.25;
 
 /** 行首「谱号 + 调号」那一段占几格（线距的倍数）。谱号约 2 格宽，
  *  七个降号排开也就再占 4 格，留一点余量。 */

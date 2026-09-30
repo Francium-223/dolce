@@ -512,7 +512,10 @@ export async function recognizeLyrics(
     if (yBotR - yTop < charMin) continue;
 
     const inBand = (c: Component) => { const y = dcy(c); return y >= yTop && y <= yBotR; };
-    const band = comps.filter((c) => { const b = c.bbox; return inBand(c) && b.h >= charMin && b.w >= charMin * 0.4; });
+    // 贯穿歌词带的长竖线（选本 303 后两行的小节线从谱行一直画进歌词行，2×77px）不收：它进了 verse 行，
+    // 投影窗口被撑成 77px 高、上下两行字糊成一条，rec 只读出「不要使气只用圣宝」
+    const barLike = (b: Rect) => b.h > numH * 3 || (b.h > numH * 1.8 && b.w < b.h * 0.25);
+    const band = comps.filter((c) => { const b = c.bbox; return inBand(c) && b.h >= charMin && b.w >= charMin * 0.4 && !barLike(b); });
     if (!band.length) continue;
 
     // S2① 按 deslant-y 分 verse 行（斜线已拉平，同一行 dcy 相近）。

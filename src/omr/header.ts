@@ -549,7 +549,7 @@ export async function recognizeHeader(
     const dets = await ocr.recognizeRegion(bin, { x: 0, y: 0, w: bin.w, h: Math.round(firstStaffTopY - numH * 0.1) });
     if (dets.length) {
       const lines: HLine[] = splitInlineKey(dets.map((d) => ({ text: d.text, charH: d.bbox.h, cx: d.bbox.x + d.bbox.w / 2, cy: d.bbox.y + d.bbox.h / 2, n: 1, bbox: d.bbox, chars: d.chars })));
-      if ((globalThis as { __omrDebug?: boolean }).__omrDebug) console.log("[header/det]", lines.map((l) => `${Math.round(l.charH)}px@${Math.round(l.cx)},${Math.round(l.cy)}=${JSON.stringify(l.text)}`).join("  "));
+      if ((globalThis as { __omrDebug?: boolean }).__omrDebug) console.log("[header/det]", lines.map((l) => `${Math.round(l.charH)}px@${Math.round(l.cx)},${Math.round(l.cy)}w${Math.round(l.bbox.w)}=${JSON.stringify(l.text)}`).join("  "));
       probe("header.det");
       await classify(lines);
       return out;
@@ -1019,6 +1019,12 @@ export async function recognizeHeader(
     // 署名下一行括号里的原文名（「(Reginald Heber)」「(John B. Dykes)」），单独成行。
     const latinParenRe = /^\s*[(（][A-Za-z][A-Za-z .'’\-]*[)）]\s*$/;
     const maxCharH = Math.max(0, ...ls.map((l) => l.charH));
+    const effH = (l: HLine) => {
+      const units = [...l.text].reduce((a, c) => a + (/[一-鿿]/.test(c) ? 1 : /[A-Za-z0-9]/.test(c) ? 0.6 : 0), 0);
+      // 只在明显叠排（按字宽算不到框高七成）时才换：det 框高带留白，正常一排字的「框宽 ÷ 字数」也比框高小一成上下，
+      // 一律取小会把标题与右上角分类行拉平、按宽度输掉（选本 36「第三十六首」输给「相信接受29」）
+      return units >= 2 && l.bbox.w / units < l.charH * 0.7 ? l.bbox.w / units : l.charH;
+    };
     const creditAt: Rect[] = [];   // 本函数收下的每条署名所在行框（与 out.credits 同序），末尾按栏重排用
     let titleLine: HLine | null = null;
     const rest: HLine[] = [];
@@ -1092,9 +1098,11 @@ export async function recognizeHeader(
       // 松紧不同，忽而比标题矮（2157：61 vs 77）、忽而比它高（2156：79 vs 68）——单看框高，
       // 2156 的标题就成了「迦南诗歌」。整行宽度在这里是压倒性的（892 vs 289），因为标题
       // 是一整句、出版方只有四个字。
+      // 比的是**有效字高**：框高与「框宽 ÷ 字数」取小。上下叠两排的框（选本 303 速度「不慢」叠着力度 mf，框高 54、宽才 106）
+      // 按框高比会顶掉真标题（29px）
       if (!titleLine) titleLine = ln;
-      else if (ln.charH > titleLine.charH * 1.25) titleLine = ln;
-      else if (ln.charH >= titleLine.charH * 0.85 && ln.bbox.w > titleLine.bbox.w) titleLine = ln;
+      else if (effH(ln) > effH(titleLine) * 1.25) titleLine = ln;
+      else if (effH(ln) >= effH(titleLine) * 0.85 && ln.bbox.w > titleLine.bbox.w) titleLine = ln;
     }
     // 署名按「左栏自上而下、再右栏」排：det 出框的先后不是阅读序（78《马槽歌》右栏的「柯克帕特里克曲」
     // 框顶比左栏第二行还高 1px，按 y 排就插到了左栏中间）。同一排左右各一条（作词在左、作曲在右）照旧左先。

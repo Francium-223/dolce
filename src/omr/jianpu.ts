@@ -2634,14 +2634,23 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
       // 中位宽高比 ≥0.85（数字瘦长 ~0.6、休止 0 ~0.7），剔完还剩 ≥3 行才剔
       for (const [sys, n] of countOf()) {
         const g = useRows.filter((r) => r.system === sys && !drop.has(r));
-        const sq = g.filter((r) => median(r.nums.map((k) => k.bbox.w / Math.max(1, k.bbox.h))) >= 0.85);
+        // 小字号印的声部（234 第 1 系统首声部，核高 27、别的声部 39）宽高比也偏大，但它矮、又有一排小节线（6 根）；
+        // 歌词行要么跟数字一般高，要么只凑得出一两根线（43 那排歌词核高 25、1 根线）
+        const sysH = median(g.map((r) => median(r.nums.map((k) => k.bbox.h))));
+        const sq = g.filter((r) => median(r.nums.map((k) => k.bbox.w / Math.max(1, k.bbox.h))) >= 0.85 &&
+          !(median(r.nums.map((k) => k.bbox.h)) < sysH * 0.85 && r.barlineXs.length >= 3));
         if (sq.length && n - sq.length >= 3) { probe("voices.dropLyricRow"); for (const r of sq) drop.add(r); }
       }
       for (const r of drop) { delete r.system; delete r.voice; }
-      for (const [sys, n] of countOf()) {
+      const cThin = countOf(), fqThin = new Map<number, number>();
+      for (const n of cThin.values()) fqThin.set(n, (fqThin.get(n) ?? 0) + 1);
+      const mdThin = [...fqThin].sort((x, y) => y[1] - x[1] || x[0] - y[0])[0]?.[0] ?? 0;   // 平局取小（f32 两个系统 4 行、5 行）
+      for (const [sys, n] of cThin) {
         const g = useRows.filter((r) => r.system === sys);
         const med = median(g.map((r) => r.nums.length));
-        const thin = g.filter((r) => r.nums.length < med * 0.4);
+        // 有三根以上小节线的不算碎行：全是长音的小字声部（234 第 4 声部「1 — — | 1 — —」只 6 个音、6 根线）；碎行至多一根。
+        // 系统行数已超过众数时不豁免——系统通长线穿过的碎行也有一排线（f32 第 2 系统和弦上叠的那几个小字）
+        const thin = g.filter((r) => r.nums.length < med * 0.4 && (r.barlineXs.length < 3 || n > mdThin));
         if (thin.length && n - thin.length >= 3) { probe("voices.dropThin"); for (const r of thin) drop.add(r); }
       }
       for (const r of drop) { delete r.system; delete r.voice; }

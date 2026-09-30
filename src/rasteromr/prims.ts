@@ -787,6 +787,7 @@ export function findPrimitives(
     }
   dropHeadEndBeams(beams, vSegs, unit);
   beams.push(...partialBeams(bin, beams, unit, vSegs));
+  vSegs.push(...beamStems(bin, beams, vSegs, unit, staffLineYs));
   return { hSegs, vSegs, beams };
 }
 
@@ -967,6 +968,75 @@ function localLineCenters(bin: Binary, runs: Uint16Array, cy: number, unit: Rast
 /** 没成组的横线只抹竖游程不过这么多个线宽的列：谱线、加线约一个线宽，符杠约 0.5 格厚——
  *  粗线页上只有线宽的两倍（主使我喜乐线宽 4、杠厚 8 像素）。 */
 const THIN_ONLY_RUN = 1.6;
+/** 从杠边伸出多长（格）的细墨柱算干。 */
+const BEAM_STEM_MIN = 2.0;
+
+/**
+ * **挂在杠上的干**：孤立性判据在粗线扫描件上抽不出夹在两个头之间的干——两侧量程按最宽那一行定，
+ * 贴着的邻头、横穿的谱线和杠一起占去过半行（破碎扫描版 p7 十六分，见「现状与待办」阈值冲突表）。
+ * 干没抽出来，它连着的头与邻头沿谱线焊成一团，超出拆块闸，头全丢。
+ * 换个特征找：干一定挂在杠上。沿每条杠逐列从杠的上下沿往外走（谱线那几行允许断开），
+ * 连续伸出 `BEAM_STEM_MIN` 格以上的列并成一束；束宽不过细笔上限、离已有竖段半格开外的，补一根竖段。
+ */
+function beamStems(bin: Binary, beams: BeamQuad[], vSegs: LineSeg[], unit: RasterUnit, lineYs: number[]): LineSeg[] {
+  const { w, h, data } = bin;
+  const sp = unit.space;
+  const thin = Math.max(3, Math.min(unit.lineThick * 2, sp * 0.4));
+  const lineHalf = unit.lineThick / 2 + 1;
+  const onLine = (y: number) => lineYs.some((ly) => Math.abs(ly - y) <= lineHalf);
+  const ink = (x: number, y: number) => x >= 0 && y >= 0 && x < w && y < h && data[y * w + x] === 1;
+  /** 从 y0 起沿 dir 走，返回走到的最远一行（谱线行上断了也接着走）。 */
+  const walk = (x: number, y0: number, dir: number): number => {
+    let last = y0 - dir;
+    for (let y = y0; y >= 0 && y < h; y += dir) {
+      if (ink(x, y)) last = y;
+      else if (!onLine(y)) break;
+    }
+    return last;
+  };
+  const out: LineSeg[] = [];
+  for (const q of beams) {
+    // 只找已挂着竖段的杠：真杠总有别的干抽得出来；一根都没挂的多是粗体四分休止的斜笔（主我敬拜你 m8）
+    const hung = vSegs.some((v) => {
+      const vx = (v.x0 + v.x1) / 2;
+      return vx >= q.box.x - 2 && vx <= q.box.x + q.box.w + 2 && Math.min(v.y0, v.y1) <= q.box.y + q.box.h + 2 && Math.max(v.y0, v.y1) >= q.box.y - 2;
+    });
+    if (!hung) continue;
+    // 两端各放 0.3 格：杠的中心线拟合常收不到端头那根干
+    const x0 = Math.ceil(Math.min(q.x0, q.x1, q.box.x) - sp * 0.3);
+    const x1 = Math.floor(Math.max(q.x0, q.x1, q.box.x + q.box.w) + sp * 0.3);
+    for (const dir of [1, -1]) {
+      let run: { x: number; end: number }[] = [];
+      const flush = () => {
+        if (!run.length) return;
+        const wd = run.length;
+        const xs = run.map((r) => r.x);
+        const cx = (xs[0] + xs[xs.length - 1]) / 2;
+        run.sort((a, b) => (b.end - a.end) * dir);
+        const end = run[Math.min(run.length - 1, 1)].end;
+        run = [];
+        if (wd > thin) return;
+        const t = x0 === x1 ? 0 : (cx - q.x0) / (q.x1 - q.x0 || 1);
+        const yc = q.y0 + (q.y1 - q.y0) * t;
+        const start = Math.round(yc - (dir * q.lw) / 2);
+        if (vSegs.some((v) => Math.abs((v.x0 + v.x1) / 2 - cx) <= sp * 0.5 && Math.min(v.y0, v.y1) <= Math.max(start, end) && Math.max(v.y0, v.y1) >= Math.min(start, end))) return;
+        if (out.some((v) => Math.abs(v.x0 - cx) <= sp * 0.5)) return;
+        out.push({ x0: cx, y0: Math.min(start, end), x1: cx, y1: Math.max(start, end), lw: wd, maxLw: wd });
+      };
+      for (let x = x0; x <= x1; x++) {
+        const t = x0 === x1 ? 0 : (x - q.x0) / (q.x1 - q.x0 || 1);
+        const yc = q.y0 + (q.y1 - q.y0) * t;
+        const edge = Math.round(yc + (dir * (q.lw / 2 + 1)));
+        const end = walk(x, edge, dir);
+        if ((end - edge) * dir >= sp * BEAM_STEM_MIN) run.push({ x, end });
+        else flush();
+      }
+      flush();
+    }
+  }
+  return out;
+}
+
 /** 挂杠的干多长以内（格）算一根干：再长是两个声部共用一根贯穿的干，两头都可以有杠。 */
 const ONE_STEM_MAX = 4.5;
 

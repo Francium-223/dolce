@@ -118,7 +118,10 @@ function stripUnderline(
 ): { lines: Component[]; dots: Component[]; digits: Component[] } | null {
   const b = k.bbox;
   if (lineH <= 0 || b.h <= lineH + 1) return null;                 // 高度对得上一条线 → 不用剥
-  const lineMode = b.w >= numH * 0.6 && b.h <= numH * 0.6;
+  // 块高上限 0.7 字号：线下挂着低音点、点与线之间还连着一截颈，整块就超过 0.6（赞美诗歌1218 144 `6̲̣5̲̣` 73×21，字号 34）。
+  // 超过 0.6 的那段要扁长（宽 ≥ 1.8 倍高）：升号 ♯ 近方、两道横笔也够宽（新编赞美诗·四声部 1 的 `#4` 21×19）
+  const flat = b.w >= b.h * 1.8;
+  const lineMode = b.w >= numH * 0.6 && (b.h <= numH * 0.6 || (flat && b.h <= numH * 0.7));
   const digitMode = !lineMode && b.h >= numH * 1.15 && b.h <= numH * 2 && b.w >= numH * 0.3;
   if (!lineMode && !digitMode) return null;
   // 本块自己的像素（包围盒里可能还躺着别的块，如《同伴》那个 6 连线块的框里就有右邻的 7）。
@@ -186,46 +189,95 @@ function stripUnderline(
     band[0] = y0; band[1] = y1;
   }
   const mkComp = (r: Rect, area: number): Component => ({ id: -1, bbox: r, area, cx: rcx(r), cy: rcy(r) });
-  const lines: Component[] = [];
-  for (const [y0, y1] of bands) {
-    let x0 = b.w, x1 = -1, area = 0;
-    for (let y = y0; y <= y1; y++) for (let x = 0; x < b.w; x++) if (on(x, y)) { area++; if (x < x0) x0 = x; if (x > x1) x1 = x; }
-    lines.push(mkComp({ x: b.x + x0, y: b.y + y0, w: x1 - x0 + 1, h: y1 - y0 + 1 }, area));
-  }
-  // 剥掉线带后剩下的像素逐块认
-  const rest: Binary = { w: b.w, h: b.h, data: new Uint8Array(b.w * b.h) };
-  for (let y = 0; y < b.h; y++) if (!cut[y]) for (let x = 0; x < b.w; x++) if (on(x, y)) rest.data[y * b.w + x] = 1;
-  const topBand = bands[0][0], botBand = bands[bands.length - 1][1];
-  const dots: Component[] = [], digits: Component[] = [];
-  let extra = 0;
-  for (const p of connectedComponents(rest, 1)) {
-    // 毛刺：面积门随字号走（(0.15 字号)²；原固定 3px）。粗黑翻印件线上沿挂着几个几像素的斜碎点（1218 277：5~8px），
-    // 固定 3px 时「说不清」整块放弃，减时线连着底下的点一起丢。真八度点远大于此（该页 ~90px；小图字号 16 时门约 6px）
-    if (p.area <= Math.max(3, (numH * 0.15) ** 2)) continue;
-    const r: Rect = { x: b.x + p.bbox.x, y: b.y + p.bbox.y, w: p.bbox.w, h: p.bbox.h };
-    const pc = mkComp(r, p.area);
-    const ratio = r.w / r.h;
-    if (p.bbox.y > botBand && r.w >= numH * 0.1 && r.h >= numH * 0.1 && r.w <= numH * 0.5 && r.h <= numH * 0.5 &&
-        ratio >= 0.6 && ratio <= 1.7 && p.area >= r.w * r.h * 0.6) { dots.push(pc); continue; }
-    // （线型）线带下方另一截**短减时线**：长线罩着 `6̳ 1̲ 1̳` 三个音，第二条线只在 6 和末一个 1 下面各有一截，
-    // 右边那截顶到长线上粘成一块（迦南诗选 1776《在天上我有一位阿爸》110×12）。按「线」认回来，
-    // 不然这块说不清、整块放弃，两个 1 的减时线全丢。
-    // **厚度也得像条线**：剥完线带后沿常留一行一两像素的毛边（二值化把 `-` 的下沿啃出个台阶），
-    // 1811《心愿》末音那根增时线（24×7、统计线粗 5）就这么被剥成「6px 的线 + 1px 的线」两条，
-    // 于是 stackedHline 判成双减时线、增时线整根不算数，末小节少一拍。真的第二条线不会细过统计
-    // 线粗的一半（1776 那两条同粗）。
-    if (lineMode && p.bbox.y > botBand && r.h >= Math.max(2, lineH * 0.5) && r.h <= lineH + 1 &&
-        r.w >= Math.max(numH * 0.4, r.h * 3)) {
-      lines.push(pc); extra++; continue;
+  // 先照常剥线、认剩下的块；认不下来（说不清）再退一步**按行投影量线带**重来一遍（proj）
+  const analyse = (proj: boolean): { lines: Component[]; dots: Component[]; digits: Component[] } | null => {
+    // 吸收毛边后重叠的线带并成一道：隔行够长的一根线会先被认成几道单行线带，吸收后都成了同一段（爱主颂 95 的 `-` 20×8 → 三道 [1,5]）
+    const bs: Array<[number, number]> = [];
+    for (const [y0, y1] of bands) {
+      const last = bs[bs.length - 1];
+      if (last && y0 <= last[1]) last[1] = Math.max(last[1], y1); else bs.push([y0, y1]);
     }
-    if (digitMode && p.bbox.y + p.bbox.h <= topBand && r.h >= numH * 0.85 && r.h <= numH * 1.25) { digits.push(pc); continue; }
-    return null;                                                    // 说不清是什么 → 整块不动
-  }
-  if (digitMode && !digits.length) return null;
-  if (lineMode && !dots.length && !extra) return null;              // 只剩一条线：交给原来的横线判据
-  probe(lineMode ? "stripUnderline.line" : "stripUnderline.digit");
-  if (extra) probe("stripUnderline.extraLine");
-  return { lines, dots, digits };
+    const ct = cut.slice();
+    let extra = 0;
+    // （线型）按行投影量出下方的短线带，不靠剥完再认：长线罩着几个音、第二道线只在其中一两个音下面，
+    // 两道之间还被一坨墨连着（赞美诗歌1218 35 `3̲4̳` 70×16：短线 28px 与长线之间连着 7px 宽的墨），
+    // 连着的那截高过一条线，剥出来认不成「第二条线」，整块放弃、两个音的线全丢。游程够长（≥ 0.4 字号且 ≥ 3 倍线粗）、
+    // 厚度像条线的行段就是一道线带。只作退路：照常剥得出来的仍按剥出的块（爱主颂 92 `1̳6̳` 的第二道线
+    // 投影只量得 2 行、剥出的块是 3 行，下游按块高认双线）。
+    if (proj) {
+      const need2 = Math.max(numH * 0.4, lineH * 3);
+      let y = bs[bs.length - 1][1] + 1;
+      while (y < b.h) {
+        if (runs[y] < need2) { y++; continue; }
+        let y1 = y;
+        while (y1 + 1 < b.h && runs[y1 + 1] >= need2) y1++;
+        const th = y1 - y + 1;
+        if (th >= Math.max(2, lineH * 0.5) && th <= lineH + 1) {
+          // 同主线带一样吸收上下毛边行（1218 35 那截短线实为 30×8，游程够长的只中间 5 行）
+          const w2 = Math.max(...runs.slice(y, y1 + 1));
+          let y0 = y;
+          const last = bs[bs.length - 1][1];
+          while (y1 - y0 + 1 < lineH + 1) {
+            const up = y0 - 1 > last && !ct[y0 - 1] ? rowCount(y0 - 1) : 0;
+            const dn = y1 + 1 < b.h ? rowCount(y1 + 1) : 0;
+            if (up >= w2 * 0.3 && up >= dn) y0--;
+            else if (dn >= w2 * 0.3) y1++;
+            else break;
+          }
+          for (let yy = y0; yy <= y1; yy++) ct[yy] = 1;
+          bs.push([y0, y1]); extra++;
+        }
+        y = y1 + 1;
+      }
+    }
+    const lines: Component[] = [];
+    for (const [y0, y1] of bs) {
+      let x0 = b.w, x1 = -1, area = 0;
+      for (let y = y0; y <= y1; y++) for (let x = 0; x < b.w; x++) if (on(x, y)) { area++; if (x < x0) x0 = x; if (x > x1) x1 = x; }
+      lines.push(mkComp({ x: b.x + x0, y: b.y + y0, w: x1 - x0 + 1, h: y1 - y0 + 1 }, area));
+    }
+    // 剥掉线带后剩下的像素逐块认
+    const rest: Binary = { w: b.w, h: b.h, data: new Uint8Array(b.w * b.h) };
+    for (let y = 0; y < b.h; y++) if (!ct[y]) for (let x = 0; x < b.w; x++) if (on(x, y)) rest.data[y * b.w + x] = 1;
+    const topBand = bs[0][0], botBand = bs[bs.length - 1][1];
+    const dots: Component[] = [], digits: Component[] = [];
+    for (const p of connectedComponents(rest, 1)) {
+      // 毛刺：面积门随字号走（(0.15 字号)²；原固定 3px）。粗黑翻印件线上沿挂着几个几像素的斜碎点（1218 277：5~8px），
+      // 固定 3px 时「说不清」整块放弃，减时线连着底下的点一起丢。真八度点远大于此（该页 ~90px；小图字号 16 时门约 6px）
+      if (p.area <= Math.max(3, (numH * 0.15) ** 2)) continue;
+      // （退路）夹在两道线带之间的墨是把两道线连成一块的连接墨（1218 270 双减时线 178×16，两道之间连着几坨），吞掉
+      if (proj && bs.length >= 2 && p.bbox.y > topBand && p.bbox.y + p.bbox.h - 1 < botBand) continue;
+      const r: Rect = { x: b.x + p.bbox.x, y: b.y + p.bbox.y, w: p.bbox.w, h: p.bbox.h };
+      const pc = mkComp(r, p.area);
+      const ratio = r.w / r.h;
+      if (p.bbox.y > botBand && r.w >= numH * 0.1 && r.h >= numH * 0.1 && r.w <= numH * 0.5 && r.h <= numH * 0.5 &&
+          // 宽高比下限 0.5：点经一截颈粘在线下，剥掉线带后颈还留在点上，成了竖长的水滴（1218 159 `7̲̣` 剥出 7×12）
+          ratio >= 0.5 && ratio <= 1.7 && p.area >= r.w * r.h * 0.6) { dots.push(pc); continue; }
+      // （线型）线带下方另一截**短减时线**：长线罩着 `6̳ 1̲ 1̳` 三个音，第二条线只在 6 和末一个 1 下面各有一截，
+      // 右边那截顶到长线上粘成一块（迦南诗选 1776《在天上我有一位阿爸》110×12）。按「线」认回来，
+      // 不然这块说不清、整块放弃，两个 1 的减时线全丢。
+      // **厚度也得像条线**：剥完线带后沿常留一行一两像素的毛边（二值化把 `-` 的下沿啃出个台阶），
+      // 1811《心愿》末音那根增时线（24×7、统计线粗 5）就这么被剥成「6px 的线 + 1px 的线」两条，
+      // 于是 stackedHline 判成双减时线、增时线整根不算数，末小节少一拍。真的第二条线不会细过统计
+      // 线粗的一半（1776 那两条同粗）。
+      if (lineMode && p.bbox.y > botBand && r.h >= Math.max(2, lineH * 0.5) && r.h <= lineH + 1 &&
+          r.w >= Math.max(numH * 0.4, r.h * 3)) {
+        lines.push(pc); extra++; continue;
+      }
+      if (digitMode && p.bbox.y + p.bbox.h <= topBand && r.h >= numH * 0.85 && r.h <= numH * 1.25) { digits.push(pc); continue; }
+      return null;                                                  // 说不清是什么 → 整块不动
+    }
+    if (digitMode && !digits.length) return null;
+    // 只剩一条线：交给原来的横线判据。退路量出两道以上线带的（双减时线被连接墨粘成一块，1218 270）照收
+    if (lineMode && !dots.length && !extra && !(proj && bs.length >= 2)) return null;
+    // 退路至多两道：量出三道的是糊成一团的数字横笔（1218 1188 41×22，「5」「3」自带三道横笔），诗歌里几乎没有三条减时线
+    if (proj && bs.length > 2) return null;
+    probe(lineMode ? (proj ? "stripUnderline.lineProj" : "stripUnderline.line") : "stripUnderline.digit");
+    if (extra) probe("stripUnderline.extraLine");
+    return { lines, dots, digits };
+  };
+  // 退路同样只给扁长块：升号的两道横笔按投影也是「两道线带」（爱主颂 95 `#` 21×19）
+  return analyse(false) ?? (lineMode && flat ? analyse(true) : null);
 }
 
 /** 倚音底下的减时线条数：从块底往下 0.6 字高内，逐行看有没有一条与它同宽的横墨，连着的算一条。

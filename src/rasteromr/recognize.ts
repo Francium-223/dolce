@@ -2623,10 +2623,18 @@ export async function recognizeRasterPage(
   // 一张也凑不出就只按墨占比与内腔佐证判。
   {
     const alongMasks = buildHollowMasks(raster.bin, syms, unit, lineYs, 2);
+    const added: RasterSym[] = [];
     for (const f of hollowHeadsAlongStems(raster.bin, nl, rawHoles, alongMasks, unit, makePitchSteps(groups), [...prims.vSegs, ...stemSegs, ...inkStems], syms)) {
       syms.push(f);
+      added.push(f);
       ledger.claim(f.box, "along:noteheadHalf");
     }
+    // 这里补出来的头错过了上面找附点那一步，单给它们再找一次（我灵镇静 m10 附点二分 F4）
+    if (added.length)
+      for (const d of findDots(nl, syms, unit, (y) => gridYs.some((ly) => Math.abs(ly - y) <= unit.lineThick), added)) {
+        syms.push({ box: d, code: "augmentationDot" });
+        ledger.claim(d, "dot:augmentationDot");
+      }
   }
   // ── 离谱表太远、又没有加线链的符头不要 ───────────────────────────────────
   //
@@ -4224,10 +4232,13 @@ const DOT_SMALL = 0.62;
 const DOT_MEDIAN_N = 4;
 /** 附点取块时窗口上下多放的余量（格），见 `findDots`。 */
 const DOT_PAD = 0.3;
+/** 附点的长宽上限（格）。0.6 → 0.75：倚靠主永远膀臂的附点 10×11、线距 17.6（0.62 格），我灵镇静的圈状点 8×11（0.63 格）。 */
+const DOT_MAX = 0.75;
 
 /** `onLine`：这一行像素在谱线上（去线后残渣所在）。连通照走，但不计入点的盒、也不算伸出窗口
- *  ——贴着谱线的附点在去线图上常连着一截残渣，盒高超限或伸出窗口就整个丢了（我灵镇静 m3 的附点四分）。 */
-function findDots(bin: Binary, syms: RasterSym[], unit: RasterUnit, onLine: (y: number) => boolean = () => false): Rect[] {
+ *  ——贴着谱线的附点在去线图上常连着一截残渣，盒高超限或伸出窗口就整个丢了（我灵镇静 m3 的附点四分）。
+ *  `only`：只给这几个头找（后补的头），其余头照样用来定窗口。 */
+function findDots(bin: Binary, syms: RasterSym[], unit: RasterUnit, onLine: (y: number) => boolean = () => false, only?: RasterSym[]): Rect[] {
   const sp = unit.space;
   const out: Rect[] = [];
   const heads = syms.filter((s0) => /^notehead/.test(s0.code));
@@ -4282,7 +4293,7 @@ function findDots(bin: Binary, syms: RasterSym[], unit: RasterUnit, onLine: (y: 
           if (!q.area || q.edge) return false;
           const w = q.maxX - q.minX + 1;
           const h = q.maxY - q.minY + 1;
-          if (w < Math.max(2, sp * min) || h < Math.max(2, sp * min) || w > sp * 0.6 || h > sp * 0.6) return false;
+          if (w < Math.max(2, sp * min) || h < Math.max(2, sp * min) || w > sp * DOT_MAX || h > sp * DOT_MAX) return false;
           return w / h >= 0.6 && w / h <= 1.7 && q.area >= w * h * 0.5;
         };
         const q = dotOk(a, 0.15) ? a : dotOk(b, 0.3) ? b : null;
@@ -4401,7 +4412,15 @@ function findDots(bin: Binary, syms: RasterSym[], unit: RasterUnit, onLine: (y: 
     }
     return true;
   };
-  for (const hd of heads) {
+  /** 盒里有不在谱线行上的墨。 */
+  const offLine = (o: Rect) => {
+    for (let y = o.y; y < o.y + o.h; y++) {
+      if (onLine(y)) continue;
+      for (let x = o.x; x < o.x + o.w; x++) if (bin.data[y * bin.w + x]) return true;
+    }
+    return false;
+  };
+  for (const hd of only ?? heads) {
     const b = hd.box;
     const cy = b.y + b.h / 2;
     const r = rightOf(b);
@@ -4424,8 +4443,10 @@ function findDots(bin: Binary, syms: RasterSym[], unit: RasterUnit, onLine: (y: 
       // 以前全被这条毙掉，读成二分或全音符）
       const dcx = d.x + d.w / 2;
       const dcy = d.y + d.h / 2;
+      // 只在谱线行上有墨的不算另一个点，是去线的残渣（主使我喜乐 m7、倚靠主永远膀臂 m7：点的正上/正下方谱线行残下 5×3 一小截）。
+      // 试过「旁边要有小节线才算反复记号」：破碎（1-bit 扫描件）成簇的噪点放进来三十多个，满拍自检 −1.3，没用
       const twins = blobsIn(dcx - sp * 0.5, dcy - sp * 1.5, dcx + sp * 0.5, dcy + sp * 1.5)
-        .filter((o) => Math.abs(o.y + o.h / 2 - dcy) > sp * 0.6)
+        .filter((o) => Math.abs(o.y + o.h / 2 - dcy) > sp * 0.6 && offLine(o))
         .filter((o) => !heads.some((h2) => h2 !== hd && h2.box.x < b.x + b.w + sp * TWIN_COL && h2.box.x + h2.box.w > b.x - sp * TWIN_COL && inWindow(h2.box, o)));
       if (twins.length) continue;
       if (!isolated(d)) continue;

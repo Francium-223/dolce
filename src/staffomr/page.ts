@@ -640,6 +640,10 @@ export function isLeadNoteBarline(l: Seg, nt: Sym, stf: Staff): boolean {
   return Math.abs(l.top - stf.box.top) <= sp * 0.25 && Math.abs(l.bottom - stf.box.bottom) <= sp * 0.25;
 }
 
+/** 窄头挂干窗口的下限（格），与算窄的盒宽（格）。 */
+const STEM_WIN_MIN = 0.3;
+const STEM_WIN_NARROW = 1.15;
+
 /**
  * `Page::findStems`：符头左右两侧、纵向相交的竖线就是符干。
  *
@@ -658,8 +662,12 @@ export function findStems(pg: SPage): void {
     if (!nt.ownerStaff) continue;
     if (nt.code !== "noteheadBlack" && nt.code !== "noteheadHalf") continue;
     const stf = nt.ownerStaff;
-    const lw = (stf.lines[0]?.lw ?? pg.barlineHeight * 0.02) * 2;
     const space = stf.stepDistance() * 2 || pg.space;
+    // 窄头（小字号，盒宽不到 `STEM_WIN_NARROW` 格）窗口下限 0.3 格：细线页两倍线宽只有 4 像素，
+    // 小字号头的盒右缘离自己的干 5 像素（以马内利来临歌 m23 附点二分读成全音符）。
+    // 不分宽窄都放，宁静的伯利恒少一个满拍小节
+    const narrow = nt.box.right - nt.box.left < space * STEM_WIN_NARROW;
+    const lw = Math.max((stf.lines[0]?.lw ?? pg.barlineHeight * 0.02) * 2, narrow ? space * STEM_WIN_MIN : 0);
     // 试过一条「两端正好压在第五线与第一线上的竖线是小节线、不是符干」的判据，
     // **实测更差**（全书小节自检 80.1% → 75.9%）：符头落在第一线、符干朝上伸到第五线
     // 的情形太常见，那条会把大批真符干判掉。留着这行注释，别再试第二遍。

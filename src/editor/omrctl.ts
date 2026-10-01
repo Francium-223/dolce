@@ -164,6 +164,15 @@ export class OmrController implements FormatSource {
   /** 正在识别（Esc 取消只在这期间有效） */
   private busy = false;
   private cancelRequested = false;
+  /**
+   * 识别代号：每开始一次识别、每次 `clear()`（打开了别的文档）加一。识别 await 回来代号变了就是过时的——
+   * 不落地、不报状态（晚完成的旧识别不能盖掉用户新打开的文档，两次识别只留后一次）。
+   */
+  private gen = 0;
+  /** 五线谱项目重开后补对照数据那一趟（连点两下只跑一遍） */
+  private ensuring: Promise<boolean> | null = null;
+  /** 补对照数据失败过：并排原图不再自己重试（点「原图对照」仍会再试） */
+  private staffLoadFailed = false;
 
   /** 起始页与工具条各有一个「识别为」下拉，两个同步。工具条那个改了就用上次的图重新识别。 */
   setKindSelects(start: HTMLSelectElement | null, toolbar: HTMLSelectElement | null): void {
@@ -255,17 +264,23 @@ export class OmrController implements FormatSource {
    * 简谱一次识别一张（几张时只认第一张，状态栏说明）。
    */
   async recognizeFiles(files: readonly RecogInput[]): Promise<boolean> {
-    const ok = await this.recognizeFilesInner(files);
-    this.syncPagesBtn();
+    const g = ++this.gen;
+    const prev = this.lastInputs;
+    const ok = await this.recognizeFilesInner(files, g);
+    // 改过原图列表重识别没成：谱面还是上一次的结果，原图列表也退回去（存项目、重开补对照要的是那一份）。
+    // 没有会话（起始页第一次识别失败）就留着新的，好给「调整原图后重试」
+    if (!ok && g === this.gen && this.sessionKind !== null) this.lastInputs = prev;
+    if (g === this.gen || ok) this.syncPagesBtn();
     return ok;
   }
 
-  private async recognizeFilesInner(files: readonly RecogInput[]): Promise<boolean> {
+  private async recognizeFilesInner(files: readonly RecogInput[], g: number): Promise<boolean> {
     if (!files.length) return false;
     this.lastInputs = [...files];
     const first = files[0]!;
     // 文字层完整的五线谱 PDF（矢量）先试：只要不是指定按简谱识别
-    if (files.length === 1 && this.kind !== "jianpu" && isPdfBytes(first.bytes, first.mime) && (await this.tryStaffPdf(first.bytes, performance.now()))) return true;
+    if (files.length === 1 && this.kind !== "jianpu" && isPdfBytes(first.bytes, first.mime) && (await this.tryStaffPdf(first.bytes, performance.now(), g))) return true;
+    if (g !== this.gen) return false;
     if (this.kind !== "jianpu") {
       const t0 = performance.now();
       try {
@@ -273,8 +288,10 @@ export class OmrController implements FormatSource {
         const pdfs: Uint8Array[] = [];
         for (const f of files) pdfs.push(await rb.asRasterPdf(f.bytes, f.mime));
         const isStaff = this.kind === "staff" || (await rb.looksLikeStaffBytes(pdfs[0]!));
-        if (isStaff) return await this.recognizeRasterStaff(pdfs, files, t0);
+        if (g !== this.gen) return false;
+        if (isStaff) return await this.recognizeRasterStaff(pdfs, files, t0, g);
       } catch (e) {
+        if (g !== this.gen) return false;
         if (this.kind === "staff") {
           console.error("位图五线谱识别失败", e);
           this.host.setStatus("五线谱识别失败：" + (e instanceof Error ? e.message : String(e)));
@@ -283,13 +300,13 @@ export class OmrController implements FormatSource {
         console.warn("五线谱判定失败，按简谱识别", e);
       }
     }
-    const ok = await this.recognizeBytes({ bytes: first.bytes, mime: first.mime }, true);
+    const ok = await this.recognizeJianpu({ bytes: first.bytes, mime: first.mime }, g);
     if (ok && files.length > 1) this.host.setStatus(`${this.host.status}；简谱一次识别一张，只认了第一张（${files.length} 张）`);
     return ok;
   }
 
   /** 位图五线谱：在线 OCR 跑整曲识别，产物是 MusicXML，落地同打开 `.musicxml`（无代码区、谱面上改模型）。 */
-  private async recognizeRasterStaff(pdfs: Uint8Array[], files: readonly RecogInput[], t0: number): Promise<boolean> {
+  private async recognizeRasterStaff(pdfs: Uint8Array[], files: readonly RecogInput[], t0: number, g: number): Promise<boolean> {
     const rb = await import("../rasteromr/browser");
     this.busy = true;
     this.cancelRequested = false;
@@ -298,15 +315,17 @@ export class OmrController implements FormatSource {
     try {
       res = await rb.recognizeRasterPdfs(pdfs, {
         title: files.length === 1 && files[0]!.name ? baseTitle(files[0]!.name) : undefined,
-        onPage: (done, total) => this.progress(`五线谱识别中… ${done}/${total} 页（按 Esc 取消）`),
-        cancelled: () => this.cancelRequested,
+        onPage: (done, total) => g === this.gen && this.progress(`五线谱识别中… ${done}/${total} 页（按 Esc 取消）`),
+        // 过时的（又开始了一次识别、打开了别的文档）自己停下
+        cancelled: () => g !== this.gen || this.cancelRequested,
       });
     } catch (e) {
-      this.host.setStatus(this.cancelRequested ? "已取消识别" : "五线谱识别失败：" + (e instanceof Error ? e.message : String(e)));
+      if (g === this.gen) this.host.setStatus(this.cancelRequested ? "已取消识别" : "五线谱识别失败：" + (e instanceof Error ? e.message : String(e)));
       return false;
     } finally {
-      this.busy = false;
+      if (g === this.gen) this.busy = false;
     }
+    if (g !== this.gen) return false;
     if (!res.xml) {
       this.host.setStatus("没找到五线谱表（可在工具栏把「识别为」改成简谱再试）");
       return false;
@@ -383,19 +402,33 @@ export class OmrController implements FormatSource {
   }
 
   /** 五线谱项目重开后第一次进对照：从原图重跑识别补回逐页位图与音符坐标（不动原文）。 */
-  private async ensureStaffResult(): Promise<boolean> {
-    if (this.staffResult || !this.lastInputs.length) return this.staffResult !== null;
+  private ensureStaffResult(): Promise<boolean> {
+    if (this.staffResult || !this.lastInputs.length) return Promise.resolve(this.staffResult !== null);
+    this.ensuring ??= this.loadStaffResult().then((ok) => {
+      this.staffLoadFailed = !ok;
+      return ok;
+    }).finally(() => { this.ensuring = null; });
+    return this.ensuring;
+  }
+
+  private async loadStaffResult(): Promise<boolean> {
+    const g = this.gen;
+    // 补的途中打开了别的文档：补回来的不能挂到新文档上
+    const land = (r: import("../rasteromr/song").RasterSongResult): boolean => {
+      if (g !== this.gen) return false;
+      this.staffResult = r;
+      this.host.setStatus("");
+      return true;
+    };
     if (this.sessionKind === "vector") {
       // 矢量 PDF 项目重开：重跑一遍矢量识别拿框（快，不用 OCR），再渲底图
       this.progress("正在从原 PDF 载入对照数据…");
       try {
         const sb = await import("../staffomr/browser");
         const bytes = this.lastInputs[0]!.bytes;
-        this.staffResult = await sb.vectorOverlayResult(bytes, await sb.recognizeStaffPdf(bytes, { noteIds: true }));
-        this.host.setStatus("");
-        return true;
+        return land(await sb.vectorOverlayResult(bytes, await sb.recognizeStaffPdf(bytes, { noteIds: true })));
       } catch (e) {
-        this.host.setStatus("载入对照数据失败：" + (e instanceof Error ? e.message : String(e)));
+        if (g === this.gen) this.host.setStatus("载入对照数据失败：" + (e instanceof Error ? e.message : String(e)));
         return false;
       }
     }
@@ -405,13 +438,14 @@ export class OmrController implements FormatSource {
     try {
       const pdfs: Uint8Array[] = [];
       for (const f of this.lastInputs) pdfs.push(await rb.asRasterPdf(f.bytes, f.mime));
-      this.staffResult = await rb.recognizeRasterPdfs(pdfs, {
-        onPage: (done, total) => this.progress(`正在从原图载入对照数据… ${done}/${total} 页`),
-      });
-      this.host.setStatus("");
-      return true;
+      return land(await rb.recognizeRasterPdfs(pdfs, {
+        // 与第一次识别同口径（关联表重建出的 MusicXML 要有曲名）
+        title: this.lastInputs.length === 1 && this.lastInputs[0]!.name ? baseTitle(this.lastInputs[0]!.name) : undefined,
+        onPage: (done, total) => g === this.gen && this.progress(`正在从原图载入对照数据… ${done}/${total} 页`),
+        cancelled: () => g !== this.gen,
+      }));
     } catch (e) {
-      this.host.setStatus("载入对照数据失败：" + (e instanceof Error ? e.message : String(e)));
+      if (g === this.gen) this.host.setStatus("载入对照数据失败：" + (e instanceof Error ? e.message : String(e)));
       return false;
     }
   }
@@ -534,7 +568,7 @@ export class OmrController implements FormatSource {
     const box = this.sideEl!;
     // 五线谱项目重开后还没有对照数据：先从原图补
     if (!this.staffResult && (this.sessionKind === "staff" || this.sessionKind === "vector") && !(this.bin && this.score)) {
-      if (!(await this.ensureStaffResult())) return;
+      if (this.staffLoadFailed || !(await this.ensureStaffResult())) return;
     }
     const doc = this.host.currentScoreDoc();
     const key = [this.score, this.staffResult, doc];
@@ -669,12 +703,21 @@ export class OmrController implements FormatSource {
   /** 已取得图片字节后的识别核心（供拖拽识别复用）。
    *  保留二值图+识别结果，完成后默认进入叠加核对视图（先核对；「原图对照」可切回排版稿）。 */
   async recognizeBytes(picked: { bytes: Uint8Array; mime?: string }, jianpuOnly = false): Promise<boolean> {
-    // 外部直接调（回归脚本、旧入口）走完整分流；`recognizeFiles` 判完了才以 jianpuOnly 进来
+    // 外部直接调（回归脚本、旧入口）走完整分流
     if (!jianpuOnly) return this.recognizeFiles([picked]);
+    this.lastInputs = [{ ...picked }];
+    const ok = await this.recognizeJianpu(picked, ++this.gen);
+    this.syncPagesBtn();
+    return ok;
+  }
+
+  /** 简谱识别（`recognizeFiles` 判完了走这里）。 */
+  private async recognizeJianpu(picked: { bytes: Uint8Array; mime?: string }, g: number): Promise<boolean> {
     this.host.setStatus("识别中…可能需要几十秒");
     try {
       const t0 = performance.now();
       const { bin, score } = await recognizeMusicppDetailed(picked.bytes, picked.mime);
+      if (g !== this.gen) return false;
       this.emit(score, bin);
       this.host.setContextControl(this.kindField(), true);
       if (this.host.mode !== "recognize") await this.toggle(); // 识别后默认进叠加核对（本仓库「先核对」取向）
@@ -684,6 +727,7 @@ export class OmrController implements FormatSource {
       return true;
     } catch (e) {
       console.error("OMR failed", e);
+      if (g !== this.gen) return false;
       this.host.setStatus("识别失败：" + (e instanceof Error ? e.message : String(e)));
       return false;
     }
@@ -695,7 +739,7 @@ export class OmrController implements FormatSource {
    * 与简谱那条路的分工写在 `staffomr/browser.ts` 开头。识别不出谱表就返回 false，
    * 让调用方继续走简谱那条（该 PDF 多半是扫描件或简谱）。
    */
-  private async tryStaffPdf(bytes: Uint8Array, t0: number): Promise<boolean> {
+  private async tryStaffPdf(bytes: Uint8Array, t0: number, g: number): Promise<boolean> {
     const { openStaffPdf, isStaffPdf, recognizeStaffPdf } = await import("../staffomr/browser");
     let ok = false;
     try {
@@ -705,11 +749,12 @@ export class OmrController implements FormatSource {
     } catch {
       return false;
     }
-    if (!ok) return false;
+    if (!ok || g !== this.gen) return false;
     const res = await recognizeStaffPdf(bytes, {
-      onProgress: (done, total) => this.host.setStatus(`五线谱识别中… ${done}/${total} 页`),
+      onProgress: (done, total) => g === this.gen && this.host.setStatus(`五线谱识别中… ${done}/${total} 页`),
       noteIds: true,
     });
+    if (g !== this.gen) return true; // 过时：不落地，也不让调用方再按简谱试
     if (!res.notes) {
       this.host.setStatus("这份 PDF 里没找到五线谱");
       return false;
@@ -722,10 +767,13 @@ export class OmrController implements FormatSource {
     this.host.setContextControl(this.kindField(), true);
     const jpOk = this.host.adoptStaffXml(res.musicxml);
     this.staffEmitted = this.host.getText();
+    const g2 = this.gen; // 上面 clear() 换了代号
     // 原图对照：页面渲成位图、框放大到像素（`vectorOverlayResult`），之后与位图那一路同一套对照视图与关联表
     try {
       const { vectorOverlayResult } = await import("../staffomr/browser");
-      this.staffResult = await vectorOverlayResult(bytes, res);
+      const overlay = await vectorOverlayResult(bytes, res);
+      if (g2 !== this.gen) return true;
+      this.staffResult = overlay;
       if (this.btnEl) this.btnEl.textContent = "原图对照";
       this.host.setContextControl(this.btnEl, true);
     } catch (e) {
@@ -773,7 +821,10 @@ export class OmrController implements FormatSource {
   // ---------------- 核对视图 ----------------
   /** 在「简谱模式」与「识别模式」（二值图+半透明识别叠加）之间切换。需先有 OMR 识别结果。 */
   async toggle(): Promise<void> {
-    if (this.host.mode !== "recognize" && !this.staffResult && (this.sessionKind === "staff" || this.sessionKind === "vector")) await this.ensureStaffResult();
+    if (this.host.mode !== "recognize" && !this.staffResult && (this.sessionKind === "staff" || this.sessionKind === "vector")) {
+      // 补数据期间连点：只进一次（前一下已经进了核对视图）
+      if (!(await this.ensureStaffResult()) || (this.host.mode as string) === "recognize") return;
+    }
     if (!this.hasResult) return;
     this.host.stopPlayback();
     if (this.host.mode === "recognize") {
@@ -789,6 +840,7 @@ export class OmrController implements FormatSource {
       this.setLayout(true);
       if (this.btnEl) this.btnEl.textContent = "返回排版稿";
       this.renderPages();
+      this.syncSide(null); // 核对视图本身就是原图：并排面板收起
     }
   }
 
@@ -1295,6 +1347,7 @@ export class OmrController implements FormatSource {
 
   /** 清掉本次 OMR 的识别叠加产物并禁用识别按钮；若正处识别模式则退回简谱模式。 */
   clear(): void {
+    this.gen++;
     this.bin = null;
     this.score = null;
     this.beatMarks = [];
@@ -1302,6 +1355,8 @@ export class OmrController implements FormatSource {
     this.idMap = null;
     this.playingEl = null;
     this.emitted = null;
+    this.staffEmitted = null;
+    this.staffLoadFailed = false;
     if (this.host.formats.source === this) this.host.formats.use(null);
     this.hidePopup();
     if (this.btnEl) this.btnEl.textContent = "原图对照";

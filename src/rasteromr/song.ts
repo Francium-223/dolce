@@ -107,12 +107,14 @@ export async function recognizeRasterSong(
           const r1 = await recognizeRasterPage(page, OPS, look, pn, { carryTime, carryKey });
           if (r1.hasStaff) {
             const harmonyOcr = await opts.live.harmony(r1.harmonyStrips);
+            if (opts.cancelled?.()) throw new Error("已取消");
             const r2 = await recognizeRasterPage(page, OPS, look, pn, { carryTime, carryKey, harmonyOcr });
             const [lyricOcr, labelOcr, jianpuOcr] = await Promise.all([
               opts.live.lyric(r2.lyricStrips),
               opts.live.label(r2.labelStrips),
               opts.live.jianpu(r2.jianpuStrips),
             ]);
+            if (opts.cancelled?.()) throw new Error("已取消");
             caches = { harmonyOcr, lyricOcr, labelOcr, jianpuOcr };
           }
         }

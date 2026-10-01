@@ -103,7 +103,16 @@ function pickCrop(f: RecogInput): Promise<{ x: number; y: number; w: number; h: 
       start = null;
       ok.disabled = !rect || rect.w < 0.02 || rect.h < 0.02;
     });
+    // Esc 只关裁剪框：捕获阶段先截下，别让底下的原图页对话框也收到（它会当「取消」整个关掉）
+    const onKey = (ev: KeyboardEvent): void => {
+      if (ev.key !== "Escape") return;
+      ev.stopImmediatePropagation();
+      ev.preventDefault();
+      done(null);
+    };
+    document.addEventListener("keydown", onKey, true);
     const done = (r: typeof rect): void => {
+      document.removeEventListener("keydown", onKey, true);
       overlay.remove();
       URL.revokeObjectURL(url);
       resolve(r);
@@ -121,6 +130,11 @@ export function showPagesDialog(
   opts: { okLabel?: string; hint?: string; onCancel?: () => void } = {},
 ): void {
   let list = [...inputs];
+  /** 对话框关了：还在编码的旋转 / 裁剪回来不再重画（不再建缩略图的 ObjectURL） */
+  let closed = false;
+  /** 手上正在做的旋转 / 裁剪（「确定」等它做完再交列表） */
+  let pending: Promise<void> = Promise.resolve();
+  const busy = (): boolean => table.classList.contains("busy");
   const body = document.createElement("div");
   body.className = "settings-form omr-pages";
   const table = document.createElement("div");
@@ -131,6 +145,7 @@ export function showPagesDialog(
   hint.textContent = opts.hint ?? "按列表顺序合成一首（简谱一次只认第一份），行可以拖动换顺序。改完点「按这些页重新识别」整首重跑；谱面上已做的修改会丢，事先会问。";
   const render = (): void => {
     for (const u of urls.splice(0)) URL.revokeObjectURL(u);
+    if (closed) return;
     table.replaceChildren();
     list.forEach((f, i) => {
       const row = document.createElement("div");
@@ -142,20 +157,31 @@ export function showPagesDialog(
         row.classList.add("dragging");
       });
       row.addEventListener("dragend", () => row.classList.remove("dragging"));
+      // 落在这一行的上半截 = 插到它前面，下半截 = 插到它后面（提示线画在对应那一边）
+      const below = (ev: DragEvent): boolean => {
+        const b = row.getBoundingClientRect();
+        return ev.clientY > b.top + b.height / 2;
+      };
       row.addEventListener("dragover", (ev) => {
-        if (ev.dataTransfer?.types.includes("text/x-omr-page")) {
+        if (ev.dataTransfer?.types.includes("text/x-omr-page") && !busy()) {
           ev.preventDefault();
-          row.classList.add("drop-target");
+          row.classList.toggle("drop-before", !below(ev));
+          row.classList.toggle("drop-after", below(ev));
         }
       });
-      row.addEventListener("dragleave", () => row.classList.remove("drop-target"));
+      row.addEventListener("dragleave", () => row.classList.remove("drop-before", "drop-after"));
       row.addEventListener("drop", (ev) => {
+        if (!ev.dataTransfer?.types.includes("text/x-omr-page")) return;
         ev.preventDefault();
-        row.classList.remove("drop-target");
-        const from = Number(ev.dataTransfer?.getData("text/x-omr-page"));
-        if (!Number.isInteger(from) || from === i) return;
+        ev.stopPropagation();
+        row.classList.remove("drop-before", "drop-after");
+        const from = Number(ev.dataTransfer.getData("text/x-omr-page"));
+        if (!Number.isInteger(from) || busy()) return;
+        let to = i + (below(ev) ? 1 : 0);
+        if (from < to) to--;
+        if (from === to) return;
         const [moved] = list.splice(from, 1);
-        list.splice(i, 0, moved!);
+        list.splice(to, 0, moved!);
         render();
       });
       const idx = document.createElement("span");
@@ -180,9 +206,9 @@ export function showPagesDialog(
         b.disabled = disabled;
         // 旋转、裁剪要编码一会儿：这期间整张表锁住，免得点到还没换掉的旧按钮（它捏着旧图）
         b.addEventListener("click", () => {
-          if (table.classList.contains("busy")) return;
+          if (busy() || closed) return;
           table.classList.add("busy");
-          void Promise.resolve(on()).catch((e) => {
+          pending = Promise.resolve(on()).catch((e) => {
             hint.textContent = "处理失败：" + (e instanceof Error ? e.message : String(e));
           }).finally(() => {
             table.classList.remove("busy");
@@ -198,12 +224,18 @@ export function showPagesDialog(
         idx, thumb, name,
         btn("↑", "往前挪", () => swap(i, i - 1), i === 0),
         btn("↓", "往后挪", () => swap(i, i + 1), i === list.length - 1),
+        // 编码回来按对象找回它现在的位置（期间加了图，下标可能已变）
         btn("旋转", "顺时针转 90°（拍歪、横着拍的图）", async () => {
-          list[i] = await rotateImage(f);
+          const out = await rotateImage(f);
+          const k = list.indexOf(f);
+          if (k >= 0) list[k] = out;
         }, isPdf(f)),
         btn("裁剪", "只留下拖出的那块（裁掉页边、旁边的另一页）", async () => {
           const r = await pickCrop(f);
-          if (r) list[i] = await cropImage(f, r);
+          if (!r) return;
+          const out = await cropImage(f, r);
+          const k = list.indexOf(f);
+          if (k >= 0) list[k] = out;
         }, isPdf(f)),
         btn("删除", "这份不要了", () => {
           list = list.filter((_, k) => k !== i);
@@ -218,10 +250,27 @@ export function showPagesDialog(
   add.multiple = true;
   add.accept = "image/*,application/pdf";
   add.hidden = true;
+  const addFiles = async (files: readonly File[]): Promise<void> => {
+    for (const file of files) {
+      if (!/^image\/|^application\/pdf$/.test(file.type) && !/\.(pdf|png|jpe?g|webp|bmp|gif|tiff?)$/i.test(file.name)) continue;
+      list.push({ bytes: new Uint8Array(await file.arrayBuffer()), mime: file.type || undefined, name: file.name });
+    }
+    if (!busy()) render();
+  };
   add.addEventListener("change", async () => {
-    for (const file of Array.from(add.files ?? [])) list.push({ bytes: new Uint8Array(await file.arrayBuffer()), mime: file.type || undefined, name: file.name });
+    const files = Array.from(add.files ?? []);
     add.value = "";
-    render();
+    await addFiles(files);
+  });
+  // 外面拖进来的图片 / PDF 当「加图」（别让浏览器把图打开、离开本页）
+  body.addEventListener("dragover", (ev) => {
+    if (ev.dataTransfer?.types.includes("Files")) ev.preventDefault();
+  });
+  body.addEventListener("drop", (ev) => {
+    if (!ev.dataTransfer?.files.length) return;
+    ev.preventDefault();
+    ev.stopPropagation();
+    void addFiles(Array.from(ev.dataTransfer.files));
   });
   const addBtn = document.createElement("button");
   addBtn.type = "button";
@@ -229,9 +278,12 @@ export function showPagesDialog(
   addBtn.addEventListener("click", () => add.click());
   body.append(table, addBtn, add, hint);
   showFormDialog("原图页", body, () => {
+    closed = true;
     for (const u of urls.splice(0)) URL.revokeObjectURL(u);
-    apply(list);
+    // 旋转 / 裁剪还在编码：等它做完再交（交出去的才是转过的那张）
+    void pending.then(() => apply(list));
   }, opts.okLabel ?? "按这些页重新识别", () => {
+    closed = true;
     for (const u of urls.splice(0)) URL.revokeObjectURL(u);
     opts.onCancel?.();
   });

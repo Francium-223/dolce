@@ -37,7 +37,7 @@ import { loadConverter, type HanDirection } from "../common/hanconv";
 import { convertScoreDoc, convertSourceText, detectHanDirection } from "../model/hanconv";
 import { isTauriRuntime, saveBytes } from "./fileio";
 import { DOC_EXT, acceptAttr, is123File, isProjectFile, isPuFile } from "../common/filetypes";
-import { clearDraft, loadDraft, saveDraft } from "./autosave";
+import { clearDraft, loadDraft, saveDraft, type Draft } from "./autosave";
 import { formatOf, type DocFormatId, type FormatAdapter, type FormatHost } from "./formats";
 import { SyncIndex, type SyncEntry } from "./sync";
 import { VisualEditController, type VisualHost } from "./visual/controller";
@@ -2784,7 +2784,9 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     try {
       const { readFile } = await import("@tauri-apps/plugin-fs");
       const bytes = await readFile(path);
-      this.importBytes(bytes, path);
+      if (isProjectFile(path)) {
+        if (!(await this.openProject(bytes, path))) throw new Error("bad project");
+      } else this.importBytes(bytes, path);
       this.filePath = path;
       void this.loadBookSheet();
       return true;
@@ -2957,9 +2959,13 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     }, 3000);
   }
 
+  /** 启动时先把草稿读出来——之后恢复上次的文件会 `markClean` 删掉它（`offerDraftRestore` 拿这份问）。 */
+  takeDraft(): Promise<Draft | null> {
+    return loadDraft();
+  }
+
   /** 启动时：有上次没存的草稿（且与现在打开的不同）就问要不要恢复。恢复了返回 true。 */
-  async offerDraftRestore(): Promise<boolean> {
-    const d = await loadDraft();
+  async offerDraftRestore(d: Draft | null): Promise<boolean> {
     if (!d || d.text === this.getText()) return false;
     const when = new Date(d.time).toLocaleString();
     const what = d.project ? "识别会话（连原图）" : d.filePath ? d.filePath.replace(/^.*[\\/]/, "") : "未命名的谱";
@@ -2968,9 +2974,12 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
       void clearDraft();
       return false;
     }
-    if (d.project) await this.openProject(d.project, d.filePath ?? `恢复.${PROJECT_EXT}`);
-    else this.adoptText(d.docFormat as DocFormatId, d.text, d.filePath);
-    this._cleanText = null; // 恢复回来的还没存
+    // 恢复回来的还没存：草稿留着（不 markClean），打不开识别项目就只恢复文本
+    if (!d.project || !(await this.openProject(d.project, d.filePath ?? "", { draft: true }))) {
+      this.adoptText(d.docFormat as DocFormatId, d.text, d.filePath);
+    }
+    this._cleanText = null;
+    this._scheduleDraft();
     this.setStatus("已恢复上次未保存的内容（还没存盘）");
     return true;
   }
@@ -3000,7 +3009,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
   }
 
   /** 打开识别项目：还原识别会话（不重跑识别）。 */
-  async openProject(bytes: Uint8Array, name: string): Promise<boolean> {
+  async openProject(bytes: Uint8Array, name: string, opts: { draft?: boolean } = {}): Promise<boolean> {
     let snap;
     try {
       snap = unpackProject(bytes);
@@ -3012,6 +3021,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     this._documentLoaded();
     await this.omr.restore(snap);
     this.filePath = isTauriRuntime() && isProjectFile(name) ? name : null;
+    if (opts.draft) return true;
     this.markClean();
     this.setStatus(`已打开识别项目（${snap.kind === "jianpu" ? "简谱" : "五线谱"}，${snap.sources.length} 份原图）`);
     return true;

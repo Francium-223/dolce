@@ -1887,15 +1887,17 @@ function buildJpNums(
  *  或第一名比第二名高不了 `LYRIC_DOUBT_MARGIN` 的，记下这一段。取不到候选的字（附段、参照歌词补的）不看。 */
 const LYRIC_DOUBT_MARGIN = 0.7;
 async function markLyricDoubts(rows: readonly StaffRow[], hooks: LyricHooks): Promise<void> {
+  // `idx` 与 `charSrc` 同口径：这一段里第几个**汉字**（引号、括号不数）
+  const hanzi = (text: string | undefined): string[] => [...(text ?? "")].filter((c) => /[\u4e00-\u9fff]/.test(c));
   const reqs: LyricCharRef[] = [];
   for (const r of rows) for (const n of r.nums) (n.lyrics ?? []).forEach((text, verse) => {
-    [...(text ?? "")].forEach((ch, idx) => { if (/[\u3400-\u9fff]/.test(ch)) reqs.push({ n, verse, idx }); });
+    hanzi(text).forEach((_, idx) => reqs.push({ n, verse, idx }));
   });
   if (!reqs.length) return;
   const alts = await hooks.rankAlts(reqs);
   reqs.forEach((q, k) => {
     const a = alts[k];
-    const ch = [...(q.n.lyrics?.[q.verse] ?? "")][q.idx];
+    const ch = hanzi(q.n.lyrics?.[q.verse])[q.idx];
     if (!a || !a.alts.length || !ch) return;
     const margin = (a.scores[0] ?? 1) - (a.scores[1] ?? 0);
     if (a.alts[0] !== ch || margin < LYRIC_DOUBT_MARGIN) {

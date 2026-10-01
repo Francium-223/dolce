@@ -316,10 +316,12 @@ async function boot() {
     },
   });
 
+  // 上次没存的内容（自动保存的草稿）先读出来：自动加载上次的文件会把草稿当作已存删掉
+  const draft = await app.takeDraft();
   // 自动加载上次打开的文件（仅 Tauri；失败则保持示例文本）
   if (await app.tryRestoreLastFile()) revealWorkspace();
-  // 上次没存的内容（自动保存的草稿）：问要不要恢复
-  if (await app.offerDraftRestore()) revealWorkspace();
+  // 草稿：问要不要恢复
+  if (await app.offerDraftRestore(draft)) revealWorkspace();
 
   // 静默检查新版本（仅桌面版，自身还会判开关与 24h 节流）。延后是为了不和
   // 启动页、OMR 模型加载抢资源；查不到就什么都不做。

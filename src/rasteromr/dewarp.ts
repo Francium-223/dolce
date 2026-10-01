@@ -329,18 +329,64 @@ export function completeStaffLines(bin: Binary, lines: StaffLineRun[], groups: S
       i += 4;
     }
   }
-  // 成了组的谱行里**只找出半截的线照别的线拉满**：后面建谱行时按线长滤候选（不到最长横线的三成五不要），
-  // 半截线被滤掉，这一行只剩四条、整行谱就没了（接受我心歌第四行第五线只有 [174,765]）。
+  // 成了组的谱行里**每条线都拉到整行的跨度**（验过墨才拉）。行投影给的左右端是「这一行够墨的那一段」，页面微斜时
+  // 一条线只够半截、或左端晚起一截；后面建谱行按线长滤候选（不到最长横线的三成五不要，接受我心歌第四行第五线只有
+  // [174,765]，整行谱没了），谱行的左右界也跟着最短的那条走（善恶两军歌两行从 x=172、274 才起，前面的音全丢）。
+  // 整行的跨度取五条里最左与最右；某条线在这个跨度上沿线验墨（上下容 0.3 格）够 `LOOSE_INK` 才拉过去——
+  // 真的短一截的（通长加线顶替进来的）验不过，不动。
   if (loose)
     for (const g of outGroups) {
-      const lens = g.lines.map((l) => l.right - l.left);
-      const longest = Math.max(...lens);
-      const ok = g.lines.filter((l) => l.right - l.left >= longest * 0.6);
-      if (ok.length === 5 || ok.length < 3) continue;
-      const left = Math.min(...ok.map((l) => l.left));
-      const right = Math.max(...ok.map((l) => l.right));
-      for (const l of g.lines) if (l.right - l.left < longest * 0.6) (l.left = Math.min(l.left, left)), (l.right = Math.max(l.right, right));
+      const left = Math.min(...g.lines.map((l) => l.left));
+      const right = Math.max(...g.lines.map((l) => l.right));
+      const tol = Math.max(2, Math.round(g.space * 0.3));
+      for (const l of g.lines) {
+        if (l.left <= left + g.space && l.right >= right - g.space) continue;
+        let n = 0;
+        let hit = 0;
+        for (let x = Math.round(left); x <= right; x += 4) {
+          if (x >= l.left && x <= l.right) continue; // 只验要补的那两段
+          n++;
+          for (let d = -tol; d <= tol; d++) {
+            const yy = Math.round(l.y) + d;
+            if (yy >= 0 && yy < bin.h && bin.data[yy * bin.w + x]) {
+              hit++;
+              break;
+            }
+          }
+        }
+        if (n && hit / n >= LOOSE_INK) (l.left = left), (l.right = right);
+      }
     }
+  // **整行比别的行短一截的，照本页多数行的左右端验墨补齐**。逐列游程补出来的行，左右端取的是「看得见五黑四白」的那一段，
+  // 行首挤着谱号、调号、弱起的音时晚起一大截（善恶两军歌两行从 x=343、548 才起，别的行都从 170 上下起）。
+  // 本页各行左端、右端各取中位；短的那一头沿五条线验墨，至少四条够 `LOOSE_INK` 就拉过去。
+  if (loose && outGroups.length >= 3) {
+    const med = (a: number[]) => a.slice().sort((p, q) => p - q)[a.length >> 1];
+    const L = med(outGroups.map((g) => Math.min(...g.lines.map((l) => l.left))));
+    const R = med(outGroups.map((g) => Math.max(...g.lines.map((l) => l.right))));
+    const inkSeg = (y: number, x0: number, x1: number, tol: number): number => {
+      let n = 0;
+      let hit = 0;
+      for (let x = Math.round(x0); x <= x1; x += 4) {
+        n++;
+        for (let d = -tol; d <= tol; d++) {
+          const yy = Math.round(y) + d;
+          if (yy >= 0 && yy < bin.h && bin.data[yy * bin.w + x]) {
+            hit++;
+            break;
+          }
+        }
+      }
+      return n ? hit / n : 0;
+    };
+    for (const g of outGroups) {
+      const tol = Math.max(2, Math.round(g.space * 0.3));
+      const gl = Math.min(...g.lines.map((l) => l.left));
+      const gr = Math.max(...g.lines.map((l) => l.right));
+      if (gl > L + g.space * 2 && g.lines.filter((l) => inkSeg(l.y, L, gl, tol) >= LOOSE_INK).length >= 4) for (const l of g.lines) l.left = Math.min(l.left, L);
+      if (gr < R - g.space * 2 && g.lines.filter((l) => inkSeg(l.y, gr, R, tol) >= LOOSE_INK).length >= 4) for (const l of g.lines) l.right = Math.max(l.right, R);
+    }
+  }
   outGroups.sort((a, b) => a.lines[0].y - b.lines[0].y);
   return { lines: out.sort((a, b) => a.y - b.y), groups: outGroups };
 }

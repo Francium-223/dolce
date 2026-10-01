@@ -4488,7 +4488,7 @@ function inkSystemBarlines(pg: SPage, bin: Binary, sp: number): void {
     return n / Math.max(1, y1 - y0 + 1);
   };
   /** st 这一行在 cx 左右 range 像素内有没有一根小节线模样的竖墨；有则返回它的列 */
-  const barAt = (st: Staff, cx: number, range: number): number | null => {
+  const barAt = (st: Staff, cx: number, range: number, strict = false): number | null => {
     const top = Math.round(st.box.top);
     const bottom = Math.round(st.box.bottom);
     const rows = bottom - top + 1;
@@ -4498,6 +4498,17 @@ function inkSystemBarlines(pg: SPage, bin: Binary, sp: number): void {
         if (!w || w.miss > rows * 0.06 || w.worst > 2) continue;
         // 细线：除去五条谱线那几行，横向墨宽的行不能多（贴着符头、穿过升号的竖笔过不了）
         if (w.wide > rows * 0.3) continue;
+        // 没有竖段作证的那一趟从严：谱线以外的行，横向墨宽的不过两行——贴着符头的干（头占一格高）过不了
+        //（父恩广大、我愿象主歌各多切一刀）
+        if (strict) {
+          let fat = 0;
+          for (let y = top; y <= bottom; y++) {
+            if (st.lineYs.some((ly) => Math.abs(ly - y) <= sp * 0.15)) continue;
+            const xx = [x, x - 1, x + 1, x - 2, x + 2].find((q) => ink(q, y));
+            if (xx !== undefined && runW(xx, y) > sp * 0.4) fat++;
+          }
+          if (fat > 2) continue;
+        }
         // 上下各往外 0.4~0.9 格那一截不能有墨（符干、连谱号、系统线都会伸出去）
         if (inked(w.lo, w.hi, Math.round(top - sp * 0.9), Math.round(top - sp * 0.4)) > 0.3) continue;
         if (inked(w.lo, w.hi, Math.round(bottom + sp * 0.4), Math.round(bottom + sp * 0.9)) > 0.3) continue;
@@ -4523,6 +4534,21 @@ function inkSystemBarlines(pg: SPage, bin: Binary, sp: number): void {
           pushSeg(pg, pg.objs.length + pg.segs.length + 1, { x0: x, y0: b.box.top, x1: x, y1: b.box.bottom, lw: l.lw, maxLw: l.lw });
         });
       }
+    // **各行都没抽出竖段的小节线**：淡印的页上下两行同时漏（助我进深歌每个系统漏一两条，上面那一趟要有一行抽得出才补得了）。
+    // 沿头一行逐列验墨，过了的再到别的行左右 `xTol` 内验；行行都是「盖满谱行的细线、上下不外伸」才补，
+    // 离已有的小节线、系统线一格以内的不重复补。两行的干同时正好盖满各自的谱行、又同 x，几乎碰不上。
+    const have = (st: Staff, x: number) => pg.segs.some((m) => barOn(m, st) && Math.abs(m.cx - x) <= sp);
+    const first = g[0];
+    for (let x = Math.round(first.box.left + sp * 3); x < first.box.right - sp; x++) {
+      if (have(first, x) || barAt(first, x, 0, true) === null) continue;
+      const xs = g.slice(1).map((b) => barAt(b, x, Math.round(xTol), true));
+      if (xs.some((q) => q === null)) continue;
+      if (g.slice(1).some((b, i) => have(b, xs[i]!))) continue;
+      const lw = Math.max(1, first.lines[0]?.lw ?? 1);
+      pushSeg(pg, pg.objs.length + pg.segs.length + 1, { x0: x, y0: first.box.top, x1: x, y1: first.box.bottom, lw, maxLw: lw });
+      g.slice(1).forEach((b, i) => pushSeg(pg, pg.objs.length + pg.segs.length + 1, { x0: xs[i]!, y0: b.box.top, x1: xs[i]!, y1: b.box.bottom, lw, maxLw: lw }));
+      x += Math.round(sp);
+    }
   }
 }
 

@@ -30,6 +30,8 @@ export interface PersistedSettings {
   /** 排版稿里跟随选中显示原图片段（同上） */
   omrFollow?: unknown;
   omrSide?: unknown;
+  /** 并排原图时收起代码区 */
+  sideHideCode?: unknown;
   omrAdjust?: unknown;
   /** 识别为：自动 / 简谱 / 五线谱（同上） */
   omrKind?: unknown;

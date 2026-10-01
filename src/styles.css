@@ -449,6 +449,10 @@ button:focus-visible, select:focus-visible {
 .omr-side-hit:hover { fill: rgba(21, 101, 255, 0.08); }
 .omr-side-hit.on { fill: rgba(21, 101, 255, 0.12); stroke: #1565ff; stroke-width: 3; }
 #score-pane.with-omr-side { margin-left: 45%; }
+/* 并排时收起代码区：原图与排版稿各占一半（不复用格式驱动的 no-code，两者会互相覆盖） */
+#body.side-hide-code #code-pane-shell { display: none !important; }
+#body.side-hide-code .omr-side { width: 50%; }
+#body.side-hide-code #score-pane.with-omr-side { margin-left: 50%; }
 .omr-follow svg { width: 100%; height: auto; display: block; }
 .omr-follow .omr-follow-hit { fill: rgba(21, 101, 255, 0.12); stroke: #1565ff; stroke-width: 3; }
 .omr-overlay .omr-slur { stroke: #e65100; }

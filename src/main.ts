@@ -251,6 +251,8 @@ async function boot() {
   if (doubtBtn) app.omr.setDoubtEl(doubtBtn);
   const pagesBtn = document.getElementById("btn-src-pages") as HTMLButtonElement | null;
   if (pagesBtn) app.omr.setPagesBtn(pagesBtn);
+  const sideCodeBtn = document.getElementById("btn-side-code") as HTMLButtonElement | null;
+  if (sideCodeBtn) app.omr.setSideCodeBtn(sideCodeBtn);
   const sideBtn = document.getElementById("btn-src-side") as HTMLButtonElement | null;
   if (sideBtn) app.omr.setSideBtn(sideBtn, document.getElementById("omr-side"));
   const followBtn = document.getElementById("btn-src-follow") as HTMLButtonElement | null;

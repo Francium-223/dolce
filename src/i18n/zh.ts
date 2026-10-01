@@ -634,6 +634,9 @@ export const zh = {
   "start.recogKind": "识别为",
   "start.adjustFirst": "识别前先调整原图",
   "start.adjustFirst.title": "选好图之后先弹「原图页」：横着拍的转过来、页边裁掉、几张图排好顺序，再开始识别",
+  // 并排原图收起源码
+  "toolbar.sideCode": "源码",
+  "toolbar.sideCode.title": "并排时显示或收起源码区",
 } as const;
 
 export type MsgKey = keyof typeof zh;

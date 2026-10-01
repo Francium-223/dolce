@@ -146,10 +146,11 @@ export class OmrController implements FormatSource {
   }
 
   // ---------------- 持久化 ----------------
-  loadSettings(s: { omrFormat?: unknown; recogView?: unknown; omrFollow?: unknown; omrKind?: unknown; omrSide?: unknown; omrAdjust?: unknown }): void {
+  loadSettings(s: { omrFormat?: unknown; recogView?: unknown; omrFollow?: unknown; omrKind?: unknown; omrSide?: unknown; omrAdjust?: unknown; sideHideCode?: unknown }): void {
     if (isOmrFormat(s.omrFormat)) this.format = s.omrFormat;
     if (typeof s.omrFollow === "boolean") this.follow = s.omrFollow;
     if (typeof s.omrSide === "boolean") this.side = s.omrSide;
+    if (typeof s.sideHideCode === "boolean") this.hideCode = s.sideHideCode;
     if (typeof s.omrAdjust === "boolean") this.adjustFirst = s.omrAdjust;
     if (s.omrKind === "auto" || s.omrKind === "jianpu" || s.omrKind === "staff") this.kind = s.omrKind;
     this.syncFollowBtn();
@@ -530,6 +531,21 @@ export class OmrController implements FormatSource {
   /** 并排面板现在画的是哪份（换了识别结果、改了谱才重画底图与命中框） */
   private sideKey: unknown = null;
 
+  /** 并排时收起代码区（`#body.side-hide-code`，原图与排版稿各占一半），持久化 */
+  hideCode = false;
+  private sideCodeBtn: HTMLButtonElement | null = null;
+
+  /** 工具条「源码」开关：只在并排开着时出现。 */
+  setSideCodeBtn(btn: HTMLButtonElement): void {
+    this.sideCodeBtn = btn;
+    this.host.setContextControl(btn, false);
+    btn.addEventListener("click", () => {
+      this.hideCode = !this.hideCode;
+      this.host.saveSettings();
+      this.syncSide(null);
+    });
+  }
+
   setSideBtn(btn: HTMLButtonElement, box: HTMLElement | null): void {
     this.sideBtn = btn;
     this.sideEl = box;
@@ -555,6 +571,12 @@ export class OmrController implements FormatSource {
     const on = this.side && this.host.mode !== "recognize" && (this.bin !== null && this.score !== null || this.staffResult !== null || this.sessionKind === "staff" || this.sessionKind === "vector");
     box.hidden = !on;
     document.getElementById("score-pane")?.classList.toggle("with-omr-side", on);
+    document.getElementById("body")?.classList.toggle("side-hide-code", on && this.hideCode);
+    if (this.sideCodeBtn) {
+      this.host.setContextControl(this.sideCodeBtn, on);
+      this.sideCodeBtn.classList.toggle("active", !this.hideCode);
+      this.sideCodeBtn.setAttribute("aria-pressed", String(!this.hideCode));
+    }
     if (!on) {
       box.replaceChildren();
       this.sideKey = null;

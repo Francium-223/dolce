@@ -635,4 +635,7 @@ export const en: Record<MsgKey, string> = {
   "start.recogKind": "Recognize as",
   "start.adjustFirst": "Adjust images before recognizing",
   "start.adjustFirst.title": "After picking images, open Source pages first: rotate sideways photos, crop margins, order the pages, then start recognizing",
+  // 并排原图收起源码
+  "toolbar.sideCode": "Source",
+  "toolbar.sideCode.title": "Show or hide the source pane in side-by-side view",
 };

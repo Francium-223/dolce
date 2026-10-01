@@ -1,6 +1,6 @@
 // `.jpwabc` 写出端（原 `score/jpscore.ts`，ported from mp/score/jpw.kt `JpScore.fromMusicXml`）。
 //
-// 输入形状（`docs/待办.md` §3.1 阶段 8③）：只经下面这组接口读谱，不认 `Score` 的类——`Score` 结构上满足，
+// 输入形状（`../dev/docs/待办.md`（私有仓库） §3.1 阶段 8③）：只经下面这组接口读谱，不认 `Score` 的类——`Score` 结构上满足，
 // `ScoreDoc` 那一侧由 `emitJpwabc` 按形状拼（MusicXML 形状照 `loadMusicXml`、简谱形状照 `scoreDocToScore`）。
 // 字段名与口径沿用 `Score`；判据原样搬来，靠 `scripts/jpw-emit-check.mjs` 双跑逐字节一致。
 //

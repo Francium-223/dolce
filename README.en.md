@@ -176,7 +176,6 @@ In the lyrics, CJK characters take one note each and need no spaces. Latin words
 The developer docs are in Chinese:
 - Tech stack, build commands, layering and module map: [docs/架构.md](docs/架构.md)
 - Requirements and per-module pages: [docs/](docs/)
-- Roadmap: [docs/待办.md](docs/待办.md)
 
 Regression scripts and test corpora are not part of this repository.
 

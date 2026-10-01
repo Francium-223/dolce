@@ -314,6 +314,7 @@
           <div class="pane-heading">
             <span data-i18n="pane.score">排版</span>
             <div class="pane-heading-actions">
+              <span id="visual-mode" class="visual-mode" title="可视化编辑：编辑模式（方块光标）改选中的元素，插入模式（竖线光标）在光标处插入；Insert / Esc 切换" data-i18n-title="pane.visualMode.title" hidden>编辑</span>
               <button id="btn-palette" class="palette-button" aria-pressed="false" title="记号面板：用鼠标点唱名、八度、时值、记号、换行" data-i18n-title="pane.palette.title" data-i18n="pane.palette">面板</button>
               <button id="btn-beat-check" class="beat-check-button" aria-pressed="true" title="小节时值自检：拍数与拍号对不上的小节标红" data-i18n-title="pane.beatCheck.title" data-i18n="pane.beatCheck">拍</button>
               <button id="btn-format-marks" class="format-marks-button" aria-pressed="true" title="显示格式标记：换行符 ↵ 与换页符 ⤓（Ctrl/⌘+Shift+M）" data-i18n-title="pane.formatMarks.title">¶</button>
@@ -407,7 +408,6 @@
           </label>
           <span class="status-sep status-sep-code" aria-hidden="true"></span>
           <span id="sel-info" class="sel-info" title="选中的元素：声部、第几小节第几拍、音高、时值" data-i18n-title="pane.selInfo.title" hidden></span>
-          <span id="visual-mode" class="visual-mode" title="可视化编辑：编辑模式（方块光标）改选中的元素，插入模式（竖线光标）在光标处插入；Insert / Esc 切换" data-i18n-title="pane.visualMode.title" hidden>编辑</span>
           <span id="beat-count" class="beat-count" title="点一下跳到下一处" data-i18n-title="pane.beatCount.title" hidden></span>
           <button id="btn-doubt" class="doubt-count" title="识别时把握不大的音与歌词字（核对视图里黄框标出）：点一下跳到下一处" data-i18n-title="toolbar.doubt.title" hidden></button>
           <!-- 对照方式统一一个下拉（editor/comparemode.ts）：排版稿里的并排 / 片段与核对视图的三种叠加。

@@ -928,7 +928,7 @@ button:focus-visible, select:focus-visible {
   .header-divider { display: none; }
   .header-more { display: inline-flex; width: 36px; padding: 0; }
   .statusbar { padding-inline: 8px; gap: 6px; }
-  .statusbar .sel-info, .statusbar .visual-mode, .statusbar .tool-label, .status-check, .status-sep-code { display: none; }
+  .statusbar .sel-info, .statusbar .tool-label, .status-check, .status-sep-code { display: none; }
   .header-tools:not(.open) { display: none; }
   .header-tools.open .button-tool { height: 34px; font-size: 13px; }
   #toolbar { padding-inline: 8px; }

@@ -25,9 +25,9 @@ Lyrics sit directly under the notes.
 
 The interface is available in **English and Chinese**: it follows your browser language and can be switched any time in **Settings → Other → Language**. English landing page: <https://lodebar2026.github.io/dolce/en/>.
 
-![Start page](docs/screenshot-start.png)
+![A recognized staff-notation hymn side by side with its source image](docs/screenshot-en.png)
 
-![Editor](docs/screenshot.png)
+<sub>A four-part hymn (<i>Holy, Holy, Holy</i>, public-domain score from the Open Hymnal Project) right after staff recognition, in <b>Side by side</b>: the source image on the left, the engraved score on the right; selecting a note boxes it on both.</sub>
 
 ## Features
 
@@ -139,21 +139,11 @@ w:A-ma-zing_ grace, how sweet the sound
 w:That saved a_ wretch like me!_
 ```
 
-| Syntax | Meaning | Syntax | Meaning |
-| --- | --- | --- | --- |
-| `1`–`7` `0` | Scale degrees, rest | `\|` `\|:` `:\|` `\|]` | Barline, repeats, final barline |
-| `1'` `1,` | Octave up / down | `[1` `[2` | First / second ending |
-| `#4` `b7` `n4` | Sharp, flat, natural | `( … )`, `2~ 3` | Slur / tie |
-| `1_` `1__` | Eighth, sixteenth (beams follow the beat automatically) | `(3: 1_ 2_ 3_ )` | Triplet |
-| `5.` | Dotted note | `w:` | Lyrics (one music line, then its lyric lines) |
-| `5 -` | Extension dash, +1 beat each | `$` `$$` | Line break, page break |
-| `F 1` | Chord symbol (before its note) | `V:1` `V:2` | Voices |
-
 In the lyrics, CJK characters take one note each and need no spaces. Latin words are split into syllables with `-`
 (`A-ma-zing`), and `_` holds a syllable over the next note.
 
 - Full specification (in Chinese): [docs/格式/123格式.md](docs/格式/123格式.md)
-- In the app, **帮助 (Help) → 123 格式** walks through each construct with live-rendered examples.
+- In the app, **Help → 123 format** walks through each construct with live-rendered examples.
 
 ## Supported formats
 
@@ -162,7 +152,7 @@ In the lyrics, CJK characters take one note each and need no spaces. Latin words
 | 123 | `.123` | ✅ | ✅ | ✅ | Primary jianpu format |
 | JP-Word | `.jpwabc` | ✅ | ✅ | ✅ | Opens and saves files JP-Word can read |
 | Plain-text jianpu | `.pu` `.fq` `.jps` `.txt` | ✅ | ✅ | ✅ | Fanqie and Shigeben dialects, detected automatically |
-| ABC | `.abc` | ✅ | ✅ | ✅ | Native parser: voices, repeats, endings, chords, ornaments… |
+| ABC | `.abc` | ✅ | ✅ | ✅ | Voices, repeats, endings, chords, ornaments… |
 | MusicXML | `.xml` `.musicxml` | ✅ | ✅ (directly on the score) | ✅ | Notes, measures, lyrics and titles can be edited on the score in every view; a single-voice score can also be converted to 123 etc. for text editing |
 | Image / PDF | `.png` `.jpg` `.webp` `.pdf` | OMR | — | — | Jianpu images and scanned PDFs; staff PDFs, scanned or photographed staff notation |
 | Recognition project | `.jpomr` | ✅ | ✅ | ✅ | Source images + recognition result + the score being edited; reopens without recognizing again |

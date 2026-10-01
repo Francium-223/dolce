@@ -159,6 +159,7 @@ export async function recognizeRasterPdfs(
       title: opts.title,
       onPage: opts.onPage,
       cancelled: opts.cancelled,
+      noteIds: true,
       live: {
         harmony: (s) => ocrHarmonyStrips(ocr, s),
         lyric: (s) => ocrLyricStrips(ocr, s),

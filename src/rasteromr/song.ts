@@ -56,6 +56,12 @@ export interface RasterSongResult {
   stats: RasterSongStats;
   /** 有谱的各页的识别结果（第几份底本、第几页）：对照视图要它的位图与音符坐标 */
   pages: { source: number; pn: number; result: RasterPageResult }[];
+  /** `noteIds` 时：写进 `<note id>` 的 id → 第几页（`pages` 下标）、源图上的框（位图像素） */
+  noteBoxes: Map<string, { page: number; box: { left: number; right: number; top: number; bottom: number }; step: string; octave: number; alter: number; rest: boolean }>;
+  /** 各系统各谱行现在指派到第几个声部行（`buildScore` 的结果；关联表的初值） */
+  assignment(): number[][];
+  /** 按新的指派（`slots[系统][谱行]`，-1 忽略）重建 MusicXML，不重跑识别 */
+  rebuild(slots: number[][]): { xml: string; score: StaffScore };
 }
 
 /**
@@ -73,6 +79,8 @@ export async function recognizeRasterSong(
     onPage?: (done: number, total: number) => void;
     /** 返回 true = 取消（逐页之间查一次） */
     cancelled?: () => boolean;
+    /** 给每个 `<note>` 写 `id="omr<k>"` 并记下源图框（编辑器的识别对照用；回归脚本不开，产物逐字节不变） */
+    noteIds?: boolean;
   } = {},
 ): Promise<RasterSongResult> {
   const entries: Parameters<typeof buildScore>[0] = [];
@@ -140,12 +148,34 @@ export async function recognizeRasterSong(
   // 自检：凑满拍的，加上结构上的半截小节（弱起、乐句中间劈开的两半，见 `notedata.ts::markSplitBars`）
   markSplitBars(barPages);
   for (const { bars } of barPages) stats.full += bars.filter((b) => b.full || b.split).length;
-  if (!entries.length) return { xml: null, score: null, stats, pages };
+  // 音符 id 与源图框：逐页逐音编号，记在音符上（写出前音符会被复制，复制品带着它），重建时 id 不变
+  const noteBoxes: RasterSongResult["noteBoxes"] = new Map();
+  if (opts.noteIds) {
+    let k = 0;
+    pages.forEach(({ result }, pi) => {
+      for (const n of result.notes) {
+        const id = `omr${++k}`;
+        n.omrId = id;
+        noteBoxes.set(id, { page: pi, box: { ...n.sym.box }, step: n.step, octave: n.octave, alter: n.alter, rest: n.rest });
+      }
+    });
+  }
+  const noteId = opts.noteIds ? (n: StaffNote): string | undefined => n.omrId : undefined;
+  const notesOf = (st: Staff): StaffNote[] => notesByStaff.get(st) ?? [];
+  const emptyAssign = (): number[][] => [];
+  if (!entries.length) return { xml: null, score: null, stats, pages, noteBoxes, assignment: emptyAssign, rebuild: () => { throw new Error("没有谱表"); } };
   // 拉丁段挪到全曲中文段后面（页内先占位，见 `recognize.ts::settleLyricVerses`）
   settleLyricVerses([...notesByStaff.values()].flat());
-  const score = buildScore(entries);
-  const xml = scoreToMusicXml(score, (st) => notesByStaff.get(st) ?? [], { title: opts.title });
+  let score = buildScore(entries);
+  const xml = scoreToMusicXml(score, notesOf, { title: opts.title, ...(noteId ? { noteId } : {}) });
   stats.systems = score.systems.length;
   stats.parts = score.parts.length;
-  return { xml, score, stats, pages };
+  return {
+    xml, score, stats, pages, noteBoxes,
+    assignment: () => score.systems.map((e, si) => e.sys.staves.map((st) => score.scoreStaves.findIndex((ss) => ss.staves[si] === st))),
+    rebuild: (slots) => {
+      score = buildScore(entries, { slots });
+      return { xml: scoreToMusicXml(score, notesOf, { title: opts.title, ...(noteId ? { noteId } : {}) }), score };
+    },
+  };
 }

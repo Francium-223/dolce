@@ -21,7 +21,12 @@ export interface StaffXmlOptions {
   /** 每四分音符多少 tick。取 24 能整除 2/3/4/6/8 分音符与三连音。 */
   divisions?: number;
   partId?: string;
+  /** 给 `<note>` 写 `id`（编辑器的识别对照按它把模型里的音对回源图坐标）；返回 undefined 不写 */
+  noteId?: (n: StaffNote) => string | undefined;
 }
+
+/** 本次写出的 `noteId`（`scoreToMusicXml` 进出时设、清；写出是同步的） */
+let currentNoteId: StaffXmlOptions["noteId"] | null = null;
 
 const TYPE_OF: [number, string][] = [
   [2, "breve"],
@@ -206,6 +211,11 @@ function voiceTicks(inBar: StaffNote[], ticks: (d: number) => number): number {
 }
 
 function noteXml(n: StaffNote, dur: number, staffNo = 0, withVoice = false): string {
+  const id = currentNoteId?.(n);
+  return id ? noteXmlRaw(n, dur, staffNo, withVoice).replace(/^<note>/, `<note id="${escapeXml(id)}">`) : noteXmlRaw(n, dur, staffNo, withVoice);
+}
+
+function noteXmlRaw(n: StaffNote, dur: number, staffNo = 0, withVoice = false): string {
   const type = noteType(n.base);
   const dots = "<dot/>".repeat(n.dots);
   // `<staff>` 排在 `<notations>` 之前、`<stem>` 之后（MusicXML 的子元素顺序）
@@ -348,6 +358,19 @@ export function scoreToMusicXml(
   score: StaffScore,
   notesOf: (staff: Staff) => StaffNote[],
   opts: StaffXmlOptions = {},
+): string {
+  currentNoteId = opts.noteId ?? null;
+  try {
+    return scoreToMusicXmlRaw(score, notesOf, opts);
+  } finally {
+    currentNoteId = null;
+  }
+}
+
+function scoreToMusicXmlRaw(
+  score: StaffScore,
+  notesOf: (staff: Staff) => StaffNote[],
+  opts: StaffXmlOptions,
 ): string {
   const divisions = opts.divisions ?? 24;
   const ticks = (dur: number) => Math.max(1, Math.round(dur * 4 * divisions));

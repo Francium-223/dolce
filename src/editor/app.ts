@@ -1154,7 +1154,9 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
 
   visualEnabled(): boolean {
     // 识别核对：要有点选映射（123 / 文本谱产物）才认得出框对着哪个元素
-    if (this.mode === "recognize") return this.adapter.caps.textEditor && this.omr.hasMeta && this._sync.size > 0;
+    if (this.mode === "recognize") {
+      return ((this.adapter.caps.textEditor && this.omr.hasMeta) || (this.docFormat === "musicxml" && this.omr.staffResult !== null)) && this._sync.size > 0;
+    }
     return (this.mode === "jp" || this.mode === "mixed") && this._visualSource() && this._sync.size > 0;
   }
 
@@ -2532,7 +2534,8 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
 
   /** 进入/退出识别模式：改 mode，并在进入时先退掉混排布局。 */
   setRecognizeMode(on: boolean): void {
-    this._setMode(on ? "recognize" : "jp");
+    // 五线谱识别的结果（`.musicxml`）退出对照回混排档，简谱识别的回简谱档
+    this._setMode(on ? "recognize" : this.docFormat === "musicxml" ? "mixed" : "jp");
     this.playback.refreshSpeedUi(); // 进度条总长跟着能否试听走
   }
 

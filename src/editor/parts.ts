@@ -310,6 +310,60 @@ export function showPartsPanel(app: App): void {
       );
     }
     body.append(tools);
+    renderAssignment();
+  }
+
+  /**
+   * 识别出的五线谱：「谱表 ↔ 声部」关联表（参照 Audiveris 的逻辑声部：跨系统把每行谱对到同一个声部）。
+   * 每个系统一行、每行谱一个下拉：第几个声部行 / 新声部 / 忽略（钢琴伴奏不要时）。应用后按新指派重建，不重跑识别。
+   */
+  function renderAssignment(): void {
+    const a = app.omr.staffAssignment();
+    if (!a || !a.slots.length) return;
+    const k = Math.max(0, ...a.slots.flat()) + 1;
+    const draft = a.slots.map((row) => [...row]);
+    const sec = el("div", "parts-assign");
+    sec.append(el("div", "parts-assign-title", "谱表 ↔ 声部（识别结果）"));
+    sec.append(el("p", "parts-note", "识别把每个系统里的各行谱对到声部上；对错了（比如某个系统少印了一个声部、钢琴伴奏不要）就在这里改，「应用」后按新的对应重建，不重新识别。"));
+    const table = el("table", "parts-table");
+    const cols = Math.max(...a.slots.map((r) => r.length));
+    const head = el("tr");
+    head.append(el("th", "", "系统"));
+    for (let c = 0; c < cols; c++) head.append(el("th", "", `第 ${c + 1} 行谱`));
+    table.append(head);
+    a.slots.forEach((row, si) => {
+      const tr = el("tr");
+      tr.append(el("td", "parts-idx", `${si + 1}（第 ${a.systems[si]!.page + 1} 页）`));
+      for (let c = 0; c < cols; c++) {
+        const td = el("td");
+        if (c < row.length) {
+          const sel = el("select", "parts-select");
+          for (let v = 0; v < k; v++) {
+            const o = el("option", "", `声部行 ${v + 1}`);
+            o.value = String(v);
+            sel.append(o);
+          }
+          const nw = el("option", "", "新声部");
+          nw.value = String(k);
+          sel.append(nw);
+          const ig = el("option", "", "忽略");
+          ig.value = "-1";
+          sel.append(ig);
+          sel.value = String(row[c]);
+          sel.addEventListener("change", () => (draft[si]![c] = Number(sel.value)));
+          td.append(sel);
+        }
+        tr.append(td);
+      }
+      table.append(tr);
+    });
+    sec.append(table);
+    sec.append(btn("应用", "按上面的对应重建乐谱（不重新识别；谱面上的改动会丢，事先会问）", () => {
+      void app.omr.rebuildStaff(draft).then((ok) => {
+        if (ok) render();
+      });
+    }));
+    body.append(sec);
   }
   render();
 }

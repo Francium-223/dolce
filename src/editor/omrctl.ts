@@ -135,7 +135,7 @@ export class OmrController implements FormatSource {
 
   /** 是否有可核对的识别产物。 */
   get hasResult(): boolean {
-    return this.score !== null && this.bin !== null;
+    return (this.score !== null && this.bin !== null) || this.staffResult !== null;
   }
 
   // ---------------- 持久化 ----------------
@@ -251,7 +251,11 @@ export class OmrController implements FormatSource {
     this.lastInputs = [...files];
     this.staffResult = res;
     this.host.adoptStaffXml(res.xml);
+    this.staffEmitted = this.host.getText();
     this.host.setContextControl(this.kindField(), true);
+    // 位图路有页面位图与音符坐标：「原图对照」可用（矢量 PDF 那一路没有位图，不给）
+    if (this.btnEl) this.btnEl.textContent = "原图对照";
+    this.host.setContextControl(this.btnEl, true);
     const s = res.stats;
     this.host.setStatus(
       `五线谱识别完成（${((performance.now() - t0) / 1000).toFixed(1)}s）：${s.pages} 页 / ${s.parts ?? 1} 个声部 / ${s.notes} 个音符` +
@@ -519,6 +523,16 @@ export class OmrController implements FormatSource {
     const pane = document.getElementById("score-pane");
     const scroll = pane ? { top: pane.scrollTop, left: pane.scrollLeft } : null;
     this.host.clearPages();
+    if (this.staffResult) {
+      void this.renderStaffPages().then(() => {
+        if (pane && scroll) {
+          pane.scrollTop = scroll.top;
+          pane.scrollLeft = scroll.left;
+        }
+        this.host.recognizeRendered();
+      });
+      return;
+    }
     this.popupEl = null;
     this.playingEl = null;
     if (!this.bin || !this.score) return;
@@ -544,6 +558,119 @@ export class OmrController implements FormatSource {
     this.host.recognizeRendered();
   }
 
+  // ---------------- 五线谱识别的对照（位图路，`rasteromr/overlay.ts`） ----------------
+  /** 当前模型的和弦 id → 它写在 `<note id>` 里的识别 id（对照框按它认） */
+  private staffIdOf = new Map<ElementId, string>();
+
+  /** 逐页画：页面位图 + 每个识别出的音一个框，框上标它现在的音名（改过标青、删掉划掉）。 */
+  private async renderStaffPages(): Promise<void> {
+    const res = this.staffResult;
+    if (!res) return;
+    const { renderStaffRecognitionPage } = await import("../rasteromr/overlay");
+    const { surfaceOf } = await import("../model/xmlsurface");
+    const doc = this.host.currentScoreDoc();
+    const now = new Map<string, { label: string; changed: boolean }>();
+    this.staffIdOf.clear();
+    for (const part of doc?.songs[0]?.parts ?? []) {
+      for (const m of part.measures) {
+        for (const el of m.elements) {
+          if (el.kind !== "chord") continue;
+          const nodes: (Element | undefined)[] = el.notes.length ? el.notes.map((n) => surfaceOf(n) ?? surfaceOf(el)) : [surfaceOf(el)];
+          nodes.forEach((node, k) => {
+            const id = node?.getAttribute("id");
+            if (!id || !res.noteBoxes.has(id)) return;
+            if (k === 0) this.staffIdOf.set(el.id, id);
+            const orig = res.noteBoxes.get(id)!;
+            const p = el.notes[k]?.pitch;
+            const label = el.rest || !p ? "休" : `${p.step}${p.alter > 0 ? "♯".repeat(p.alter) : "♭".repeat(-p.alter)}${p.octave}`;
+            const changed = el.rest ? !orig.rest : !p || orig.rest || p.step !== orig.step || p.octave !== orig.octave || p.alter !== orig.alter;
+            if (!now.has(id)) now.set(id, { label, changed });
+          });
+        }
+      }
+    }
+    const pages = res.pages;
+    const view = this.view;
+    this.host.renderPagesWith(pages.length, (i) => {
+      const bin = pages[i]!.result.raster!.bin;
+      const marks = [...res.noteBoxes].filter(([, b]) => b.page === i).map(([id, b]) => {
+        const cur = now.get(id);
+        return cur
+          ? { id, box: b.box, label: cur.label, ...(cur.changed ? { state: "edited" as const } : {}) }
+          : { id, box: b.box, label: b.rest ? "休" : `${b.step}${b.octave}`, state: "deleted" as const };
+      });
+      return renderStaffRecognitionPage(bin, marks, view);
+    }, {
+      aspectRatio: (i) => `${pages[i]!.result.raster!.bin.w} / ${pages[i]!.result.raster!.bin.h}`,
+      onPage: (svg) => this.wireStaffInteraction(svg),
+      resetPageIndex: false,
+    });
+  }
+
+  private wireStaffInteraction(svg: SVGSVGElement): void {
+    svg.addEventListener("click", (e) => {
+      const r = e.target instanceof Element ? e.target.closest<SVGRectElement>(".omr-hits rect") : null;
+      const omrId = r?.getAttribute("data-omr");
+      if (omrId && this.host.playbackActive()) {
+        const id = [...this.staffIdOf].find(([, v]) => v === omrId)?.[0];
+        if (id !== undefined) this.host.seekPlayback({ id, pass: 1 });
+        return;
+      }
+      if (this.host.visualEnabled()) this.host.visualClick(e);
+    });
+    svg.addEventListener("dblclick", (e) => {
+      if (this.host.visualEnabled()) this.host.visualDblClick(e);
+    });
+  }
+
+  /** 五线谱对照：和弦所在那行谱表的竖向范围（插入光标照它画）。 */
+  private staffBand(id: ElementId, el: SVGGraphicsElement): { svg: SVGSVGElement; y: number; h: number } | null {
+    const res = this.staffResult;
+    const omrId = this.staffIdOf.get(id);
+    const nb = omrId ? res?.noteBoxes.get(omrId) : undefined;
+    const svg = el.ownerSVGElement;
+    if (!res || !nb || !svg) return null;
+    const cy = (nb.box.top + nb.box.bottom) / 2;
+    const staves = res.pages[nb.page]?.result.page.staves ?? [];
+    const st = staves.find((s) => s.lineYs.length >= 5 && cy > s.lineYs[0]! - (s.lineYs[4]! - s.lineYs[0]!) && cy < s.lineYs[4]! + (s.lineYs[4]! - s.lineYs[0]!));
+    if (!st) return null;
+    const sp = (st.lineYs[4]! - st.lineYs[0]!) / 4;
+    return { svg, y: st.lineYs[0]! - sp * 2, h: sp * 8 };
+  }
+
+  get hasStaffResult(): boolean {
+    return this.staffResult !== null;
+  }
+
+  /** 关联表要显示的：各系统（第几页）各谱行现在指派到第几个声部行。没有位图五线谱结果为 null */
+  staffAssignment(): { systems: { page: number }[]; slots: number[][] } | null {
+    const res = this.staffResult;
+    if (!res?.score) return null;
+    const pageOf = new Map(res.pages.map((p, i) => [p.result.page, i]));
+    return { systems: res.score.systems.map((e) => ({ page: pageOf.get(e.page) ?? 0 })), slots: res.assignment() };
+  }
+
+  /** 按新的「谱表 ↔ 声部」指派重建 MusicXML，不重跑识别；手改过先问一声（重建会丢掉改动）。 */
+  async rebuildStaff(slots: number[][]): Promise<boolean> {
+    const res = this.staffResult;
+    if (!res) return false;
+    if (this.staffEmitted !== null && this.host.getText() !== this.staffEmitted && !(await confirmDiscardEdits())) return false;
+    let xml: string;
+    try {
+      xml = res.rebuild(slots).xml;
+    } catch (e) {
+      this.host.setStatus("重建失败：" + (e instanceof Error ? e.message : String(e)));
+      return false;
+    }
+    this.host.adoptStaffXml(xml);
+    this.staffEmitted = this.host.getText();
+    this.host.setStatus("已按新的谱表指派重建（未重新识别）");
+    return true;
+  }
+
+  /** 位图五线谱识别（或上次重建）刚落地时的原文：与当前原文不同即手改过 */
+  private staffEmitted: string | null = null;
+
   /** 这份结果有没有点选映射（123 / 文本谱产物有，`.jpwabc` / ABC 没有）。 */
   get hasMeta(): boolean {
     return this.meta !== null;
@@ -552,6 +679,10 @@ export class OmrController implements FormatSource {
   /** 索引条目 → 核对视图上的命中框：音符按框序（新插的按元素 id）、歌词按框序与段、页眉另认（`headerHits`）。 */
   hitFor(kind: "note" | "lyric", id: ElementId, verse = 0): SVGGraphicsElement | null {
     const pane = document.getElementById("score-pane");
+    if (this.staffResult) {
+      const omrId = kind === "note" ? this.staffIdOf.get(id) : undefined;
+      return omrId ? pane?.querySelector<SVGRectElement>(`.omr-hits rect[data-omr="${omrId}"]`) ?? null : null;
+    }
     const i = this.idMapOf(this.host.currentScoreDoc())?.toI.get(id);
     if (kind === "lyric") {
       return i === undefined ? null : pane?.querySelector<SVGRectElement>(`.omr-hits rect[data-kind="lyric"][data-i="${i}"][data-verse="${verse}"]`) ?? null;
@@ -575,6 +706,7 @@ export class OmrController implements FormatSource {
   rowBand(id: ElementId): { svg: SVGSVGElement; y: number; h: number } | null {
     const score = this.score;
     const el = this.hitFor("note", id);
+    if (this.staffResult) return el ? this.staffBand(id, el) : null;
     const svg = el?.ownerSVGElement;
     if (!score || !el || !svg) return null;
     const i = this.idMapOf(this.host.currentScoreDoc())?.toI.get(id);
@@ -689,6 +821,14 @@ export class OmrController implements FormatSource {
    * 这份谱里对不上框的音（没有 meta 的格式）不挪，留在上一处。
    */
   highlightPlaying(id: ElementId | null): void {
+    if (this.staffResult) {
+      // 五线谱对照：发声的那个音的框加亮
+      document.querySelectorAll("#score-pane .omr-hits rect.omr-playing").forEach((r) => r.classList.remove("omr-playing"));
+      const el = id === null ? null : this.hitFor("note", id);
+      el?.classList.add("omr-playing");
+      el?.scrollIntoView({ block: "nearest", inline: "nearest" });
+      return;
+    }
     if (id === null) {
       this.playingEl?.remove();
       this.playingEl = null;

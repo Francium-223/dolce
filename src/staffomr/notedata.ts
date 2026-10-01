@@ -644,6 +644,8 @@ export interface StaffNote {
   lyrics?: { verse: number; text: string; hyphen: boolean; cont: boolean }[];
   /** 挂在这个音符上的和弦符号（归一后的原文，如 `Am`、`G/B`、`Dm7`）。 */
   chord?: string;
+  /** 编辑器的识别对照用：写进 `<note id>` 的 id（`rasteromr/song.ts` 给）。记在音符上而不是旁表——写出前音符会被复制（`{...n}`） */
+  omrId?: string;
   /**
    * 这是**和弦里的附加音**（同一根符干上、与另一个音同 x，且不是最低的那个）。
    *

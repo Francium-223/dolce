@@ -471,7 +471,8 @@ function buildHitLayer(score: RecognizedScore, stats: Stats, inserted: Reproject
   return g;
 }
 
-function baseImage(bin: Binary): SVGImageElement {
+/** 二值图作底图（`<image>`，data URL 按二值图缓存）。五线谱的识别对照（`rasteromr/overlay.ts`）也用它。 */
+export function baseImage(bin: Binary): SVGImageElement {
   const img = document.createElementNS(SVG_NS, "image");
   img.setAttribute("x", "0");
   img.setAttribute("y", "0");

@@ -307,7 +307,11 @@ export interface StaffScore {
  */
 export function buildScore(
   pages: { page: SPage; ctx: Map<Staff, StaffContext> }[],
-  opts: { profileOf?: (stf: Staff) => StaffProfile } = {},
+  opts: {
+    profileOf?: (stf: Staff) => StaffProfile;
+    /** 外面给的指派（编辑器的「谱表 ↔ 声部」关联表）：`slots[系统][谱行]` = 第几个声部行，-1 = 忽略这行谱。给了就不自己猜 */
+    slots?: number[][];
+  } = {},
 ): StaffScore {
   const systems: StaffScore["systems"] = [];
   for (const { page, ctx } of pages) for (const sys of page.systems) systems.push({ page, sys, ctx });
@@ -315,16 +319,18 @@ export function buildScore(
   const tokensOf = systems.map((e) => e.sys.staves.map((st) => tokenOf(e.page, st, e.ctx, opts.profileOf)));
   const scoreStaves: ScoreStaff[] = [];
 
-  // ── 有内容剖面时走**全局指派**（见 `assignSlots`）──────────────────────
-  const slots = opts.profileOf ? assignSlots(tokensOf) : null;
+  // ── 有内容剖面时走**全局指派**（见 `assignSlots`）；外面给了指派就照它（-1 = 忽略）──────
+  const slots = opts.slots ?? (opts.profileOf ? assignSlots(tokensOf) : null);
   if (slots) {
-    const n = Math.max(...slots.map((p) => Math.max(...p) + 1));
+    const n = Math.max(1, ...slots.map((p) => Math.max(-1, ...p) + 1));
     for (let k = 0; k < n; k++) {
       const ss = new ScoreStaff();
       for (let si = 0; si < systems.length; si++) ss.staves[si] = null;
       scoreStaves.push(ss);
     }
-    slots.forEach((pick, si) => pick.forEach((k, ri) => (scoreStaves[k].staves[si] = tokensOf[si][ri].staff)));
+    slots.forEach((pick, si) => pick.forEach((k, ri) => {
+      if (k >= 0 && scoreStaves[k] && tokensOf[si]?.[ri]) scoreStaves[k].staves[si] = tokensOf[si][ri].staff;
+    }));
     return finishScore(systems, scoreStaves);
   }
 

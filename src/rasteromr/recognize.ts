@@ -3787,6 +3787,8 @@ export async function recognizeRasterPage(
       const up = makeSymObj(pg.objs.length, { box: { x, y: Math.round(first.box.top), w, h: Math.round(mid - first.box.top) }, code: `timeSig${q}` as SmuflName }, first.box.bottom - first.box.top);
       const dn = makeSymObj(pg.objs.length + 1, { box: { x, y: Math.round(mid), w, h: Math.round(first.box.bottom - mid) }, code: "timeSig4" }, first.box.bottom - first.box.top);
       c0.time.push(up.sym, dn.sym);
+      // 拍号是这里才推出来的：「按小节拍数把四分纠回八分」那一步前面因为没有拍号跳过了，补跑一遍
+      fixQuartersByBarSum(pg, ctx, notes, opts.carryTime, unit.space);
     }
   }
 
@@ -4563,9 +4565,26 @@ function fixQuartersByBarSum(pg: SPage, ctx: Map<Staff, StaffContext>, notes: St
   if (!lastTimeSignature(pg, ctx, carry)) return;
   const eps = 1e-6;
   for (const b of checkBars(pg, ctx, notes, carry)) {
-    if (b.full) continue;
     const bar = b.staff.bars[b.index];
     const inBar = notes.filter((n) => n.staff === b.staff && n.x >= bar.left && n.x < bar.right && !n.grace).sort((p, q) => p.x - q.x);
+    // **不满四拍的拍号里没有全音符**：3/4、2/4、6/8 的小节装不下一个全音符，读成全音符的是干没挂上的二分音符
+    //（两声部叠着的空心头，干被另一个头的圈截断；整本「二分读成全音符」五百处）。附点照留（3/4 里的附点二分）。
+    if (b.expect < 1 - eps)
+      for (const n of inBar)
+        if (!n.rest && n.base === 1 && n.sym.code === "noteheadWhole") {
+          n.base = 1 / 2;
+          n.duration = (1 / 2) * (2 - 1 / 2 ** n.dots);
+        }
+    // 四拍的小节里**先后两处全音符**也一样：一个小节装不下两个，都是没挂上干的二分音符
+    else {
+      const wholes = inBar.filter((n) => !n.rest && n.base === 1 && n.sym.code === "noteheadWhole");
+      if (wholes.some((n) => Math.abs(n.x - wholes[0].x) > sp * 2) && b.expect < 2 - eps)
+        for (const n of wholes) {
+          n.base = 1 / 2;
+          n.duration = (1 / 2) * (2 - 1 / 2 ** n.dots);
+        }
+    }
+    if (b.full) continue;
     const dirs = [...new Set(inBar.filter((n) => !n.rest).map((n) => n.stemUp))];
     for (const d of dirs.length > 1 ? dirs : [undefined]) {
       // 这个声部的各列（同 x 的几个头算一列，时值取最短的那个）；休止两个声部都算

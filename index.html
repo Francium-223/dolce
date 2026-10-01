@@ -5,10 +5,16 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
     <!-- 跨源隔离垫片：GitHub Pages 无法设响应头，用 SW 客户端补 COOP/COEP 以启用 SharedArrayBuffer
-         （onnxruntime-web wasm 多线程，OMR 识别 ~2x）。相对路径以适配子路径部署；Tauri/dev 已原生发头
+         （onnxruntime-web wasm 多线程，OMR 识别 ~2x）。按 BASE_URL 取绝对路径（子路径部署与 /en/ 页共用一份，SW 作用域覆盖整站）；Tauri/dev 已原生发头
          → 页面已隔离 → 脚本自动跳过。首次访问会自动多刷新一次。 -->
-    <script src="coi-serviceworker.js"></script>
+    <script src="%BASE_URL%coi-serviceworker.js"></script>
 
+    <link rel="icon" type="image/svg+xml" href="%BASE_URL%favicon.svg" />
+    <link rel="manifest" href="%BASE_URL%manifest.webmanifest" />
+    <link rel="stylesheet" href="/src/styles.css" />
+
+    <!-- seo:start —— 搜索/AI 引擎元数据（中文页）。英文页 /en/ 由 vite.config.ts 的 emitEnPage 换成 seo/head.en.html，
+         改这里请同步改英文版。 -->
     <title>简谱编辑器 jpeditor — 123 简谱 / .jpwabc / 文本谱在线编辑排版 · 谱面可视化编辑 · 简谱与五线谱识别(OMR) · ABC · 简谱五线谱混排 | Jianpu Editor</title>
     <meta
       name="description"
@@ -22,7 +28,7 @@
     <meta name="theme-color" content="#f5f5f5" />
     <link rel="canonical" href="https://lodebar2026.github.io/jpeditor/" />
     <link rel="alternate" hreflang="zh-CN" href="https://lodebar2026.github.io/jpeditor/" />
-    <link rel="alternate" hreflang="en" href="https://lodebar2026.github.io/jpeditor/" />
+    <link rel="alternate" hreflang="en" href="https://lodebar2026.github.io/jpeditor/en/" />
     <link rel="alternate" hreflang="x-default" href="https://lodebar2026.github.io/jpeditor/" />
 
     <!-- Open Graph -->
@@ -49,9 +55,6 @@
     />
     <meta name="twitter:image" content="https://lodebar2026.github.io/jpeditor/og-image.png" />
 
-    <link rel="icon" type="image/svg+xml" href="%BASE_URL%favicon.svg" />
-    <link rel="manifest" href="%BASE_URL%manifest.webmanifest" />
-    <link rel="stylesheet" href="/src/styles.css" />
 
     <!-- 结构化数据：软件应用 + 常见问答（GEO/AI 引擎友好） -->
     <script type="application/ld+json">
@@ -83,7 +86,8 @@
             "另存为：123 / JPWABC / ABC / 文本谱互转，转换前列出装不下的内容",
             "导出：矢量 PPTX、MIDI、MusicXML；五线谱 / 混排导出 PDF、PNG",
             "简繁转换、纸张与页眉字体设置、诗集样式表 .ss",
-            "跨平台：浏览器在线版 + Windows/macOS 桌面版"
+            "跨平台：浏览器在线版 + Windows/macOS 桌面版",
+            "中英双语界面：按浏览器语言自动选择，设置里可切换；英文版入口 https://lodebar2026.github.io/jpeditor/en/"
           ],
           "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
           "license": "https://github.com/lodebar2026/jpeditor/blob/main/LICENSE",
@@ -166,6 +170,14 @@
             },
             {
               "@type": "Question",
+              "name": "jpeditor 支持英文界面吗？",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "支持。界面有中文和英文两种，首次打开按浏览器语言自动选择，也可以在「设置 → 其他 → 界面语言」随时切换，即时生效。英文版入口：https://lodebar2026.github.io/jpeditor/en/"
+              }
+            },
+            {
+              "@type": "Question",
               "name": "macOS 提示「已损坏」或「无法验证开发者」怎么办？",
               "acceptedAnswer": {
                 "@type": "Answer",
@@ -177,6 +189,7 @@
       ]
     }
     </script>
+    <!-- seo:end -->
 
     <script type="module" src="/src/main.ts" defer></script>
   </head>

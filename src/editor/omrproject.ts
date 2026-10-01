@@ -1,4 +1,4 @@
-// **识别项目** `.jpomr`：一次识别连同它的来龙去脉存成一个文件，重开后接着核对、接着改，不必重新识别。
+// **识别项目** `.dolce`：一次识别连同它的来龙去脉存成一个文件，重开后接着核对、接着改，不必重新识别。
 //
 // 只存识别产物的文本（123 / MusicXML）的话，重开就丢了原图、原图对照、「切输出格式不重跑识别」、谱表 ↔ 声部关联表。
 // 这里把下面这些打成一个 zip（`fflate`）：
@@ -19,7 +19,7 @@ import type { Binary, JpwMeta, RecognizedScore } from "../omr";
 import type { DocFormatId } from "./formats";
 import { t } from "../i18n";
 
-export const PROJECT_EXT = "jpomr";
+export const PROJECT_EXT = "dolce";
 /** 包格式版本：读到比这新的拒绝（让用户升级），旧的按能读多少读多少 */
 export const PROJECT_VERSION = 1;
 

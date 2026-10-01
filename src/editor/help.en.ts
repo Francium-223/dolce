@@ -6,7 +6,7 @@ export const FEATURE_TOPICS_EN: { title: string; body: string[] }[] = [
   {
     title: "Open, save and save as",
     body: [
-      "Use **Open score** on the start page, or drag a file onto the window: 123 (`.123`, the main jianpu format — see the 123 format tab), `.jpwabc` (JP-Word), text jianpu (Fanqie / Shigeben, `.pu` `.fq` `.jps` `.txt`), MusicXML (`.xml` / `.musicxml`), ABC (`.abc`), and recognition projects `.jpomr` (see Recognition projects).",
+      "Use **Open score** on the start page, or drag a file onto the window: 123 (`.123`, the main jianpu format — see the 123 format tab), `.jpwabc` (JP-Word), text jianpu (Fanqie / Shigeben, `.pu` `.fq` `.jps` `.txt`), MusicXML (`.xml` / `.musicxml`), ABC (`.abc`), and recognition projects `.dolce` (see Recognition projects).",
       "**Save** (top right) writes back in the original format (`.jpwabc` stays JP-Word compatible). **Save As** converts to 123, JPWABC, ABC, Fanqie or Shigeben text jianpu — before converting it lists anything the target format can't hold and asks you to confirm. **Export** produces PPTX, MIDI and MusicXML, plus PNG and PDF in the Staff / Mixed views.",
       "The format drop-down in the source pane header switches a recognition result or a freshly opened file to another format for editing; switch back to “original” to restore it.",
       "**Desktop**: native open/save dialogs write straight to disk, and the last file reopens on startup. **Browser**: files are opened with the web file picker and saved as downloads.",
@@ -45,9 +45,9 @@ export const FEATURE_TOPICS_EN: { title: string; body: string[] }[] = [
     ],
   },
   {
-    title: "Recognition projects (.jpomr) and autosave",
+    title: "Recognition projects (.dolce) and autosave",
     body: [
-      "**Save** on a recognized score stores a **recognition project** `.jpomr`: the source images (or PDF), the recognition result and the score being edited in one file. Opening it later (Open score or drag-and-drop) returns to the proofing view **without recognizing again**; the output format, Recognize as and comparison mode are restored too. Jianpu projects also keep the click positions of the proofing view; staff projects rebuild the comparison data from the stored images the first time you open Compare (takes a moment).",
+      "**Save** on a recognized score stores a **recognition project** `.dolce`: the source images (or PDF), the recognition result and the score being edited in one file. Opening it later (Open score or drag-and-drop) returns to the proofing view **without recognizing again**; the output format, Recognize as and comparison mode are restored too. Jianpu projects also keep the click positions of the proofing view; staff projects rebuild the comparison data from the stored images the first time you open Compare (takes a moment).",
       "If you only want the score itself, use **Save As** to save 123 / MusicXML / text jianpu and so on (no source images, so no Compare after reopening).",
       "Undo history isn't saved with the file: after reopening you can undo from the moment it was saved. Projects contain the source images, so they are larger than plain scores (a few hundred KB per image).",
       "**Autosave**: unsaved changes are stored as a draft on this device (browser storage, also in the desktop app) about 3 seconds after you stop typing; a recognition in progress is stored with its images. After an accidental close, reload or crash you're asked whether to restore it — a restored draft still counts as unsaved, so remember to save; declining discards the draft. Saving or opening another file discards it. Only the latest draft is kept; nothing is autosaved in private windows or when site storage is disabled.",

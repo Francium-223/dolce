@@ -619,7 +619,7 @@ export const en: Record<MsgKey, string> = {
   "vis.voiceShort": "V{d}",
   "vis.voiceTitle": "New notes go into voice {d}",
   "vis.measSubmenu": "Insert / delete measures, key, time and tempo, barline styles, endings, jump marks",
-  "export.project": "Recognition project (.jpomr)",
+  "export.project": "Recognition project (.dolce)",
   "settings.partsHint": "Per-part playback volume, mute and solo are in the Parts panel on the toolbar.",
   "help.webKeys": "{keys} (web: {web})",
   "toolbar.doubt.title": "Notes and lyric characters the recognizer was unsure of (yellow boxes in the check view): click to go to the next one",

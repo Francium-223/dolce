@@ -354,7 +354,7 @@ export class OmrController implements FormatSource {
   /** 这次识别走的哪条路（识别项目按它存与还原）；没有识别会话为 null */
   sessionKind: ProjectKind | null = null;
 
-  /** 识别会话的快照（存 `.jpomr` 与自动保存用）；没有会话为 null。 */
+  /** 识别会话的快照（存 `.dolce` 与自动保存用）；没有会话为 null。 */
   snapshot(): ProjectSnapshot | null {
     if (!this.sessionKind || !this.lastInputs.length) return null;
     const docFormat = this.host.docFormat;
@@ -369,7 +369,7 @@ export class OmrController implements FormatSource {
   }
 
   /**
-   * 还原一个识别会话（打开 `.jpomr`、恢复自动保存）：**不重跑识别**。简谱：识别结果、二值图、点选映射照存的还原，
+   * 还原一个识别会话（打开 `.dolce`、恢复自动保存）：**不重跑识别**。简谱：识别结果、二值图、点选映射照存的还原，
    * 原文换成存的那份（手改过的）。五线谱：原文落地同打开 `.musicxml`，对照数据等第一次进原图对照时从原图补（`ensureStaffResult`）。
    */
   async restore(s: ProjectSnapshot): Promise<void> {

@@ -3017,8 +3017,8 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     return true;
   }
 
-  // ---------------- 识别项目 `.jpomr`（`omrproject.ts`） ----------------
-  /** 存识别项目。桌面版已有 `.jpomr` 路径且不是「另存」就直接覆盖，否则问路径（浏览器版下载）。 */
+  // ---------------- 识别项目 `.dolce`（`omrproject.ts`） ----------------
+  /** 存识别项目。桌面版已有 `.dolce` 路径且不是「另存」就直接覆盖，否则问路径（浏览器版下载）。 */
   async saveProject(asNew: boolean): Promise<boolean> {
     const snap = this.omr.snapshot();
     if (!snap) {

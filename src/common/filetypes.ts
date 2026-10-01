@@ -8,7 +8,7 @@ export const PU_EXT = ["pu", "fq", "jps", "txt"] as const;
 export const J123_EXT = ["123"] as const;
 /** 乐谱文档（编辑器直接打开的）。 */
 /** 识别项目（原图 + 识别结果 + 在改的原文，`editor/omrproject.ts`）。 */
-export const PROJECT_EXT = ["jpomr"] as const;
+export const PROJECT_EXT = ["dolce"] as const;
 export const DOC_EXT = [
   "jpwabc", ...J123_EXT, ...PU_EXT, "xml", "musicxml", "abc", ...PROJECT_EXT,
 ] as const;

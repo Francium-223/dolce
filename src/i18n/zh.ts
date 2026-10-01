@@ -618,7 +618,7 @@ export const zh = {
   "vis.voiceShort": "声{d}",
   "vis.voiceTitle": "新插的音落在第 {d} 声部",
   "vis.measSubmenu": "插删小节、调号拍号速度、小节线样式、房号、跳转记号",
-  "export.project": "识别项目（.jpomr）",
+  "export.project": "识别项目（.dolce）",
   "settings.partsHint": "各声部的试听音量、静音、独奏在工具条「声部」面板里调。",
   "help.webKeys": "{keys}（网页版 {web}）",
   "toolbar.doubt.title": "识别时把握不大的音与歌词字（核对视图里黄框标出）：点一下跳到下一处",

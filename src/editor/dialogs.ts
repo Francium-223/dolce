@@ -81,8 +81,8 @@ function modal(
 }
 
 /** 一张表单对话框：确定时调 `onOk`（取消什么也不做）。 */
-export function showFormDialog(title: string, body: HTMLElement, onOk: () => void, okLabel?: string): void {
-  modal(title, body, onOk, undefined, undefined, okLabel);
+export function showFormDialog(title: string, body: HTMLElement, onOk: () => void, okLabel?: string, onCancel?: () => void): void {
+  modal(title, body, onOk, onCancel, undefined, okLabel);
 }
 
 /** 是/否确认框。用同一套 modal 样式，别退回 window.confirm——桌面版观感对不上。 */

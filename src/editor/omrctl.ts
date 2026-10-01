@@ -145,10 +145,11 @@ export class OmrController implements FormatSource {
   }
 
   // ---------------- 持久化 ----------------
-  loadSettings(s: { omrFormat?: unknown; recogView?: unknown; omrFollow?: unknown; omrKind?: unknown; omrSide?: unknown }): void {
+  loadSettings(s: { omrFormat?: unknown; recogView?: unknown; omrFollow?: unknown; omrKind?: unknown; omrSide?: unknown; omrAdjust?: unknown }): void {
     if (isOmrFormat(s.omrFormat)) this.format = s.omrFormat;
     if (typeof s.omrFollow === "boolean") this.follow = s.omrFollow;
     if (typeof s.omrSide === "boolean") this.side = s.omrSide;
+    if (typeof s.omrAdjust === "boolean") this.adjustFirst = s.omrAdjust;
     if (s.omrKind === "auto" || s.omrKind === "jianpu" || s.omrKind === "staff") this.kind = s.omrKind;
     this.syncFollowBtn();
     this.syncKindSelects();
@@ -216,6 +217,16 @@ export class OmrController implements FormatSource {
   /** 这次识别有没有原图（识别失败也算：起始页据此给「调整原图后重试」）。 */
   get hasInputs(): boolean {
     return this.lastInputs.length > 0;
+  }
+
+  /** 识别前先调整原图（起始页的选项，持久化） */
+  adjustFirst = false;
+
+  /** 新拿到的原图：勾了「识别前先调整原图」就先弹原图页面板，取消返回 null（不识别）；没勾原样返回。 */
+  async prepareInputs(files: RecogInput[]): Promise<RecogInput[] | null> {
+    if (!this.adjustFirst) return files;
+    const { adjustBeforeRecognize } = await import("./omrpages");
+    return adjustBeforeRecognize(files);
   }
 
   /** 打开原图页面板；按新列表重识别后回调 `after(成功没有)`。 */

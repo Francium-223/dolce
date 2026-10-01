@@ -236,6 +236,14 @@ async function boot() {
     document.getElementById("sel-recog-kind-start") as HTMLSelectElement | null,
     document.getElementById("sel-recog-kind") as HTMLSelectElement | null,
   );
+  const adjustChk = document.getElementById("chk-adjust-first") as HTMLInputElement | null;
+  if (adjustChk) {
+    adjustChk.checked = app.omr.adjustFirst;
+    adjustChk.addEventListener("change", () => {
+      app.omr.adjustFirst = adjustChk.checked;
+      app.saveSettings();
+    });
+  }
   const pagesBtn = document.getElementById("btn-src-pages") as HTMLButtonElement | null;
   if (pagesBtn) app.omr.setPagesBtn(pagesBtn);
   const sideBtn = document.getElementById("btn-src-side") as HTMLButtonElement | null;
@@ -436,11 +444,13 @@ async function pickRecognitionFile(app: App, hooks: RecognitionPickerHooks): Pro
     });
     const paths = (Array.isArray(sel) ? sel : typeof sel === "string" ? [sel] : []).sort();
     if (!paths.length) return;
+    const raw = [];
+    for (const p of paths) raw.push({ bytes: await readFile(p), name: p });
+    const files = await app.omr.prepareInputs(raw);
+    if (!files) return;
     hooks.onPicked();
     let success = false;
     try {
-      const files = [];
-      for (const p of paths) files.push({ bytes: await readFile(p), name: p });
       success = await app.omr.recognizeFiles(files);
     } finally {
       hooks.onDone(success);
@@ -455,11 +465,13 @@ async function pickRecognitionFile(app: App, hooks: RecognitionPickerHooks): Pro
   input.onchange = async () => {
     const picked = [...(input.files ?? [])].sort((a, b) => a.name.localeCompare(b.name, "zh"));
     if (!picked.length) return;
+    const raw = [];
+    for (const f of picked) raw.push({ bytes: new Uint8Array(await f.arrayBuffer()), mime: f.type, name: f.name });
+    const files = await app.omr.prepareInputs(raw);
+    if (!files) return;
     hooks.onPicked();
     let success = false;
     try {
-      const files = [];
-      for (const f of picked) files.push({ bytes: new Uint8Array(await f.arrayBuffer()), mime: f.type, name: f.name });
       success = await app.omr.recognizeFiles(files);
     } finally {
       hooks.onDone(success);
@@ -485,8 +497,10 @@ async function wireDragDrop(app: App, dropTarget: HTMLElement, hooks: DropHooks)
         if (isImageFile(path)) {
           // 拖入图片 → 本地 OMR 识别，完成后默认显示可编辑的排版结果。一次拖几张（五线谱的多页）按文件名排成一首
           const imgs = event.payload.paths.filter((p) => isImageFile(p)).sort();
-          const files = [];
-          for (const p of imgs) files.push({ bytes: await readFile(p), name: p });
+          const raw = [];
+          for (const p of imgs) raw.push({ bytes: await readFile(p), name: p });
+          const files = await app.omr.prepareInputs(raw);
+          if (!files) return;
           hooks.onRecognitionStart();
           let success = false;
           try {
@@ -523,8 +537,10 @@ async function wireDragDrop(app: App, dropTarget: HTMLElement, hooks: DropHooks)
         // 一次拖几张（五线谱的多页）按文件名排成一首
         const all = [...(e.dataTransfer?.files ?? [])].filter((f) => isImageFile(f.name) || f.type.startsWith("image/"))
           .sort((a, b) => a.name.localeCompare(b.name, "zh"));
-        const files = [];
-        for (const f of all) files.push({ bytes: f === file ? buf : new Uint8Array(await f.arrayBuffer()), mime: f.type, name: f.name });
+        const raw = [];
+        for (const f of all) raw.push({ bytes: f === file ? buf : new Uint8Array(await f.arrayBuffer()), mime: f.type, name: f.name });
+        const files = await app.omr.prepareInputs(raw);
+        if (!files) return;
         hooks.onRecognitionStart();
         let success = false;
         try {

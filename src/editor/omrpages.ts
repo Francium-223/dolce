@@ -116,7 +116,10 @@ function pickCrop(f: RecogInput): Promise<{ x: number; y: number; w: number; h: 
 /**
  * 原图页面板。`inputs` 是这次识别的原图（顺序即合成的顺序）；确定时把改过的列表交给 `apply`（由它决定要不要先问「丢弃改动」）。
  */
-export function showPagesDialog(inputs: readonly RecogInput[], apply: (files: RecogInput[]) => void): void {
+export function showPagesDialog(
+  inputs: readonly RecogInput[], apply: (files: RecogInput[]) => void,
+  opts: { okLabel?: string; hint?: string; onCancel?: () => void } = {},
+): void {
   let list = [...inputs];
   const body = document.createElement("div");
   body.className = "settings-form omr-pages";
@@ -125,13 +128,36 @@ export function showPagesDialog(inputs: readonly RecogInput[], apply: (files: Re
   const urls: string[] = [];
   const hint = document.createElement("div");
   hint.style.cssText = "margin-top:8px;opacity:0.75;font-size:12px;line-height:1.6";
-  hint.textContent = "按列表顺序合成一首（简谱一次只认第一份）。改完点「按这些页重新识别」整首重跑；谱面上已做的修改会丢，事先会问。";
+  hint.textContent = opts.hint ?? "按列表顺序合成一首（简谱一次只认第一份），行可以拖动换顺序。改完点「按这些页重新识别」整首重跑；谱面上已做的修改会丢，事先会问。";
   const render = (): void => {
     for (const u of urls.splice(0)) URL.revokeObjectURL(u);
     table.replaceChildren();
     list.forEach((f, i) => {
       const row = document.createElement("div");
       row.className = "omr-pages-row";
+      // 拖动换顺序：拖起这一行、放到哪一行上就挪到那儿
+      row.draggable = true;
+      row.addEventListener("dragstart", (ev) => {
+        ev.dataTransfer?.setData("text/x-omr-page", String(i));
+        row.classList.add("dragging");
+      });
+      row.addEventListener("dragend", () => row.classList.remove("dragging"));
+      row.addEventListener("dragover", (ev) => {
+        if (ev.dataTransfer?.types.includes("text/x-omr-page")) {
+          ev.preventDefault();
+          row.classList.add("drop-target");
+        }
+      });
+      row.addEventListener("dragleave", () => row.classList.remove("drop-target"));
+      row.addEventListener("drop", (ev) => {
+        ev.preventDefault();
+        row.classList.remove("drop-target");
+        const from = Number(ev.dataTransfer?.getData("text/x-omr-page"));
+        if (!Number.isInteger(from) || from === i) return;
+        const [moved] = list.splice(from, 1);
+        list.splice(i, 0, moved!);
+        render();
+      });
       const idx = document.createElement("span");
       idx.className = "omr-pages-idx";
       idx.textContent = String(i + 1);
@@ -205,5 +231,25 @@ export function showPagesDialog(inputs: readonly RecogInput[], apply: (files: Re
   showFormDialog("原图页", body, () => {
     for (const u of urls.splice(0)) URL.revokeObjectURL(u);
     apply(list);
-  }, "按这些页重新识别");
+  }, opts.okLabel ?? "按这些页重新识别", () => {
+    for (const u of urls.splice(0)) URL.revokeObjectURL(u);
+    opts.onCancel?.();
+  });
+}
+
+/** 识别**之前**先调整原图（起始页勾了「识别前先调整原图」）：确定返回调好的列表，取消返回 null。 */
+export function adjustBeforeRecognize(files: readonly RecogInput[]): Promise<RecogInput[] | null> {
+  return new Promise((resolve) => {
+    let done = false;
+    showPagesDialog(files, (list) => {
+      done = true;
+      resolve(list);
+    }, {
+      okLabel: "开始识别",
+      hint: "识别前先把原图摆好：横着拍的转过来，页边、旁边的另一页裁掉，几张图按顺序排好（行可以拖动）。",
+      onCancel: () => {
+        if (!done) resolve(null);
+      },
+    });
+  });
 }

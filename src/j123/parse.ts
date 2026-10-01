@@ -63,6 +63,7 @@ import { isLyricSlot, lyricSlots, type LyricSlotRule } from "../abcfamily/lyrics
 import {
   DIALECT_123, DIALECT_ABC, typeAndDots, type DefaultLen, type ParseDialect,
 } from "../abcfamily/parsedialect";
+import { t as tr } from "../i18n";
 
 /** 歌词块：一行曲（到 `$` 换行为止的连续音乐行），紧跟其后的 `w` 行从块的第一个对位格起对位
  *  （规范 §5.1，同 ABC §5.1、文本谱 `Q:` 后跟 `C1:`）。
@@ -245,7 +246,7 @@ export function parseLyricLine(
     // 跳一个音符（该音符不配字）
     if (ch === skip) { push(mk("")); i++; continue; }
     if (ch === "*") {
-      warn?.("lyric-old-skip", "歌词跳音符已改用 `/`，`*` 暂按跳音符读");
+      warn?.("lyric-old-skip", tr("diag.j123.oldSkip"));
       push(mk(""));
       i++;
       continue;
@@ -552,7 +553,7 @@ function buildMusicLine(
         // 增时线并进前一个和弦的时值，但**自己有 id**——和弦可以挂在它上面（规范 §8.1，语料 190 次）
         const host = cur.sustainHost;
         if (!host) {
-          report(ctx, "orphan-sustain", "增时线前面没有音符", t.source);
+          report(ctx, "orphan-sustain", tr("diag.j123.orphanSustain"), t.source);
           break;
         }
         const s: Sustain = { id: ctx.ids.next(), source: t.source };
@@ -626,7 +627,7 @@ function buildMusicLine(
           for (const n of cur.sustainHost.notes) n.tie = { ...(n.tie ?? {}), start: true };
           pendingTie = true;
         } else {
-          report(ctx, "orphan-tie", "延音线前面没有音符", t.source);
+          report(ctx, "orphan-tie", tr("diag.j123.orphanTie"), t.source);
         }
         break;
 
@@ -759,7 +760,7 @@ function buildMusicLine(
                 tupletNormal: tp.tupletNormal!,
               });
             } else {
-              report(ctx, "empty-tuplet", "多连音里没有音符", t.source);
+              report(ctx, "empty-tuplet", tr("diag.j123.emptyTuplet"), t.source);
             }
             break;
           }
@@ -785,12 +786,12 @@ function buildMusicLine(
               });
             }
           } else {
-            report(ctx, "unmatched-slur", "多余的 `)`", t.source);
+            report(ctx, "unmatched-slur", tr("diag.j123.extraParen"), t.source);
           }
           break;
         }
         if (openSlurs.length === 0) {
-          report(ctx, "unmatched-slur", "多余的 `)`", t.source);
+          report(ctx, "unmatched-slur", tr("diag.j123.extraParen"), t.source);
           break;
         }
         // 一个音符**收一条又起一条**（ABC §4.11 `(c d (e) f g a)` = c→e、e→a 两条）：栈顶那条正是
@@ -804,7 +805,7 @@ function buildMusicLine(
           && !(ctx.d.tupletClose === "paren" && innerTuplet && openOffset(innerTuplet) > openOffset(below));
         const open = chain ? openSlurs.splice(openSlurs.length - 2, 1)[0] : openSlurs.pop();
         if (!open) {
-          report(ctx, "unmatched-slur", "多余的 `)`", t.source);
+          report(ctx, "unmatched-slur", tr("diag.j123.extraParen"), t.source);
           break;
         }
         // `open.start` 由 `attach` 回填；同音起止（`(1)`）时起点就是终点，合法（ABC §4.11）
@@ -813,7 +814,7 @@ function buildMusicLine(
           if (open.openSource) mk.openSource = open.openSource;
           marks.push(mk);
         } else {
-          report(ctx, "empty-slur", "圆滑线里没有音符", t.source);
+          report(ctx, "empty-slur", tr("diag.j123.emptySlur"), t.source);
         }
         break;
       }
@@ -877,7 +878,7 @@ function buildMusicLine(
         cur.sustainHost = null;
         // 多连音跨不过小节线，收掉。123 要求 `)`，走到这里就是漏写了
         if (ctx.d.tupletClose === "paren") {
-          for (const tp of openTuplets) report(ctx, "unclosed-tuplet", "多连音缺 `)`", tp.openSource ?? t.source);
+          for (const tp of openTuplets) report(ctx, "unclosed-tuplet", tr("diag.j123.tupletOpen"), tp.openSource ?? t.source);
         }
         openTuplets.length = 0;
         break;
@@ -888,11 +889,11 @@ function buildMusicLine(
         // 这里只切声部号（元素仍按原文顺序存在同一个小节里），小节内各声部的实际起点
         // 由投影按每声部的游标算（`model/xmlproject.ts`），因为那时才折算完多连音与 divisions。
         if (openSlurs.length) {
-          report(ctx, "overlay-open-slur", "圆滑线跨过了 `&`", t.source);
+          report(ctx, "overlay-open-slur", tr("diag.j123.slurOverlay"), t.source);
           openSlurs.length = 0;
         }
         if (openTuplets.length) {
-          report(ctx, "overlay-open-tuplet", "多连音跨过了 `&`", t.source);
+          report(ctx, "overlay-open-tuplet", tr("diag.j123.tupletOverlay"), t.source);
           openTuplets.length = 0;
         }
         if (pb.arcNext) {
@@ -900,7 +901,7 @@ function buildMusicLine(
           pb.arcNext = null;
         }
         if (!pb.measure.elements.some((el) => el.voice === pb.voice)) {
-          report(ctx, "empty-overlay", "`&` 前面这个临时声部是空的", t.source);
+          report(ctx, "empty-overlay", tr("diag.j123.overlayBefore"), t.source);
         }
         pb.voice++;
         pb.overlaySource = t.source;
@@ -977,7 +978,7 @@ function closeMeasure(ctx: Ctx, pb: PartBuild): void {
   if (pb.measure.elements.length === 0 && !pb.measure.barlines?.length) return;
   // 末尾那个分支是空的（`… & |`）：`&` 写了却没有音，多半是漏了内容
   if (pb.voice > 1 && pb.overlaySource && !pb.measure.elements.some((el) => el.voice === pb.voice)) {
-    report(ctx, "empty-overlay", "`&` 后面这个临时声部是空的", pb.overlaySource);
+    report(ctx, "empty-overlay", tr("diag.j123.overlayAfter"), pb.overlaySource);
   }
   pb.overlaySource = undefined;
   pb.part.measures.push(pb.measure);
@@ -1117,7 +1118,7 @@ export function parseAbcFamily(
     if (!song) return;
     for (const b of builds.values()) {
       if (ctx.d.tupletClose === "paren") {
-        for (const tp of b.openTuplets) report(ctx, "unclosed-tuplet", "多连音缺 `)`", tp.openSource!);
+        for (const tp of b.openTuplets) report(ctx, "unclosed-tuplet", tr("diag.j123.tupletOpen"), tp.openSource!);
         b.openTuplets.length = 0;
       }
       if (b.arcNext) {
@@ -1141,7 +1142,7 @@ export function parseAbcFamily(
         report(
           ctx,
           "lyric-overflow",
-          `第 ${verse} 段歌词比这几行的音符多 ${left} 个音节，多出的被忽略`,
+          tr("diag.j123.lyricOverflow", { verse, left }),
           f.source,
         );
       }
@@ -1215,7 +1216,7 @@ export function parseAbcFamily(
       if (f.cont) {
         if (lastField === "w") addLyricLine(ctx, ensurePart(), f, pendingLyrics);
         else {
-          report(ctx, "cont-unsupported", "`+:` 只支持歌词行续写（紧跟在 `w:` 之后）", f.source);
+          report(ctx, "cont-unsupported", tr("diag.j123.contUnsupported"), f.source);
         }
         continue;
       }
@@ -1292,7 +1293,7 @@ function addLyricLine(ctx: Ctx, pb: PartBuild, f: FieldLine, pendingLyrics: Pend
     report(
       ctx,
       "lyric-verse-number",
-      `歌词行不带段号（\`w${f.legacyVerse}:\` 已废）：写 \`w:\`，一行曲下按出现顺序编段，同段续写用 \`+:\`。这一行已丢弃`,
+      tr("diag.j123.verseNumber", { n: f.legacyVerse }),
       f.source,
     );
     return;
@@ -1361,7 +1362,7 @@ function applyField(
         ctx.len = { num: Number(m[1]), den: Number(m[2]) };
         ctx.sawL = true;
       } else {
-        report(ctx, "bad-length", `看不懂的默认音长：${f.value}`, f.source);
+        report(ctx, "bad-length", tr("diag.j123.badLength", { v: f.value }), f.source);
       }
       break;
     }

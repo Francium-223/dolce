@@ -6,6 +6,7 @@
 import { anchorSeconds, ScorePlayer, spanSeconds, timelineSeconds, type PlayPoint, type PlayState } from "./player";
 import { SPEED_STEPS, TEMPO, type PlayOptions, type PlaySource, type Timeline } from "../score/timeline";
 import type { ElementId } from "../model/doc";
+import { t } from "../i18n";
 
 /** PlaybackController 向编辑器要的能力。 */
 export interface PlaybackHost {
@@ -139,6 +140,15 @@ export class PlaybackController {
     this.onState(this.state);
   }
 
+  /** 界面语言变了：按钮、速度下拉与时间提示重写。 */
+  relabel(): void {
+    if (this.speedSelEl) {
+      for (const o of this.speedSelEl.options) if (o.value === "1") o.textContent = t("play.normal");
+      this.refreshSpeedUi();
+    }
+    this.onState(this.state);
+  }
+
   /** 进度条（`<input type=range>`）与时间显示。拖动时只改显示，松手才定位。 */
   bindProgress(range: HTMLInputElement, time: HTMLElement | null): void {
     this.progressEl = range;
@@ -166,7 +176,7 @@ export class PlaybackController {
     for (const v of SPEED_STEPS) {
       const o = document.createElement("option");
       o.value = String(v);
-      o.textContent = v === 1 ? "原速" : `×${v}`;
+      o.textContent = v === 1 ? t("play.normal") : `×${v}`;
       el.append(o);
     }
     el.addEventListener("change", () => this.setSpeed(parseFloat(el.value) || 1));
@@ -182,8 +192,8 @@ export class PlaybackController {
     const src = this.host.playable();
     const tempo = src?.playData.tempo ?? 0;
     const bpm = Math.round((tempo > 0 ? tempo : TEMPO) * clampSpeed(this.speed)); // 同 `playTempo`
-    const marked = tempo > 0 ? `谱面 ♩=${tempo}` : "谱面未标速度，按 ♩=90";
-    sel.title = `播放速度：${marked}，当前 ♩=${bpm}`;
+    const marked = tempo > 0 ? t("play.marked", { tempo }) : t("play.unmarked");
+    sel.title = t("play.speedTitle", { marked, bpm });
   }
 
   /** 设置速度倍率并持久化；有播放会话时从当前位置按新速度接着播（暂停中仍停着）。 */
@@ -282,7 +292,7 @@ export class PlaybackController {
     if (!this.host.canPlay) return;
     const src = this.host.playable();
     if (!src) {
-      this.host.setStatus("这份谱里没有可试听的曲行");
+      this.host.setStatus(t("play.noLines"));
       return;
     }
     let start = this.cueSec;
@@ -355,7 +365,7 @@ export class PlaybackController {
     } catch (e) {
       console.error("playback failed", e);
       this.player?.stop();
-      this.host.setStatus("试听加载失败：" + (e instanceof Error ? e.message : String(e)));
+      this.host.setStatus(t("play.loadFailed", { error: (e instanceof Error ? e.message : String(e)) }));
     }
   }
 
@@ -419,7 +429,7 @@ export class PlaybackController {
     }
     if (time) {
       time.textContent = this.showRemaining ? `-${fmtTime(dur - at)} / ${fmtTime(dur)}` : `${fmtTime(at)} / ${fmtTime(dur)}`;
-      time.title = `已播 ${fmtTime(at)}，剩余 ${fmtTime(dur - at)}，总长 ${fmtTime(dur)}（点击切换已播 / 剩余）`;
+      time.title = t("play.timeTitle", { at: fmtTime(at), left: fmtTime(dur - at), total: fmtTime(dur) });
     }
   }
 
@@ -427,14 +437,14 @@ export class PlaybackController {
     if (this.stopBtnEl) this.stopBtnEl.disabled = state === "stopped";
     if (state === "stopped" || state === "paused") this.refreshProgress();
     if (!this.btnEl) return;
-    const label = state === "loading" ? "加载中" : state === "playing" ? "暂停" : state === "paused" ? "继续" : "播放";
+    const label = t(state === "loading" ? "play.loading" : state === "playing" ? "play.pause" : state === "paused" ? "play.resume" : "play.play");
     const icon = this.btnEl.querySelector<HTMLElement>(".playback-icon");
     const labelEl = this.btnEl.querySelector<HTMLElement>(".playback-label");
     this.btnEl.dataset.state = state;
     this.btnEl.disabled = state === "loading";
     this.btnEl.setAttribute("aria-label", label);
     this.btnEl.title =
-      state === "playing" ? "暂停试听" : state === "paused" ? "从暂停处接着播" : state === "loading" ? "正在加载试听音色" : "播放试听";
+      t(state === "playing" ? "play.titlePause" : state === "paused" ? "play.titleResume" : state === "loading" ? "play.titleLoading" : "play.titlePlay");
     if (labelEl) labelEl.textContent = label;
     if (icon) {
       icon.classList.toggle("is-loading", state === "loading");

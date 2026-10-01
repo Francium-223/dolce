@@ -5,7 +5,7 @@
 > 「文本谱」（番茄简谱脚本 / 诗歌本文本谱，《诗歌本》app 里称「动态谱」）、ABC 与 MusicXML。
 > 本地离线识别简谱照片与 PDF（含四声部）以及五线谱 PDF；展开 / 原样 / 五线谱 / 混排四档排版，
 > 按乐句重排，在线试听，另存为互转，导出 PPTX / MIDI / MusicXML / PDF / PNG。
-> 既有浏览器在线版（即开即用），也有 Windows / macOS 桌面版（Tauri 2 打包）。
+> 既有浏览器在线版（即开即用），也有 Windows / macOS 桌面版；界面中英双语。
 >
 > An open-source editor and typesetter for jianpu (Chinese numbered musical notation). Source text on the
 > left, live SVG score on the right, plus visual editing directly on the score. Formats: 123 (the project's
@@ -13,7 +13,7 @@
 > a.k.a. "dynamic score"), ABC and MusicXML. Offline optical music recognition of jianpu photos and PDFs
 > (including four-part scores) and of staff-notation PDFs; expanded / original / staff / mixed staff+jianpu
 > layouts; phrase-aware re-layout; playback; format conversion; export to PPTX / MIDI / MusicXML / PDF / PNG.
-> Runs in the browser and as a Windows/macOS desktop app.
+> Runs in the browser and as a Windows/macOS desktop app, with an English or Chinese interface.
 
 ## 核心功能 / Features
 
@@ -21,7 +21,7 @@
 - **谱面可视化编辑**：直接在谱面上选中、插入、修改唱名、八度、升降号、时值、增时线、小节线、圆滑线 / 延音线、
   延长号、重音与换行换页；键盘、右键菜单、记号面板三种入口，改动落回源码、共用撤销。
 - **简谱图片识别（OMR）**：拖入照片、截图或扫描 PDF 即识别成 123 简谱再排版；歌词逐字对位、页眉标题 / 词曲 / 调号识别、
-  四声部分声部。完全本地离线运行（连通域几何判据 + PaddleOCR 模型识别数字与歌词），图片不上传。
+  四声部分声部。完全本地离线运行，图片不上传。
 - **原图对照**：识别结果按源图坐标叠加在二值图上逐音核对，点选定位源码，可直接试听。
 - **五线谱 PDF 识别**：文字层完整的五线谱 PDF 转 MusicXML，进五线谱 / 混排视图。
 - **文本谱（番茄简谱 / 诗歌本动态谱）**：第一等源格式，打开即编原文（自动识别方言），「原样」与「展开」两种版面，
@@ -34,6 +34,7 @@
 - **另存为**：123 / JPWABC / ABC / 文本谱互转，转换前列出目标格式装不下的内容。
 - **导出**：矢量 PPTX、MIDI、MusicXML；五线谱 / 混排导出 PDF、PNG。
 - 简繁转换、纸张与页眉字体设置、诗集样式表 `.ss`。
+- **中英双语界面** / **English and Chinese interface**：按浏览器语言自动选择，设置里可切换 / follows the browser language, switchable in Settings。
 
 ## 123 格式 / The 123 format
 
@@ -61,15 +62,10 @@ w:奇异恩_典，何等甘甜，
 - `$` 换行、`$$` 换页；`V:1` `V:2` 多声部；`I:playorder` 精确演唱顺序。
 - 完整规范 / Full spec: https://github.com/lodebar2026/jpeditor/blob/main/docs/%E6%A0%BC%E5%BC%8F/123%E6%A0%BC%E5%BC%8F.md
 
-## 技术栈 / Tech
-
-- 外壳 Tauri 2（Rust，只做原生加速）；排版、渲染、模型、编辑全在前端 TypeScript + Vite；编辑器 CodeMirror 6。
-- 各格式用手写词法器与解析器读入同一个语义模型；乐谱以原生 SVG DOM 渲染；音乐字体 Bravura（SMuFL）。
-- OMR 用 onnxruntime-web 跑 PaddleOCR 模型；PDF 页面经 pdf.js 栅格化。
-
 ## 链接 / Links
 
-- 在线试用 / Live demo: https://lodebar2026.github.io/jpeditor/
+- 在线试用（中文界面）/ Live app (Chinese UI): https://lodebar2026.github.io/jpeditor/
+- Live app (English UI): https://lodebar2026.github.io/jpeditor/en/
 - 代码仓库 / Repository: https://github.com/lodebar2026/jpeditor
 - 说明（中文）/ README (Chinese): https://github.com/lodebar2026/jpeditor/blob/main/README.md
 - README (English): https://github.com/lodebar2026/jpeditor/blob/main/README.en.md

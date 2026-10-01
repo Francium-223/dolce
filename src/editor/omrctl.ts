@@ -23,6 +23,7 @@ import { confirmDiscardEdits, type FormatOption, type FormatSource, type FormatS
 import { reprojectRecognized, type Reprojected } from "../omr/reproject";
 import { baseImage, doubtItems } from "../omr/overlay";
 import type { ProjectKind, ProjectSnapshot } from "./omrproject";
+import { t } from "../i18n";
 
 /** 是否 PDF 字节（mime 或 `%PDF-` 魔数）。与 `omr/decode.ts` 里那份同判据。 */
 function isPdfBytes(bytes: Uint8Array, mime?: string): boolean {
@@ -694,7 +695,7 @@ export class OmrController implements FormatSource {
       const wasRecognize = this.host.mode === "recognize";
       this.emit(rec, bin);
       if (wasRecognize && this.host.mode !== "recognize") await this.toggle();
-      this.host.setStatus(`已切换输出格式：${omrEmitter(format).label}（未重新识别）`);
+      this.host.setStatus(t("omr.formatSwitched", { format: omrEmitter(format).label }));
     }
     return true;
   }
@@ -713,7 +714,7 @@ export class OmrController implements FormatSource {
 
   /** 简谱识别（`recognizeFiles` 判完了走这里）。 */
   private async recognizeJianpu(picked: { bytes: Uint8Array; mime?: string }, g: number): Promise<boolean> {
-    this.host.setStatus("识别中…可能需要几十秒");
+    this.host.setStatus(t("omr.running"));
     try {
       const t0 = performance.now();
       const { bin, score } = await recognizeMusicppDetailed(picked.bytes, picked.mime);
@@ -722,13 +723,13 @@ export class OmrController implements FormatSource {
       this.host.setContextControl(this.kindField(), true);
       if (this.host.mode !== "recognize") await this.toggle(); // 识别后默认进叠加核对（本仓库「先核对」取向）
       const n = this.beatMarks.length;
-      this.host.setStatus(`识别完成（${((performance.now() - t0) / 1000).toFixed(1)}s）`
-        + (n ? `；${n} 个小节拍数与拍号对不上（核对视图已标红，多半是增时线/减时线读错）` : ""));
+      this.host.setStatus(t("omr.done", { sec: ((performance.now() - t0) / 1000).toFixed(1) })
+        + (n ? t("omr.beatIssues", { n }) : ""));
       return true;
     } catch (e) {
       console.error("OMR failed", e);
       if (g !== this.gen) return false;
-      this.host.setStatus("识别失败：" + (e instanceof Error ? e.message : String(e)));
+      this.host.setStatus(t("omr.failed", { error: (e instanceof Error ? e.message : String(e)) }));
       return false;
     }
   }
@@ -751,12 +752,12 @@ export class OmrController implements FormatSource {
     }
     if (!ok || g !== this.gen) return false;
     const res = await recognizeStaffPdf(bytes, {
-      onProgress: (done, total) => g === this.gen && this.host.setStatus(`五线谱识别中… ${done}/${total} 页`),
+      onProgress: (done, total) => g === this.gen && this.host.setStatus(t("omr.staffProgress", { done, total })),
       noteIds: true,
     });
     if (g !== this.gen) return true; // 过时：不落地，也不让调用方再按简谱试
     if (!res.notes) {
-      this.host.setStatus("这份 PDF 里没找到五线谱");
+      this.host.setStatus(t("omr.noStaff"));
       return false;
     }
     // 五线谱只出 MusicXML，且只进混排视图（理由见 OmrHost.adoptStaffXml）。
@@ -780,10 +781,9 @@ export class OmrController implements FormatSource {
       console.warn("矢量 PDF 渲不出对照底图", e);
     }
     this.host.setStatus(
-      `五线谱识别完成（${((performance.now() - t0) / 1000).toFixed(1)}s）：` +
-        `${res.pages} 页 / ${res.parts} 个声部 / ${res.notes} 个音符` +
-        (res.skipped ? `，${res.skipped} 页无谱表已跳过` : "") +
-        (jpOk ? "" : "；简谱文本未变——五线谱装不进 .jpwabc，请从「导出 → MusicXML」取产物"),
+      t("omr.staffDone", { sec: ((performance.now() - t0) / 1000).toFixed(1), pages: res.pages, parts: res.parts, notes: res.notes }) +
+        (res.skipped ? t("omr.staffSkipped", { n: res.skipped }) : "") +
+        (jpOk ? "" : t("omr.staffNoJp")),
     );
     return true;
   }
@@ -811,11 +811,16 @@ export class OmrController implements FormatSource {
     this.bin = bin;
     this.score = rec;
     this.emitted = this.host.getText();
-    if (this.btnEl) this.btnEl.textContent = "原图对照";
+    if (this.btnEl) this.btnEl.textContent = t("omr.compare");
     this.host.setContextControl(this.btnEl, true);
     this.host.setContextControl(this.followBtn, true);
     this.host.formats.use(this);
     this.host.syncViewModes();
+  }
+
+  /** 界面语言变了：对照按钮文字跟着换。 */
+  relabel(): void {
+    if (this.btnEl) this.btnEl.textContent = t(this.host.mode === "recognize" ? "omr.back" : "omr.compare");
   }
 
   // ---------------- 核对视图 ----------------
@@ -830,7 +835,7 @@ export class OmrController implements FormatSource {
     if (this.host.mode === "recognize") {
       this.host.setRecognizeMode(false);
       this.setLayout(false);
-      if (this.btnEl) this.btnEl.textContent = "原图对照";
+      if (this.btnEl) this.btnEl.textContent = t("omr.compare");
       this.host.reload(this.host.getText());
       this.syncSide(null); // 回到排版稿：并排原图（开着的话）铺回来
       this.syncDoubtEl(0);
@@ -838,7 +843,7 @@ export class OmrController implements FormatSource {
       this.followSelection(null); // 核对视图本身就是原图，小窗收起
       this.host.setRecognizeMode(true);
       this.setLayout(true);
-      if (this.btnEl) this.btnEl.textContent = "返回排版稿";
+      if (this.btnEl) this.btnEl.textContent = t("omr.back");
       this.renderPages();
       this.syncSide(null); // 核对视图本身就是原图：并排面板收起
     }
@@ -1359,7 +1364,7 @@ export class OmrController implements FormatSource {
     this.staffLoadFailed = false;
     if (this.host.formats.source === this) this.host.formats.use(null);
     this.hidePopup();
-    if (this.btnEl) this.btnEl.textContent = "原图对照";
+    if (this.btnEl) this.btnEl.textContent = t("omr.compare");
     this.host.setContextControl(this.btnEl, false);
     this.host.setContextControl(this.followBtn, false);
     this.host.setContextControl(this.pagesBtn, false);

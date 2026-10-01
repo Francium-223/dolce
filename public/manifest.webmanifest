@@ -1,7 +1,7 @@
 {
   "name": "简谱编辑器 jpeditor",
   "short_name": "jpeditor",
-  "description": "开源简谱编辑与排版器：123 简谱格式、谱面可视化编辑、.jpwabc 与文本谱（番茄简谱 / 诗歌本动态谱）、本地识谱（简谱与五线谱）、简谱·五线谱混排、试听与多格式导出。",
+  "description": "开源简谱编辑与排版器：123 简谱格式、谱面可视化编辑、.jpwabc 与文本谱（番茄简谱 / 诗歌本动态谱）、本地识谱（简谱与五线谱）、简谱·五线谱混排、试听与多格式导出。 · Free jianpu (numbered musical notation) editor with image recognition, staff view, playback and export; English and Chinese interface.",
   "lang": "zh-CN",
   "start_url": "./",
   "scope": "./",

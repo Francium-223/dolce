@@ -13,6 +13,7 @@ import type { ScoreDoc } from "../model/doc";
 import { JpwFile } from "../jpword/jpwfile";
 import { engraveScoreDoc } from "../mixed/engrave";
 import { colorToCss } from "../common/geom";
+import { t } from "../i18n";
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -26,7 +27,7 @@ function svgSize(svg: SVGSVGElement): { width: number; height: number } {
   if (width > 0 && height > 0) return { width, height };
   const rect = svg.getBoundingClientRect();
   if (rect.width > 0 && rect.height > 0) return { width: rect.width, height: rect.height };
-  throw new Error("无法读取乐谱页面尺寸");
+  throw new Error(t("export.noPageSize"));
 }
 
 const musicFontDataUrls = new Map<string, Promise<string>>();
@@ -111,20 +112,20 @@ function baseName(app: App): string {
     const t = app.puScore()?.title.split("\n")[0];
     if (t) return t;
   }
-  return app.painter.score.title.split("\n")[0] || "未命名";
+  return app.painter.score.title.split("\n")[0] || t("file.untitled");
 }
 
 export async function exportCurrentPagePng(app: App): Promise<void> {
   const wrap = app.pageEls[app.pageIndex];
   const svg = wrap?.querySelector("svg") as SVGSVGElement | null;
-  if (!svg) throw new Error("当前页面没有可导出的乐谱");
+  if (!svg) throw new Error(t("export.noSvg"));
   const bytes = await svgToBytes(svg, 2, colorToCss(app.bgColor));
-  await saveBytes(bytes, `${baseName(app)}-第${app.pageIndex + 1}页.png`, "image/png");
+  await saveBytes(bytes, t("export.pngName", { name: baseName(app), n: app.pageIndex + 1 }), "image/png");
 }
 
 export async function exportMidi(app: App): Promise<void> {
   const src = app.playable();
-  if (!src) throw new Error("这份谱里没有可导出的曲行");
+  if (!src) throw new Error(t("export.noLines"));
   const bytes = toMidi(src, app.playback.options());
   await saveBytes(bytes, `${baseName(app)}.mid`, "audio/midi");
 }
@@ -147,7 +148,7 @@ export function pptxPainter(app: App): ScorePainter {
   const cur = app.painter;
   if (cur.renderer === "jianpu" && cur.jianpuView === "expanded") return cur;
   const score = app.adapter.caps.layout === "scoredoc" ? app.puScore(true) : cur.score;
-  if (!score) throw new Error("这份文本谱里没有可导出的曲行");
+  if (!score) throw new Error(t("export.noPuLines"));
   const p = new ScorePainter(cur.resources);
   p.loadSync({
     view: "expanded",
@@ -197,11 +198,11 @@ export function sourceMusicXmlBare(app: App, opts: { sourceIds?: boolean } = {})
   let doc: ScoreDoc | null;
   if (app.docFormat === "jpwabc") {
     const f = JpwFile.fromString(app.getText());
-    if (!f) throw new Error("这份 .jpwabc 读不出来");
+    if (!f) throw new Error(t("export.jpwUnreadable"));
     doc = app.jpwDoc ?? jpwToScoreDoc(f);
   } else {
     doc = app.currentScoreDoc();
-    if (!doc) throw new Error("这份谱里没有可导出的曲行");
+    if (!doc) throw new Error(t("export.noLines"));
   }
   // 换行：乐句档按五线谱自己量宽断句（小节中间的也原位断）；否则照简谱视图实际排出的行。都是自动铺排的优选断点
   const phrase = app.phraseOn ? app.staffPhraseLineStarts(doc) : null;
@@ -226,7 +227,7 @@ export async function exportMixedPdf(app: App): Promise<void> {
     // Tauri path: serialize SVGs and invoke Rust export_pdf command
     const { invoke } = await import("@tauri-apps/api/core");
     const { save } = await import("@tauri-apps/plugin-dialog");
-    const title = painter.title || "混排";
+    const title = painter.title || t("export.mixedName");
     const outPath = await save({ defaultPath: `${title}.pdf`, filters: [{ name: "PDF", extensions: ["pdf"] }] });
     if (!outPath) return;
     const pages: string[] = [];
@@ -250,7 +251,7 @@ export async function exportMixedPdf(app: App): Promise<void> {
       pdf.addImage(png, "PNG", 0, 0, wPt, hPt, undefined, "FAST");
     }
     const bytes = new Uint8Array(pdf.output("arraybuffer"));
-    await saveBytes(bytes, `${painter.title || "五线谱"}.pdf`, "application/pdf");
+    await saveBytes(bytes, `${painter.title || t("export.staffName")}.pdf`, "application/pdf");
   }
 }
 
@@ -302,10 +303,10 @@ function saveAsItems(app: App): ExportItem[] {
   const items: ExportItem[] = [];
   // 有识别会话：识别项目排第一（原图、识别结果与在改的谱一起，重开接着核对）
   if (app.omr.snapshot()) {
-    items.push({ label: "识别项目（.jpomr）", available: () => true, run: async (a) => void (await a.saveProject(true)) });
+    items.push({ label: t("export.project"), available: () => true, run: async (a) => void (await a.saveProject(true)) });
   }
   items.push({
-    label: `${app.docFormat === "musicxml" ? "MusicXML" : app.adapter.defaultExt.replace(/^\./, "").toUpperCase()}（当前格式）`,
+    label: t("export.currentFormat", { format: app.docFormat === "musicxml" ? "MusicXML" : app.adapter.defaultExt.replace(/^\./, "").toUpperCase() }),
     available: () => true,
     run: (a) => a.saveFileAs(),
   });
@@ -363,7 +364,7 @@ function showListDialog(app: App, titleText: string, items: readonly ExportItem[
   const footer = document.createElement("div");
   footer.className = "modal-footer";
   const cancel = document.createElement("button");
-  cancel.textContent = "取消";
+  cancel.textContent = t("dlg.cancel");
   cancel.onclick = close;
   footer.append(cancel);
 
@@ -377,9 +378,9 @@ function showListDialog(app: App, titleText: string, items: readonly ExportItem[
 
 export function showExportDialog(app: App): void {
   // 不加「· 五线谱」「· 简谱」之类的后缀：会被读成「导出成五线谱」。PNG/PDF 导出的就是当前谱面视图。
-  showListDialog(app, "导出", EXPORT_ITEMS, "导出失败");
+  showListDialog(app, t("export.title"), EXPORT_ITEMS, t("export.failed"));
 }
 
 export function showSaveAsDialog(app: App): void {
-  showListDialog(app, "另存为", saveAsItems(app), "另存失败");
+  showListDialog(app, t("saveAs.title"), saveAsItems(app), t("saveAs.failed"));
 }

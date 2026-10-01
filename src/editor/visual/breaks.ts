@@ -20,6 +20,7 @@ import { parseLyricLine } from "../../j123/parse";
 import { ZERO_SPAN } from "../../model/helpers";
 import type { SyncEntry } from "../sync";
 import { type EditCtx, type EditOutcome, spaceAround } from "./ops";
+import { t } from "../../i18n";
 
 export const LYRIC_RE = /^\s*w\s*:/;
 const CONT_RE = /^\s*\+\s*:/;
@@ -101,7 +102,7 @@ export function lyricLinesAfter(state: EditorState, n: number): Line[] | string 
   const out: Line[] = [];
   for (let k = n + 1; k <= state.doc.lines; k++) {
     const line = state.doc.line(k);
-    if (CONT_RE.test(line.text)) return "这行曲的歌词用了 +: 续行，暂不能自动拆分，请在源码里改";
+    if (CONT_RE.test(line.text)) return t("vis.contLyrics");
     if (!LYRIC_RE.test(line.text)) break;
     out.push(line);
   }
@@ -111,7 +112,7 @@ export function lyricLinesAfter(state: EditorState, n: number): Line[] | string 
 /** 在 `pos`（两个 token 之间）插入换行 / 换页。 */
 export function insertBreak(ctx: EditCtx, pos: number, page: boolean): EditOutcome {
   const tok = page ? ctx.dialect.pageBreak : ctx.dialect.lineBreak;
-  if (tok === null) return { error: page ? "这种格式没有换页符号" : "这种格式的换行不是符号" };
+  if (tok === null) return { error: t(page ? "vis.noPageBreak" : "vis.breakNotSymbol") };
   const byLine = !!ctx.dialect.lyricBlockByCodeLine;
   const { state } = ctx;
   const skip = "/";
@@ -120,10 +121,10 @@ export function insertBreak(ctx: EditCtx, pos: number, page: boolean): EditOutco
   const bar = ctx.sync.ordered().find((e) => e.kind === "barline" && e.from >= pos);
   if (bar && state.doc.sliceString(pos, bar.from).trim() === "") pos = bar.to;
   const line = state.doc.lineAt(pos);
-  if (!isMusic(line.text)) return { error: "光标不在音乐行上" };
+  if (!isMusic(line.text)) return { error: t("vis.notMusicLine") };
   const left = state.doc.sliceString(line.from, pos).trimEnd();
   const right = state.doc.sliceString(pos, line.to).trimStart();
-  if (left === "") return { error: "行首不用再换行" };
+  if (left === "") return { error: t("vis.lineStart") };
 
   const last = lastMusicLine(state, line.number, breaks, byLine);
   const lyr = ctx.dialect.lyricsFollowBreaks ? lyricLinesAfter(state, last.number) : [];

@@ -10,16 +10,16 @@ import { emit123 } from "../j123/emit";
 import { emitAbc } from "../abcfamily/emitabc.entry";
 import { emitJpwabc } from "./tojpw";
 import { emitPu } from "./topu";
-import { DIALECTS } from "../pu/dialect";
 import { withPageMeta } from "./pagemeta";
+import { t } from "../i18n";
 
 /** 可写出的文本格式。文本谱两种方言各算一种。 */
 export type ConvertTarget = "123" | "abc" | "jpwabc" | "tomato" | "shige";
 
 export interface TargetSpec {
   id: ConvertTarget & TargetFormat;
-  /** 下拉里的显示名 */
-  label: string;
+  /** 下拉里的显示名（按界面语言） */
+  readonly label: string;
   /** 写出来的文本在编辑器里按哪种源格式打开（`editor/formats.ts::DocFormatId`） */
   docFormat: "123" | "abc" | "jpwabc" | "pu";
   emit(doc: ScoreDoc): string;
@@ -28,20 +28,20 @@ export interface TargetSpec {
 /** 顺序即下拉里的顺序；第一项是识别的默认输出格式。 */
 export const CONVERT_TARGETS: readonly TargetSpec[] = [
   // 123 / ABC 把 MusicXML 的纸写成 `I:meta page …`（`pagemeta.ts`），转过去再打开纸不丢
-  { id: "123", label: "简谱 123", docFormat: "123", emit: (doc) => emit123(withPageMeta(doc)) },
+  { id: "123", get label() { return t("fmt.target.123"); }, docFormat: "123", emit: (doc) => emit123(withPageMeta(doc)) },
   {
     id: "jpwabc",
-    label: "简谱 JPWABC",
+    get label() { return t("fmt.target.jpwabc"); },
     docFormat: "jpwabc",
     emit: (doc) => {
       const text = emitJpwabc(doc);
-      if (text === null) throw new Error("没有可写出的曲行");
+      if (text === null) throw new Error(t("err.noLines"));
       return text;
     },
   },
-  { id: "abc", label: "ABC", docFormat: "abc", emit: (doc) => emitAbc(withPageMeta(doc)) },
-  { id: "tomato", label: DIALECTS.tomato.name, docFormat: "pu", emit: (doc) => emitPu(doc, "tomato") },
-  { id: "shige", label: DIALECTS.shige.name, docFormat: "pu", emit: (doc) => emitPu(doc, "shige") },
+  { id: "abc", get label() { return t("fmt.target.abc"); }, docFormat: "abc", emit: (doc) => emitAbc(withPageMeta(doc)) },
+  { id: "tomato", get label() { return t("fmt.target.tomato"); }, docFormat: "pu", emit: (doc) => emitPu(doc, "tomato") },
+  { id: "shige", get label() { return t("fmt.target.shige"); }, docFormat: "pu", emit: (doc) => emitPu(doc, "shige") },
 ];
 
 export function isConvertTarget(v: unknown): v is ConvertTarget {

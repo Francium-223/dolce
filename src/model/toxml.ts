@@ -46,6 +46,7 @@ import { harmonyXml as chordTextXml } from "../score/harmonyxml";
 import { projectForMusicXml, type ProjectOptions } from "./xmlproject";
 import { SOURCE_ID_PREFIX } from "./helpers";
 import { surfaceOf, type EngravedLayout, type Position, type PrintLayout } from "./xmlsurface";
+import { t as tr } from "../i18n";
 
 const esc = (s: string): string =>
   s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -836,7 +837,7 @@ export interface ToXmlOptions extends ProjectOptions {
  *  简谱来源先经 `xmlproject.ts` 投成 MusicXML 形状，MusicXML 读进来的原样序列化（表层从原节点回填）。 */
 export function scoreDocToMusicXml(doc: ScoreDoc, options: ToXmlOptions = {}): string {
   const src = doc.songs[options.song ?? 0];
-  if (!src) throw new Error("这份文档里没有曲子");
+  if (!src) throw new Error(tr("err.noSong"));
   const song = projectForMusicXml(src, options);
   const cx: Ctx = { sourceIds: options.sourceIds === true, ...(options.layout ? { layout: options.layout } : {}) };
   // 文本格式投影出来的一律署上本应用（<encoding><software>）：混排引擎据此认 `<harmony><offset>` 等本写出端的写法

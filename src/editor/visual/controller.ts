@@ -35,6 +35,7 @@ import {
   type Box, boxInPage, charIndexAt, inkBoxInPage, clearOverlay, drawBlock, drawBreak, drawCaret, hitThroughOverlay, musicBox, rightEdgeInBand,
   sameRow, setBeatIssues, textCaretInPage,
 } from "./overlay";
+import { t as tr } from "../../i18n";
 
 /** 键盘上这几样交给浏览器的剪贴板事件（`onClipboardEvent`）：那里拿得到系统剪贴板的字 */
 const CLIPBOARD_ACTIONS = new Set(["edit.copy", "edit.cut", "edit.paste"]);
@@ -153,6 +154,12 @@ export class VisualEditController {
 
   // ---------------- 装配 ----------------
 
+  /** 界面语言变了：记号面板重建、模式标签与拍数提示重画。 */
+  relabel(): void {
+    if (this.paletteEl) this.paletteRefresh = buildPalette(this.paletteEl, this.runner);
+    this.refresh();
+  }
+
   /** 谱面可聚焦、接键盘；工具条上的模式标签与格式标记开关。 */
   attach(els: {
     mode: HTMLElement | null; selInfo?: HTMLElement | null; marksBtn: HTMLButtonElement | null;
@@ -270,7 +277,7 @@ export class VisualEditController {
     const m = marks[this.beatCursor]!;
     if ("empty" in m) {
       this.select(m.empty.from + 1, m.empty.from + 1);
-      this.host.setStatus("这一小节是空的：光标已放进去，可以接着输入音符");
+      this.host.setStatus(tr("beat.emptyCursor"));
       return;
     }
     const first = this.host.sync.ordered().find((e) => e.kind === "note" && m.issue.ids.includes(e.id));
@@ -278,7 +285,7 @@ export class VisualEditController {
       const span = this.noteSel(first);
       this.select(span.from, span.to);
     }
-    this.host.setStatus(`第 ${m.issue.measureIndex + 1} 小节${describeBeatIssue(m.issue)}`);
+    this.host.setStatus(tr("beat.measure", { n: m.issue.measureIndex + 1, issue: describeBeatIssue(m.issue) }));
   }
 
   /** 原文里的空小节：同一行里两条小节线之间只有空白，且这一行是曲谱行（行里有音符）。 */
@@ -363,7 +370,7 @@ export class VisualEditController {
     }
     if (this.modeEl) {
       this.modeEl.hidden = !on;
-      this.modeEl.textContent = this.mode === "edit" ? "编辑" : `插入 · ${durName(this.curDur)}${this.curVoice > 1 ? ` · 声部${this.curVoice}` : ""}`;
+      this.modeEl.textContent = this.mode === "edit" ? tr("vis.modeEdit") : tr("vis.modeInsert", { dur: durName(this.curDur) }) + (this.curVoice > 1 ? tr("vis.modeVoice", { n: this.curVoice }) : "");
       this.modeEl.dataset.mode = this.mode;
     }
     if (this.paletteEl) {
@@ -373,7 +380,7 @@ export class VisualEditController {
     if (this.beatEl) {
       const n = on ? this.beatIssues.length + this.emptyBars.length : 0;
       this.beatEl.hidden = n === 0;
-      this.beatEl.textContent = `${n} 小节拍数不对`;
+      this.beatEl.textContent = tr("beat.count", { n });
     }
     this.drawBeatIssues(on ? this.beatIssues : [], on ? this.emptyBars : []);
     if (!on) return;
@@ -433,7 +440,7 @@ export class VisualEditController {
         if (same) same.box = union(same.box, hit.box);
         else boxes.push(hit);
       }
-      const title = `第 ${issue.measureIndex + 1} 小节${describeBeatIssue(issue)}`;
+      const title = tr("beat.measure", { n: issue.measureIndex + 1, issue: describeBeatIssue(issue) });
       for (const b of boxes) perPage.get(b.svg)?.push({ box: b.box, title });
     }
     // 空小节：谱面上没有它的音符，框住前后两个音之间的空当（前后不在同一行就在前一个音后面留一格）
@@ -452,7 +459,7 @@ export class VisualEditController {
         x0 = pb.box.x + pb.box.w + h * 0.4;
         x1 = Math.max(x0 + h * 0.6, nb.box.x - h * 0.4);
       }
-      perPage.get(ref.svg)?.push({ box: { x: x0, y: ref.box.y, w: x1 - x0, h }, title: "空小节：这一小节的音都删掉了" });
+      perPage.get(ref.svg)?.push({ box: { x: x0, y: ref.box.y, w: x1 - x0, h }, title: tr("beat.empty") });
     }
     for (const [svg, items] of perPage) setBeatIssues(svg, items);
   }
@@ -636,7 +643,7 @@ export class VisualEditController {
       const at = nl ?? this.host.view.state.selection.main.head;
       this.select(at, at);
       this.pickedBreak = { after: brk.after, sel: at };
-      this.host.setStatus("选中了换行（文本谱另起一行 Q:），按 Delete 与下一行合并");
+      this.host.setStatus(tr("vis.puBreakSelected"));
       this.refresh();
       return true;
     }
@@ -768,7 +775,7 @@ export class VisualEditController {
   available(a: VisualAction): boolean {
     const model = this.host.modelEditing();
     if (a.id === "chord.add" || a.id === "voice.set") return model;
-    if (a.group === "小节") return model || !!this.host.editDialect()?.measure;
+    if (a.group === "meas") return model || !!this.host.editDialect()?.measure;
     return true;
   }
 
@@ -1838,7 +1845,7 @@ export class VisualEditController {
   private editCtx(quiet = false): EditCtx | null {
     const dialect = this.host.editDialect();
     if (!dialect || !this.host.syncDoc()) {
-      if (!quiet) this.host.setStatus("这种格式暂不支持在谱面上改谱，请在源码区修改");
+      if (!quiet) this.host.setStatus(tr("vis.unsupported"));
       return null;
     }
     return { state: this.host.view.state, sync: this.host.sync, dialect, doc: this.host.syncDoc() };
@@ -1885,7 +1892,7 @@ export class VisualEditController {
     if (!fn || !doc) return true;
     const text = fn(c.state, doc, afterId, add, page);
     if (text === null) {
-      this.host.setStatus(add ? "这里没法换行" : "这处换行删不掉");
+      this.host.setStatus(tr(add ? "vis.cantBreak" : "vis.cantUnbreak"));
       return true;
     }
     const old = c.state.doc.toString();
@@ -1919,7 +1926,7 @@ export class VisualEditController {
     if (c.dialect.relayoutBreaks) {
       const prev = [...this.navigable()].reverse().find((e) => e.to <= pos && (e.kind === "note" || e.kind === "sustain"));
       if (!prev) {
-        this.host.setStatus("行首不用再换行");
+        this.host.setStatus(tr("vis.lineStart"));
         return true;
       }
       return this.relayoutBreak(c, prev.id, true, page);
@@ -1972,7 +1979,7 @@ export class VisualEditController {
     if (sel.empty) {
       const h = this.curDur.halvings - dir;
       if (h < 0 || h > 4) {
-        this.host.setStatus(h < 0 ? "当前时值最长到四分音符（更长的用增时线 -）" : "减时线最多四条");
+        this.host.setStatus(tr(h < 0 ? "vis.durMax" : "vis.durMin"));
         return true;
       }
       this.curDur = { ...this.curDur, halvings: h };
@@ -1990,7 +1997,7 @@ export class VisualEditController {
     if (!sel.empty) {
       const note = notesIn(c, sel.from, sel.to).pop();
       if (!note) {
-        this.host.setStatus("先选中一个音符");
+        this.host.setStatus(tr("vis.selectNote"));
         return true;
       }
       return this.apply(addSustain(c, note));
@@ -2040,13 +2047,13 @@ export class VisualEditController {
       targets = exact && (exact.kind === "mark" || exact.kind === "break" || isText(exact)) ? [exact] : this.selectedEntries();
     }
     if (targets.length === 0) {
-      this.host.setStatus("没有选中可删的东西");
+      this.host.setStatus(tr("vis.nothingToDelete"));
       return true;
     }
     const brk = targets.find((e) => e.kind === "break");
     if (brk) {
       if (targets.length > 1) {
-        this.host.setStatus("换行符请单独选中再删");
+        this.host.setStatus(tr("vis.breakAlone"));
         return true;
       }
       return this.apply(deleteBreak(c, brk));
@@ -2064,7 +2071,7 @@ export class VisualEditController {
     if (owner === null) return false;
     const marks = sync.marksOf(owner);
     if (marks.length === 0) {
-      this.host.setStatus("这个音符上没有挂记号");
+      this.host.setStatus(tr("vis.noMarks"));
       return true;
     }
     const cur = marks.findIndex((m) => m.from === at.from || m.pair?.from === at.from);
@@ -2082,7 +2089,7 @@ export class VisualEditController {
       }
     }
     this.select(m.from, m.to);
-    this.host.setStatus(`选中记号：${markLabel(m)}`);
+    this.host.setStatus(tr("vis.markSelected", { mark: markLabel(m) }));
     return true;
   }
 }
@@ -2139,17 +2146,17 @@ function union(a: Box, b: Box): Box {
 
 /** 插入模式的当前时值怎么叫（模式标签上显示）。 */
 function durName(d: NoteDuration): string {
-  return ["四分", "八分", "十六分", "三十二分", "六十四分"][d.halvings] ?? `${d.halvings} 条减时线`;
+  return d.halvings >= 0 && d.halvings <= 4 ? tr(`vis.dur${d.halvings as 0 | 1 | 2 | 3 | 4}`) : tr("vis.durN", { n: d.halvings });
 }
 
 /** 记号条目的中文说法（状态栏、菜单用）。 */
 export function markLabel(e: SyncEntry): string {
   switch (e.markKind) {
-    case "harmony": return `和弦 ${e.name ?? ""}`;
-    case "annotation": return `注记 ${e.name ?? ""}`;
-    case "dynamic": return `力度 ${e.name ?? ""}`;
-    case "slur": return "圆滑线/延音线";
-    default: return `记号 ${e.name ?? ""}`;
+    case "harmony": return tr("mark.harmony", { name: e.name ?? "" });
+    case "annotation": return tr("mark.annotation", { name: e.name ?? "" });
+    case "dynamic": return tr("mark.dynamic", { name: e.name ?? "" });
+    case "slur": return tr("mark.slur");
+    default: return tr("mark.other", { name: e.name ?? "" });
   }
 }
 

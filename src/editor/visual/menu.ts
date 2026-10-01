@@ -3,7 +3,8 @@
 // 两者都从动作表（`keys.ts::VISUAL_ACTIONS`）生成——动作名、快捷键提示、在哪种模式下可用都取自那一份，
 // 点了调的是控制器同一个 `run`，不另写一套逻辑。
 
-import { keyTextOf, VISUAL_ACTIONS, type VisualAction, type VisualMode } from "./keys";
+import { groupLabel, keyTextOf, VISUAL_ACTIONS, type VisualAction, type VisualMode } from "./keys";
+import { t } from "../../i18n";
 
 /** 面板与菜单里不列的：移动、轮换这类纯键盘操作，和面板自己的开关 */
 const KEYBOARD_ONLY = new Set(["nav.prev", "nav.next", "nav.extendPrev", "nav.extendNext", "nav.home", "nav.end", "mark.next", "mark.prev",
@@ -12,13 +13,13 @@ const KEYBOARD_ONLY = new Set(["nav.prev", "nav.next", "nav.extendPrev", "nav.ex
 /** 唱名那个动作展开成一排：1–7、0；音名 C–B；加和弦音 1–7；声部 1–4 */
 const DIGITS = ["1", "2", "3", "4", "5", "6", "7", "0"];
 const ROWS: Record<string, { keys: string[]; label: (d: string) => string; title: (d: string) => string }> = {
-  "note.digit": { keys: DIGITS, label: (d) => d, title: (d) => (d === "0" ? "休止" : `唱名 ${d}`) },
-  "note.letter": { keys: ["c", "d", "e", "f", "g", "a", "b"], label: (d) => d.toUpperCase(), title: (d) => `音名 ${d.toUpperCase()}（按调号换成唱名）` },
-  "chord.add": { keys: DIGITS.slice(0, 7), label: (d) => `+${d}`, title: (d) => `加和弦音：唱名 ${d}` },
-  "voice.set": { keys: ["1", "2", "3", "4"], label: (d) => `声${d}`, title: (d) => `新插的音落在第 ${d} 声部` },
+  "note.digit": { keys: DIGITS, label: (d) => d, title: (d) => (d === "0" ? t("vis.rest") : t("vis.degree", { d })) },
+  "note.letter": { keys: ["c", "d", "e", "f", "g", "a", "b"], label: (d) => d.toUpperCase(), title: (d) => t("vis.letter", { d: d.toUpperCase() }) },
+  "chord.add": { keys: DIGITS.slice(0, 7), label: (d) => `+${d}`, title: (d) => t("vis.chordAdd", { d }) },
+  "voice.set": { keys: ["1", "2", "3", "4"], label: (d) => t("vis.voiceShort", { d }), title: (d) => t("vis.voiceTitle", { d }) },
 };
 /** 右键菜单里收进「小节」子菜单的那组 */
-const SUBMENU_GROUP = "小节";
+const SUBMENU_GROUP = "meas";
 
 export interface MenuRunner {
   readonly mode: VisualMode;
@@ -202,14 +203,14 @@ export function showMenu(x: number, y: number, target: MenuTarget, r: MenuRunner
   // 小节操作收成一个可展开的子菜单（一共十几项，平铺会把菜单撑得比屏幕还高）
   const sub = actions.filter((a) => a.group === SUBMENU_GROUP);
   if (sub.length) {
-    const head = button("", "插删小节、调号拍号速度、小节线样式、房号、跳转记号", () => {
+    const head = button("", t("vis.measSubmenu"), () => {
       box.hidden = !box.hidden;
       head.classList.toggle("open", !box.hidden);
       place(); // 展开后变高了，重新贴回视口里
       if (!box.hidden) box.scrollIntoView({ block: "nearest" });
     }, "visual-menu-item visual-menu-sub");
     const label = document.createElement("span");
-    label.textContent = "小节";
+    label.textContent = groupLabel(SUBMENU_GROUP);
     const arrow = document.createElement("kbd");
     arrow.textContent = "▸";
     head.append(label, arrow);

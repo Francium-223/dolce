@@ -38,6 +38,7 @@ import { dialectSpec, sniffDialect, type Dialect, type DialectSpec } from "./dia
 import { puToScoreDoc } from "../model/frompu";
 import type { ScoreDoc } from "../model/doc";
 import { PU_LYRIC_PUNCTUATION, PU_LYRIC_QUOTES } from "../common/cjkpunct";
+import { t as tr } from "../i18n";
 
 /** 音符后可跟的记号名（`&xx`）。不在表里的会报 unknown-command 但仍保留。 */
 const NOTE_COMMANDS = new Set([
@@ -164,7 +165,7 @@ function scanGraceNotes(ctx: Ctx, body: string, columnBase: number): NoteElement
       continue;
     }
     if (!/\s/.test(ch)) {
-      report(ctx, "unsupported-grace-token", `倚音里无法识别的字符 '${ch}'`, columnBase + cursor);
+      report(ctx, "unsupported-grace-token", tr("diag.pu.graceChar", { ch }), columnBase + cursor);
     }
     cursor += 1;
   }
@@ -200,7 +201,7 @@ function interpretQuoted(ctx: Ctx, body: string, columnBase: number): QuotedMean
   if (meter) {
     const parsed = parseMeter(body.slice(meter[0].length));
     if (parsed) return { meter: parsed };
-    report(ctx, "bad-temporary-meter", `临时拍号无法解析：'${body}'`, columnBase, body.length);
+    report(ctx, "bad-temporary-meter", tr("diag.pu.tempMeter", { body }), columnBase, body.length);
     return { annotation: body };
   }
   const grace = /^(h?yy):\s*/i.exec(body);
@@ -347,7 +348,7 @@ export function parseMusicLine(
         prev.code += "@";
         prev.source.length += 1;
       } else {
-        report(ctx, "orphan-lyric-anchor", "'@' 前面没有可跟词的符号", i);
+        report(ctx, "orphan-lyric-anchor", tr("diag.pu.orphanAnchor"), i);
       }
       i += 1;
       continue;
@@ -381,7 +382,7 @@ export function parseMusicLine(
         i += code.length;
         continue;
       }
-      report(ctx, "bad-barline", `无法识别的小节线 '${ch}'`, i);
+      report(ctx, "bad-barline", tr("diag.pu.badBarline", { ch }), i);
       i += 1;
       continue;
     }
@@ -404,7 +405,7 @@ export function parseMusicLine(
       // 参考渲染画的是 206→304、306→400、402→500 三条短弧）。
       const open = curves.shift();
       if (open === undefined) {
-        report(ctx, "unmatched-slur-end", "多余的 ')'", i);
+        report(ctx, "unmatched-slur-end", tr("diag.pu.extraParen"), i);
       } else {
         // 队首闭合，它前面没有别的未闭合弧线，所以层号固定在第一层——
         // 链式 tie 的几条弧因此等高（原版如此）
@@ -433,7 +434,7 @@ export function parseMusicLine(
     }
     if (ch === "!") {
       const open = wedges.pop();
-      if (open === undefined) report(ctx, "unmatched-wedge-end", "多余的 '!'", i);
+      if (open === undefined) report(ctx, "unmatched-wedge-end", tr("diag.pu.extraBang"), i);
       else marks.push(makeMark(open, Math.max(0, elements.length - 1), ctx));
       i += 1;
       continue;
@@ -448,7 +449,7 @@ export function parseMusicLine(
       if (adjacent) {
         const end = src.indexOf("]", i + 1);
         if (end < 0) {
-          report(ctx, "unterminated-grace", "倚音的 '[' 没有闭合", i);
+          report(ctx, "unterminated-grace", tr("diag.pu.graceOpen"), i);
           i += 1;
           continue;
         }
@@ -501,7 +502,7 @@ export function parseMusicLine(
       }
       const open = voltas.pop();
       if (open === undefined) {
-        report(ctx, "unmatched-volta-end", "多余的 ']'", i);
+        report(ctx, "unmatched-volta-end", tr("diag.pu.extraBracket"), i);
       } else {
         if (openEnd) open.openEnd = true;
         marks.push(makeMark(open, Math.max(0, elements.length - 1), ctx));
@@ -542,10 +543,10 @@ export function parseMusicLine(
       const target = lastAttachable(elements);
       const orn: Ornament = { name, level, source: span(ctx, i, next - i) };
       if (target === undefined) {
-        report(ctx, "orphan-command", `记号 &${rawName} 前面没有可挂载的符号`, i, next - i);
+        report(ctx, "orphan-command", tr("diag.pu.orphanCommand", { name: rawName }), i, next - i);
       } else {
         if (!NOTE_COMMANDS.has(name) && !BARLINE_COMMANDS.has(name)) {
-          report(ctx, "unknown-command", `未知记号 &${rawName}`, i, next - i);
+          report(ctx, "unknown-command", tr("diag.pu.unknownCommand", { name: rawName }), i, next - i);
         }
         target.ornaments.push(orn);
       }
@@ -561,14 +562,14 @@ export function parseMusicLine(
     if (ch === '"') {
       const quoted = readQuotedRun(src, i);
       if (!quoted) {
-        report(ctx, "unterminated-quote", "双引号没有闭合", i);
+        report(ctx, "unterminated-quote", tr("diag.pu.quoteOpen"), i);
         i = src.length;
         continue;
       }
       const meaning = interpretQuoted(ctx, quoted.body, i + 1);
       const target = lastAttachable(elements);
       if (target === undefined) {
-        report(ctx, "orphan-annotation", `注释 "${quoted.body}" 前面没有可挂载的符号`, i);
+        report(ctx, "orphan-annotation", tr("diag.pu.orphanAnnotation", { body: quoted.body }), i);
       } else {
         applyQuoted(target, meaning, span(ctx, i, quoted.next - i));
       }
@@ -580,7 +581,7 @@ export function parseMusicLine(
     if (ch === "{") {
       const end = src.indexOf("}", i + 1);
       if (end < 0) {
-        report(ctx, "unterminated-layer", "'{' 没有闭合", i);
+        report(ctx, "unterminated-layer", tr("diag.pu.layerOpen"), i);
         i = src.length;
         continue;
       }
@@ -627,7 +628,7 @@ export function parseMusicLine(
       continue;
     }
 
-    report(ctx, "unexpected-char", `无法识别的字符 '${ch}'`, i);
+    report(ctx, "unexpected-char", tr("diag.pu.badChar", { ch }), i);
     i += 1;
   }
 
@@ -640,7 +641,7 @@ export function parseMusicLine(
   }
   for (const open of voltas) marks.push(makeMark(open, lastIndex, ctx, true));
   for (const open of wedges) {
-    report(ctx, "unclosed-wedge", "渐强/渐弱没有用 '!' 收尾", open.column);
+    report(ctx, "unclosed-wedge", tr("diag.pu.wedgeOpen"), open.column);
     marks.push(makeMark(open, lastIndex, ctx));
   }
 
@@ -732,7 +733,7 @@ export function parseLyricBody(ctx: Ctx, src: string, startColumn: number): Lyri
     if (ch === "<") {
       const end = src.indexOf(">", i + 1);
       if (end < 0) {
-        report(ctx, "unterminated-lyric-annotation", "歌词说明文字没有闭合", i);
+        report(ctx, "unterminated-lyric-annotation", tr("diag.pu.lyricNoteOpen"), i);
         i += 1;
         continue;
       }
@@ -750,7 +751,7 @@ export function parseLyricBody(ctx: Ctx, src: string, startColumn: number): Lyri
     if (ch === "{") {
       const end = src.indexOf("}", i + 1);
       if (end < 0) {
-        report(ctx, "unterminated-lyric-group", "歌词里的 '{' 没有闭合", i);
+        report(ctx, "unterminated-lyric-group", tr("diag.pu.lyricGroupOpen"), i);
         i += 1;
         continue;
       }
@@ -808,7 +809,7 @@ export function parseLyricBody(ctx: Ctx, src: string, startColumn: number): Lyri
     const chLen = cp > 0xffff ? 2 : 1;
     const text = src.slice(i, i + chLen);
     if (!isCjk(text) && cp < 0x7f) {
-      report(ctx, "unexpected-lyric-char", `歌词里无法识别的字符 '${text}'`, i, chLen);
+      report(ctx, "unexpected-lyric-char", tr("diag.pu.lyricChar", { text }), i, chLen);
     }
     // 并字连接号（番茄的 `~`）：把本字并到前一个音节
     if (d.joinToken !== undefined && text === d.joinToken) {
@@ -846,7 +847,7 @@ function stripLyricAnnotation(
   const close = open === '"' ? '"' : ">";
   const end = src.indexOf(close, i + 1);
   if (end < 0) {
-    report(ctx, "unterminated-lyric-annotation", "歌词说明文字没有闭合", i);
+    report(ctx, "unterminated-lyric-annotation", tr("diag.pu.lyricNoteOpen"), i);
     return { gap: 20, next: startColumn };
   }
   let body = src.slice(i + 1, end);
@@ -911,7 +912,7 @@ function applyMetadata(ctx: Ctx, meta: Metadata, key: string, value: string, col
       break;
     case "D": {
       if (!/^(?:[A-G][#$b♭♯]?|[#$b♭♯][A-G])$/.test(v)) {
-        report(ctx, "bad-mode", `调号 '${v}' 不是 A–G（可带升降号）的形式`, column, v.length);
+        report(ctx, "bad-mode", tr("diag.pu.badKey", { v }), column, v.length);
       }
       meta.mode = v;
       break;
@@ -926,7 +927,7 @@ function applyMetadata(ctx: Ctx, meta: Metadata, key: string, value: string, col
         if (tok.endsWith(")")) inParen = false;
       }
       if (meta.meters.length === 0) {
-        report(ctx, "bad-meter", `拍号 '${v}' 无法解析`, column, v.length);
+        report(ctx, "bad-meter", tr("diag.pu.badMeter", { v }), column, v.length);
       }
       break;
     }
@@ -956,7 +957,7 @@ function applyMetadata(ctx: Ctx, meta: Metadata, key: string, value: string, col
       meta.options.push({ key: key.toUpperCase(), value: v });
       break;
     default:
-      report(ctx, "unknown-metadata", `未知头部字段 '${key}'`, column, key.length);
+      report(ctx, "unknown-metadata", tr("diag.pu.unknownField", { key }), column, key.length);
   }
 }
 
@@ -1158,14 +1159,14 @@ export function parsePuAst(text: string, options: ParseOptions = {}): PuDoc {
         report(
           ctx,
           "lyric-without-music",
-          "空的 Q: 行下面的歌词没有音符可对，已忽略",
+          tr("diag.pu.lyricNoMusic"),
           0,
           raw.length,
         );
         continue;
       }
       if (lastVoice === null) {
-        report(ctx, "orphan-lyric", "歌词行前面没有曲行", 0, raw.length);
+        report(ctx, "orphan-lyric", tr("diag.pu.orphanLyric"), 0, raw.length);
         continue;
       }
       const ann = stripLyricAnnotation(ctx, raw, contentAt);
@@ -1194,7 +1195,7 @@ export function parsePuAst(text: string, options: ParseOptions = {}): PuDoc {
     // 无前缀的自由文字：注记、勘误、引用之类，原样收着即可。
     // 只有「像谱却没写前缀」的行才值得报警——那多半是漏了 `Q:`。
     if (/[|]/.test(trimmed) && /[0-9]/.test(trimmed)) {
-      report(ctx, "unrecognized-line", `像曲行但没有 Q: 前缀：'${trimmed.slice(0, 20)}'`, 0, raw.length);
+      report(ctx, "unrecognized-line", tr("diag.pu.noQ", { text: trimmed.slice(0, 20) }), 0, raw.length);
     } else {
       metadata.remarks.push(trimmed);
     }

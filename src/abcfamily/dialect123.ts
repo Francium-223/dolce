@@ -10,6 +10,7 @@
 import type { Accidental } from "../model/doc";
 import { AbcFamilyLexer } from "./lex";
 import type { DurationScan, NoteScan } from "./types";
+import { t as tr } from "../i18n";
 
 const ACCIDENTALS: Readonly<Record<string, Accidental>> = {
   "#": "sharp",
@@ -41,8 +42,8 @@ export class Lexer123 extends AbcFamilyLexer {
     while (j < line.length && line[j] !== " " && line[j] !== "\t") j++;
     const body = line.slice(i, j);
     const res: { len: number; error?: string } = { len: j - i };
-    if (j >= line.length) res.error = `和弦 \`${body}\` 后面必须跟空格和它所属的音符`;
-    else if (!BARE_CHORD_RE.test(body)) res.error = `看不懂的和弦名 \`${body}\`（不合规的名字请加引号）`;
+    if (j >= line.length) res.error = tr("diag.abc.chordSpace", { body });
+    else if (!BARE_CHORD_RE.test(body)) res.error = tr("diag.abc.badChord", { body });
     return res;
   }
 

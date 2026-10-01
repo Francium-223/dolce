@@ -39,7 +39,7 @@ export interface ScoreEmitter {
 /** 顺序即下拉里的顺序；第一项是默认。 */
 export const OMR_EMITTERS: readonly ScoreEmitter[] = CONVERT_TARGETS.map((t) => ({
   id: t.id,
-  label: t.label,
+  get label() { return t.label; },
   emit: (rec: RecognizedScore): EmittedScore => {
     const doc = recognizedToDoc(rec);
     const text = t.emit(doc);

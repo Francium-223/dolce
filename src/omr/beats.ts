@@ -7,6 +7,7 @@ import type { ElementId } from "../model/doc";
 import { type BeatIssue, checkMeasureDurations, describeBeatIssue } from "../model/beatcheck";
 import { recognizedToDoc } from "./todoc";
 import type { JpNum, Rect, RecognizedScore } from "./types";
+import { t } from "../i18n";
 
 export interface RecognizedBeatIssue {
   issue: BeatIssue;
@@ -42,7 +43,7 @@ export function recognizedBeatIssues(score: RecognizedScore): RecognizedBeatIssu
     }
     return {
       issue,
-      text: `第 ${issue.measureIndex + 1} 小节${describeBeatIssue(issue)}`,
+      text: t("beat.measure", { n: issue.measureIndex + 1, issue: describeBeatIssue(issue) }),
       boxes: [...byRow.values()],
       row: nums.length ? rowOf.get(nums[0]!) ?? 0 : 0,
       toks: nums.map((n) => `${n.digit}${"/".repeat(n.div)}${".".repeat(n.dot)}${"-".repeat(n.augment)}`),

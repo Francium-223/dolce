@@ -14,7 +14,10 @@ import { PlayItem } from "../score/playorder";
 import type { MetaData } from "../smufl/smufl";
 import { isTauriRuntime } from "./fileio";
 import { FEEDBACK_EMAIL, openFeedbackMail } from "./feedback";
-import { VISUAL_ACTIONS } from "./visual/keys";
+import { VISUAL_ACTIONS, groupLabel } from "./visual/keys";
+import { getLang, t } from "../i18n";
+import { FEATURE_TOPICS_EN, GLOSSARY_EN, NOTATION_TEXT_EN, SHORTCUTS_EN, VISUAL_TOPICS_EN } from "./help.en";
+import { EXAMPLES_123_TEXT_EN, GLOSSARY_123_EN, INTRO_123_EN } from "./help123.en";
 import { EXAMPLES_123, GLOSSARY_123, INTRO_123, SPEC_123_URL, wrap123, type NotationExample } from "./help123";
 import {
   APP_VERSION, HOMEPAGE, checkForUpdate, isAutoCheckEnabled, openExternal,
@@ -157,11 +160,7 @@ function para(text: string, cls = "help-p"): HTMLParagraphElement {
 // ---- 功能帮助 --------------------------------------------------------------
 
 type Badge = "desktop" | "browser" | "mac";
-const BADGE_TEXT: Record<Badge, string> = {
-  desktop: "🖥 仅桌面版",
-  browser: "🌐 仅浏览器",
-  mac: "🍎 仅 macOS 桌面",
-};
+const badgeText = (b: Badge): string => t(`help.badge.${b}`);
 
 interface Topic {
   title: string;
@@ -172,22 +171,22 @@ interface Topic {
   extra?: () => HTMLElement;
 }
 
-const FEATURE_TOPICS: Topic[] = [
+const FEATURE_TOPICS_ZH: Topic[] = [
   {
-    title: "打开与保存文件",
+    title: "打开、保存与另存为",
     body: [
-      "从开始页的 **导入乐谱** 打开 `.123`（简谱主格式，见「123 格式」页）、`.jpwabc`（JP-Word）、文本谱（番茄简谱 / 诗歌本）、`.abc`、`.xml` / `.musicxml`，以及识别项目 `.jpomr`（见「识别项目」）；也可把这些文件直接拖入页面。",
-      "右上角 **保存** 按当前格式写回原文件；**另存为** 可换成 123 / JPWABC / ABC / 文本谱等其它格式——换格式装不下的内容会先列出来，确认后再写。",
+      "从开始页的 **导入乐谱** 打开，或直接把文件拖入页面：123（`.123`，简谱主格式，见「123 格式」页）、`.jpwabc`（JP-Word）、文本谱（番茄简谱 / 诗歌本，`.pu` `.fq` `.jps` `.txt`）、MusicXML（`.xml` / `.musicxml`）、ABC（`.abc`），以及识别项目 `.jpomr`（见「识别项目」）。",
+      "右上角 **保存** 按原格式存回（`.jpwabc` 与 JP-Word 兼容）；**另存为** 可换成 123、JPWABC、ABC、番茄简谱、诗歌本文本谱——换格式前会列出目标格式装不下的内容，确认后才写；**导出** 生成 PPTX、MIDI、MusicXML，五线谱 / 混排下还有 PNG、PDF。",
+      "代码区标题栏的格式下拉可把识别结果或刚打开的文件直接切成别的格式来编辑，切回「原文」即可还原。",
       "**桌面版**：打开/保存用系统原生对话框，可直接写回磁盘；下次启动会自动恢复上次打开的文件。**浏览器版**：用网页文件选择器打开，保存则以下载方式导出。",
     ],
   },
   {
     title: "编辑与实时排版",
     body: [
-      "左侧是源码编辑区（123、JPWABC、ABC、文本谱都能直接编辑），**边打字边重排**——停顿约 0.2 秒后右侧谱面自动更新。",
-      "也可以直接在谱面上改音符，见「可视化编辑」页。",
-      "**点选**：在谱面上点音符/小节，会高亮并在底部状态栏显示信息。",
-      "混排、识别模式下代码区只读或隐藏（详见对应主题）。",
+      "左侧是带语法高亮的源码编辑区，**边打字边重排**——停顿约 0.2 秒后右侧谱面自动更新。",
+      "**点选**：在谱面上点音符、歌词，代码区同步定位；也可以直接在谱面上改谱，见「可视化编辑」页。",
+      "MusicXML 没有源码区；混排、识别核对时代码区只读或隐藏（详见对应主题）。",
     ],
   },
   {
@@ -199,9 +198,9 @@ const FEATURE_TOPICS: Topic[] = [
     ],
   },
   {
-    title: "识图（图片转简谱）",
+    title: "图片识谱",
     body: [
-      "把简谱**图片**（PNG/JPG 等）或扫描 **PDF** 拖进谱面区，会自动识别成 123 简谱并载入编辑；四声部简谱按声部分开。识别在**本地离线**完成，浏览器版和桌面版都能用。",
+      "把简谱**图片或 PDF**（PNG/JPG/WEBP/PDF）拖进页面，或点开始页 **图片识谱**，会自动识别成 123 简谱并载入编辑，四声部简谱按声部分开。识别在**本地离线**完成，图片不会上传，浏览器版和桌面版都能用。",
       "**五线谱**也能识别：文字层完整的五线谱 PDF 直接读文字与矢量；扫描、拍照的五线谱图片或 PDF（独唱谱、合唱谱、简线混排谱）走位图识别，结果进五线谱 / 混排视图，谱面上可直接改（见「可视化编辑 → 编辑 MusicXML」）。独唱谱较可靠（音符约 97%），合唱谱扫描件需要较多校对。",
       "**走哪条路**：缺省按页面上有没有五线谱表自动判断（看前三页，封面目录页不算）；起始页与工具栏的 **识别为** 可改成「简谱」或「五线谱」，工具栏那个改了会用刚才那份图重新识别。一次拖入或选中几张图（五线谱的多页）按文件名排成一首；简谱一次识别一张。五线谱识别逐页显示进度，按 `Esc` 取消。",
       "识别完成后默认进入「二值图 + 半透明识别结果叠加」的核对视图，配合右侧下拉选择 附近浮窗 / 原位叠加 / 仅原图 三种方式；工具栏 **原图对照** 可在核对视图与可编辑排版稿之间来回切换。",
@@ -226,15 +225,15 @@ const FEATURE_TOPICS: Topic[] = [
   {
     title: "导入 ABC / MusicXML",
     body: [
-      "**ABC 记谱**（`.abc`）：拖入或打开后自动转成简谱排版，支持多声部、反复、一二房、和弦、装饰音、歌词等。",
-      "**MusicXML**（`.xml` / `.musicxml`）：导入后若是多声部（如四部合唱）会自动进入**混排**（五线谱 + 简谱层）。",
+      "**ABC 记谱**（`.abc`）：原生解析、排为简谱，可直接编辑并按原文保存；支持多声部、反复、一二房、和弦、装饰音、歌词等。",
+      "**MusicXML**（`.xml` / `.musicxml`）：单声部歌谱打开时可选择转成 123 / JPWABC / ABC / 文本谱来编辑，或保持 MusicXML 看五线谱（可在设置里记住选择）；多声部（如四部合唱）直接进入**混排**。",
     ],
   },
   {
     title: "谱面布局",
     body: [
-      "右侧「排版」顶部的四档 **展开 / 原样 / 五线谱 / 混排**：前两档是数字简谱的两种版面（PPT 为默认，投影用的笔画），后两档由 MusicXML 渲染——**五线谱**只画五线谱，**混排**在五线谱上再叠一层数字简谱；后两档需先导入图片、MusicXML 或 ABC，且此模式下左侧代码只读。",
-      "**分行方式**：选择「原始排版」可保留导入或识别时的行结构；选择「按乐句重排」会根据歌词和音乐乐句重新安排换行。文本谱（`.pu`）也支持，重排的是左侧代码本身——曲行与歌词行按乐句重切、原有的空行分组与 `[fenye]` 会被重排结果覆盖；再点「原始排版」即可逐字还原（Ctrl+Z 也可整体撤销）。",
+      "右侧「排版」顶部的四档：**展开**（反复与多段歌词逐段展开、一段一页，投影用）、**原样**（按原谱排一遍，多段歌词叠排）、**五线谱**、**混排**（五线谱上再叠一层简谱）。文本格式的五线谱由源码自动生成。",
+      "**分行方式**：选择「原始排版」可保留导入或识别时的行结构；选择「按乐句重排」会根据歌词和音乐乐句重新安排换行。文本谱也支持，重排的是左侧代码本身；再点「原始排版」即可逐字还原（Ctrl+Z 也可整体撤销）。",
       "这些工具只会在当前文件支持时出现。",
     ],
   },
@@ -243,7 +242,7 @@ const FEATURE_TOPICS: Topic[] = [
     body: [
       "工具栏 **试听** 按钮会随状态显示 播放 / 暂停 / 继续；旁边的 ■ 停止并回到曲首。简谱、五线谱、混排与原图对照都用一条纵贯整行（多声部是整个系统）的播放线标出位置，任一声部起音它都跟着走。",
       "**进度条**可拖动定位，右侧显示已播 / 总长（点一下切换成剩余时间）。播放或暂停中点谱面上的音符，会从那个音接着播；停止时点音符或拖进度条，下次从那里开始。",
-      "播放中改速度，从当前位置按新速度接着播。",
+      "按谱面标注的速度演奏，速度下拉可再调 ×0.5～×2；播放中改速度，从当前位置按新速度接着播。",
       "**循环**（工具条「循环」）：谱面上选了一段（可视化编辑的选区）就反复播这一段，没选循环整首——练某几小节时用。**节拍**：试听时每拍响一声，小节第一拍高一些；6/8 这类复拍子按附点四分打。开着节拍器时桌面版 macOS 也改用内置钢琴音色。",
       "多声部时在工具栏 **声部** 面板里调各声部音量，也可静音某个声部、或只听某一个声部（独奏，练声部用）；播放中改了从当前位置接着播。",
       "**macOS 桌面版**可使用系统原生音色，音质更好。",
@@ -252,9 +251,8 @@ const FEATURE_TOPICS: Topic[] = [
   {
     title: "导出",
     body: [
-      "工具栏 **导出** 只出别的媒介：简谱模式可导出 **PPTX**（矢量，逐页成幻灯片）、**MIDI**（含反复/力度/声部音量）和 **MusicXML**（给 MuseScore 等五线谱软件）。",
-      "五线谱 / 混排模式可导出当前页 **PNG**、全部页面 **PDF**、**MIDI** 与 **MusicXML**。导出内容与当前那一档预览（含简谱层的有无）保持一致。",
-      "换成别的源格式（123 / JPWABC / ABC / 文本谱）用 **另存为**。",
+      "工具栏 **导出**。简谱模式可导出 **PPTX**（矢量，逐页成幻灯片，取展开档）、**MIDI**（含反复/力度/声部音量）和 **MusicXML**。",
+      "五线谱 / 混排模式可导出当前页 **PNG**、全部页面 **PDF**、**MIDI** 和 **MusicXML**。导出内容与当前那一档预览（含简谱层的有无）保持一致。换源格式请用 **另存为**。",
     ],
   },
   {
@@ -271,15 +269,22 @@ const FEATURE_TOPICS: Topic[] = [
   {
     title: "简繁转换",
     body: [
-      "工具栏 **简繁** 可整篇转换源码中的中文——歌词、标题、词曲信息都会转，乐谱代码一字不动。",
+      "工具栏 **简繁** 可整篇转换中文——歌词、标题、词曲信息都会转，乐谱代码一字不动；五种格式都能用。",
       "方向可选 自动检测 / 简体 → 繁体 / 繁体 → 简体；自动检测按当前文本的字形判定。歌词里的 `/`、`-` 等记号位置不受影响，词组也不会被它们拆开（`日光/之下` 仍按整词转换）。转换改的是源码本身，`Ctrl/⌘+Z` 可一次撤销。",
     ],
   },
   {
     title: "设置",
     body: [
-      "工具栏 **设置** 分三页：**版面**（纸张、方向、边距、谱面比例、每页行数、字号）、**页眉与样式**（标题 / 副标题 / 经文 / 词曲作者的字体字号、诗集样式表 `.ss`、颜色）、**其他**。只列当前模式下真正生效的项。",
-      "五线谱 / 混排模式下可勾选「隐藏小节号」，要不要保留数字简谱层则由顶部选「五线谱」还是「混排」决定。各声部的试听音量在 **声部** 面板里。",
+      "工具栏 **设置** 分三页，只摆当前视图下真正生效的项：**版面**（纸张、方向、边距、谱面比例、每页行数、字号、颜色；五线谱 / 混排还有谱表大小、歌词字号、隐藏小节号）、**页眉与样式**（诗集样式表 `.ss`，标题 / 副标题 / 经文 / 词曲作者的字体字号）、**其他**（界面语言、打开 MusicXML 时的默认做法、改音时发声）。各声部的试听音量在工具栏 **声部** 面板里。",
+      "底部「恢复本档默认」只清当前这一档的设置。",
+    ],
+  },
+  {
+    title: "界面语言",
+    body: [
+      "界面支持**中文**与 **English**。首次打开按浏览器 / 系统语言自动选择；在 **设置 → 其他 → 界面语言** 可手动切换，立即生效、无需刷新。",
+      "只翻译界面文字；乐谱内容、歌词与记谱代码保持原样。网址加 `?lang=en` 或 `?lang=zh` 也可指定语言。",
     ],
   },
   {
@@ -289,14 +294,25 @@ const FEATURE_TOPICS: Topic[] = [
   },
 ];
 
+/** 英文表与中文表主题一一对应，结构（徽标、extra）取中文表的。 */
+function localized(zh: Topic[], en: { title: string; body: string[] }[]): Topic[] {
+  return getLang() === "en" ? zh.map((tp, i) => ({ ...tp, title: en[i]?.title ?? tp.title, body: en[i]?.body ?? tp.body })) : zh;
+}
+
+/** 记谱示例同上：示例源码共用，标题与说明按语言取。 */
+function localizedExamples(zh: NoteEx[], en: { title: string; body: string[] }[]): NoteEx[] {
+  return getLang() === "en" ? zh.map((ex, i) => ({ ...ex, title: en[i]?.title ?? ex.title, body: en[i]?.body ?? ex.body })) : zh;
+}
+
 function shortcutTable(): HTMLElement {
-  const rows: [string, string][] = [
+  const zhRows: [string, string][] = [
     ["放大 / 缩小", "Ctrl/⌘ +  ·  Ctrl/⌘ -"],
     ["复位缩放 100%", "Ctrl/⌘ 0"],
     ["上一页 / 下一页", "PageUp  ·  PageDown"],
     ["首页 / 末页", "Ctrl/⌘ Home  ·  Ctrl/⌘ End"],
     ["按 Ctrl/⌘ 滚轮", "以指针为中心缩放"],
   ];
+  const rows = getLang() === "en" ? SHORTCUTS_EN : zhRows;
   const table = el("table", "help-shortcuts");
   for (const [act, key] of rows) {
     const tr = el("tr");
@@ -308,15 +324,15 @@ function shortcutTable(): HTMLElement {
 
 function buildFeatureHelp(): HTMLElement {
   const pane = el("div", "help-pane");
-  pane.append(para("下面列出编辑器已有的功能，点标题展开查看详情。带徽标的功能在桌面版与浏览器版行为不同。", "help-intro"));
-  for (const t of FEATURE_TOPICS) {
+  pane.append(para(t("help.featuresIntro"), "help-intro"));
+  for (const tp of localized(FEATURE_TOPICS_ZH, FEATURE_TOPICS_EN)) {
     const det = el("details", "help-topic");
     const sum = el("summary");
-    sum.append(el("span", "help-topic-title", t.title));
-    for (const b of t.badges ?? []) sum.append(el("span", "help-badge", BADGE_TEXT[b]));
+    sum.append(el("span", "help-topic-title", tp.title));
+    for (const b of tp.badges ?? []) sum.append(el("span", "help-badge", badgeText(b)));
     det.append(sum);
-    for (const line of t.body) det.append(para(line));
-    if (t.extra) det.append(t.extra());
+    for (const line of tp.body) det.append(para(line));
+    if (tp.extra) det.append(tp.extra());
     pane.append(det);
   }
   return pane;
@@ -326,7 +342,7 @@ function buildFeatureHelp(): HTMLElement {
 
 /** 可视化编辑的操作说明。快捷键表由 `visual/keys.ts` 的动作表生成，与实际绑定不会脱节；
  *  各阶段新增的操作同步写进这里。 */
-const VISUAL_TOPICS: Topic[] = [
+const VISUAL_TOPICS_ZH: Topic[] = [
   {
     title: "两种模式、两种光标",
     body: [
@@ -500,18 +516,19 @@ const VISUAL_TOPICS: Topic[] = [
 function visualShortcutTable(): HTMLElement {
   const table = el("table", "help-shortcuts");
   // 按分组归拢（动作表里同组的不一定挨着），组的先后按首次出现
-  const groups = new Map<string, typeof VISUAL_ACTIONS[number][]>();
+  const groups = new Map<typeof VISUAL_ACTIONS[number]["group"], typeof VISUAL_ACTIONS[number][]>();
   for (const a of VISUAL_ACTIONS) groups.set(a.group, [...(groups.get(a.group) ?? []), a]);
   for (const [group, actions] of groups) {
     const head = el("tr");
-    const th = el("th", undefined, group);
+    const th = el("th", undefined, groupLabel(group));
     th.colSpan = 3;
     head.append(th);
     table.append(head);
     for (const a of actions) {
       const tr = el("tr");
-      const mode = a.modes ? (a.modes[0] === "edit" ? "编辑模式" : "插入模式") : "";
-      tr.append(el("td", undefined, a.label), el("td", undefined, a.web ? `${a.keyText}（网页版 ${a.web.keyText}）` : a.keyText), el("td", undefined, [a.help, mode && `（仅${mode}）`].join("")));
+      const mode = a.modes ? t(a.modes[0] === "edit" ? "help.modeEdit" : "help.modeInsert") : "";
+      const keys = a.web ? t("help.webKeys", { keys: a.keyText, web: a.web.keyText }) : a.keyText;
+      tr.append(el("td", undefined, a.label), el("td", undefined, keys), el("td", undefined, a.help + (mode && t("help.onlyMode", { mode }))));
       table.append(tr);
     }
   }
@@ -520,14 +537,14 @@ function visualShortcutTable(): HTMLElement {
 
 function buildVisualHelp(): HTMLElement {
   const pane = el("div", "help-pane");
-  pane.append(para("在谱面上直接选中、插入、修改音符与记号，改动实时写回左侧源码。适用于所有格式（123、`.jpwabc`、文本谱、ABC 改左侧源码，MusicXML 改乐谱本身），「展开」「原样」「五线谱」「混排」四档都能用。", "help-intro"));
-  for (const t of VISUAL_TOPICS) {
+  pane.append(para(t("help.visualIntro"), "help-intro"));
+  for (const tp of localized(VISUAL_TOPICS_ZH, VISUAL_TOPICS_EN)) {
     const det = el("details", "help-topic");
     const sum = el("summary");
-    sum.append(el("span", "help-topic-title", t.title));
+    sum.append(el("span", "help-topic-title", tp.title));
     det.append(sum);
-    for (const line of t.body) det.append(para(line));
-    if (t.extra) det.append(t.extra());
+    for (const line of tp.body) det.append(para(line));
+    if (tp.extra) det.append(tp.extra());
     pane.append(det);
   }
   return pane;
@@ -680,10 +697,9 @@ const NOTATION: NoteEx[] = [
 
 function buildNotationHelp(app: App): HTMLElement {
   return buildExamplePane({
-    intro:
-      "`.jpwabc` 是 JP-Word 使用的**纯文本简谱格式**，用普通文本分段描述乐谱：`.Title`（抬头）、`.Voice`（旋律，必需）、`.Words`（歌词）等，段头独占一行、以 `.` 开头。下面按**常用在前**的顺序介绍常见记号，每条都附实时渲染的效果。",
-    glossary: GLOSSARY,
-    examples: NOTATION,
+    intro: t("help.notationIntro"),
+    glossary: getLang() === "en" ? GLOSSARY_EN : GLOSSARY,
+    examples: localizedExamples(NOTATION, NOTATION_TEXT_EN),
     render: (ex) => {
       const text = ex.render ?? (ex.code.trimStart().startsWith(".") ? ex.code : wrapVoice(ex.code));
       return renderExampleSvg(app.meta, text, { titlePage: ex.titlePage });
@@ -698,15 +714,15 @@ function has123Header(code: string): boolean {
 
 function build123Help(app: App): HTMLElement {
   const pane = buildExamplePane({
-    intro: INTRO_123,
-    glossary: GLOSSARY_123,
-    examples: EXAMPLES_123,
+    intro: getLang() === "en" ? INTRO_123_EN : INTRO_123,
+    glossary: getLang() === "en" ? GLOSSARY_123_EN : GLOSSARY_123,
+    examples: localizedExamples(EXAMPLES_123, EXAMPLES_123_TEXT_EN),
     render: (ex) => {
       const text = ex.render ?? (has123Header(ex.code) ? ex.code : wrap123(ex.code));
       return render123ExampleSvg(app.meta, text, { titlePage: ex.titlePage });
     },
   });
-  const spec = el("button", "about-link", "完整规范（docs/格式/123格式.md）");
+  const spec = el("button", "about-link", t("help.spec123"));
   spec.onclick = () => {
     if (isTauriRuntime()) void openExternal(SPEC_123_URL);
     else window.open(SPEC_123_URL, "_blank", "noopener");
@@ -728,7 +744,7 @@ function buildExamplePane(o: {
 
   // 术语速查
   const gloss = el("details", "help-glossary");
-  gloss.append(el("summary", undefined, "术语速查（点开）"));
+  gloss.append(el("summary", undefined, t("help.glossary")));
   const dl = el("dl", "help-gloss-list");
   for (const [term, desc] of o.glossary) {
     const dt = el("dt");
@@ -745,7 +761,8 @@ function buildExamplePane(o: {
     const sec = el("div", "help-section");
     const head = el("div", "help-sec-head");
     head.append(el("span", "help-sec-title", ex.title));
-    head.append(el("span", `help-level help-level-${ex.level === "常用" ? "common" : "adv"}`, ex.level));
+    const common = ex.level === "常用";
+    head.append(el("span", `help-level help-level-${common ? "common" : "adv"}`, t(common ? "help.level.common" : "help.level.adv")));
     sec.append(head);
     for (const line of ex.body) sec.append(para(line));
 
@@ -828,15 +845,15 @@ function inkBox(svg: SVGSVGElement, ctx: CanvasRenderingContext2D | null): { x: 
 
 function buildAboutPane(): HTMLElement {
   const pane = el("div", "help-pane");
-  pane.append(el("div", "about-name", "简谱编辑器 jpeditor"));
-  pane.append(el("div", "about-version", `版本 ${APP_VERSION}`));
+  pane.append(el("div", "about-name", t("about.name")));
+  pane.append(el("div", "about-version", t("about.version", { v: APP_VERSION })));
 
   const home = el("button", "about-link", HOMEPAGE);
   home.onclick = () => {
     if (isTauriRuntime()) void openExternal(HOMEPAGE);
     else window.open(HOMEPAGE, "_blank", "noopener");
   };
-  pane.append(labeledRow("项目主页", home));
+  pane.append(labeledRow(t("about.home"), home));
 
   if (!isTauriRuntime()) return pane;
 
@@ -848,16 +865,16 @@ function buildAboutPane(): HTMLElement {
     status.hidden = false;
   };
 
-  const checkBtn = el("button", undefined, "检查更新");
+  const checkBtn = el("button", undefined, t("about.check"));
   checkBtn.onclick = () => {
     checkBtn.disabled = true;
-    say("正在检查…");
+    say(t("about.checking"));
     void checkForUpdate()
       .then(async (r) => {
-        if (r === null) say("检查失败，请确认网络后重试");
-        else if (r === "latest") say("已是最新版本");
+        if (r === null) say(t("about.checkFailed"));
+        else if (r === "latest") say(t("about.latest"));
         else {
-          say(`发现新版本 ${r.version}`);
+          say(t("about.found", { v: r.version }));
           await promptUpdate(r);
         }
       })
@@ -866,10 +883,10 @@ function buildAboutPane(): HTMLElement {
       });
   };
 
-  const mailBtn = el("button", undefined, "意见反馈");
+  const mailBtn = el("button", undefined, t("about.feedback"));
   mailBtn.onclick = () => {
     void openFeedbackMail().catch(() => {
-      say(`无法唤起邮件客户端，请手动发信至 ${FEEDBACK_EMAIL}`);
+      say(t("about.noMail", { email: FEEDBACK_EMAIL }));
     });
   };
 
@@ -882,7 +899,7 @@ function buildAboutPane(): HTMLElement {
   auto.checked = isAutoCheckEnabled();
   auto.onchange = () => setAutoCheckEnabled(auto.checked);
   const autoLabel = el("label", "about-auto");
-  autoLabel.append(auto, document.createTextNode(" 启动时自动检查更新"));
+  autoLabel.append(auto, document.createTextNode(t("about.autoCheck")));
   pane.append(autoLabel);
 
   return pane;
@@ -900,22 +917,22 @@ export function showHelpDialog(app: App): void {
   const overlay = el("div", "modal-overlay");
   const box = el("div", "modal-box help-box");
 
-  const title = el("div", "modal-title", "帮助");
+  const title = el("div", "modal-title", t("help.title"));
 
   // 标签页：{ 标签, 内容, 首次显示时的补做 }
   const notationPane = buildNotationHelp(app);
   const pane123 = build123Help(app);
   const pages: { label: string; pane: HTMLElement; onFirstShow?: () => void }[] = [
-    { label: "功能帮助", pane: buildFeatureHelp() },
-    { label: "可视化编辑", pane: buildVisualHelp() },
-    { label: "123 格式", pane: pane123, onFirstShow: () => cropExamples(pane123) },
+    { label: t("help.tab.features"), pane: buildFeatureHelp() },
+    { label: t("help.tab.visual"), pane: buildVisualHelp() },
+    { label: t("help.tab.123"), pane: pane123, onFirstShow: () => cropExamples(pane123) },
     {
-      label: "JPWABC 记谱",
+      label: t("help.tab.notation"),
       pane: notationPane,
       // getBBox only works once the pane is visible; crop on first reveal.
       onFirstShow: () => cropExamples(notationPane),
     },
-    { label: "关于", pane: buildAboutPane() },
+    { label: t("help.tab.about"), pane: buildAboutPane() },
   ];
 
   const tabs = el("div", "help-tabs");
@@ -943,7 +960,7 @@ export function showHelpDialog(app: App): void {
   tabBtns.forEach((btn, i) => (btn.onclick = () => activate(i)));
 
   const footer = el("div", "modal-footer");
-  const closeBtn = el("button", undefined, "关闭");
+  const closeBtn = el("button", undefined, t("help.close"));
   footer.append(closeBtn);
 
   box.append(title, tabs, content, footer);

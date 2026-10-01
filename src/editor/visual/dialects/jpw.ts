@@ -13,6 +13,7 @@ import type { Accidental } from "../../../model/doc";
 import { readJpwSource } from "../../../model/fromjpw";
 import { dotsRange, type EditDialect, type NoteDuration, type NoteToken, runRange } from "../dialect";
 import { jpwTitleFields } from "../header";
+import { t as tr } from "../../../i18n";
 
 const ACC_OF: Record<string, Accidental> = { "#b": "natural", "#": "sharp", b: "flat" };
 const ACC_TEXT: Partial<Record<Accidental, string>> = { natural: "#b", sharp: "#", flat: "b" };
@@ -117,9 +118,9 @@ export const DIALECT_JPW: EditDialect = {
     return `${degree}${"_".repeat(dur.halvings)}${".".repeat(dur.dots)}`;
   },
   validate(t: NoteToken) {
-    if (t.inlineSustains > 0 && (t.halvings > 0 || t.dots > 0)) return "JP-Word 的增时线不能与减时线、附点连写";
-    if (t.dots > 1) return "JP-Word 不支持双附点";
-    if (t.acc === "double-sharp" || t.acc === "double-flat") return "JP-Word 没有重升重降";
+    if (t.inlineSustains > 0 && (t.halvings > 0 || t.dots > 0)) return tr("jpw.dashMix");
+    if (t.dots > 1) return tr("jpw.doubleDot");
+    if (t.acc === "double-sharp" || t.acc === "double-flat") return tr("jpw.doubleAcc");
     return null;
   },
   postEdit: retargetWords,

@@ -23,6 +23,7 @@ import { projectForJianpu } from "./jianpuproject";
 import { melodyLane } from "./jianpu";
 import { puArcLosses } from "./topu";
 import { songHeaderFonts, songLyricSize, songPage, songStaffSize } from "./pagemeta";
+import { getLang, t } from "../i18n";
 
 /** 一项「文档里可能用到、格式可能装不下」的特性。 */
 export type Feature =
@@ -218,16 +219,21 @@ export function planSave(doc: ScoreDoc, target: TargetFormat): Loss[] {
   const caps = FORMAT_CAPS[target];
   return [...featuresUsed(doc)]
     .filter((f) => !caps.has(f))
-    .map((f) => ({ feature: f, name: FEATURE_NAMES[f] }))
-    .sort((a, b) => a.name.localeCompare(b.name, "zh"));
+    .map((f) => ({ feature: f, name: t(`feat.${f}`) }))
+    .sort((a, b) => a.name.localeCompare(b.name, getLang()));
+}
+
+/** 丢失清单里的格式名（文本谱方言按界面语言）。 */
+function targetName(target: TargetFormat): string {
+  return target === "tomato" || target === "shige" ? t(`fmt.target.${target}`) : TARGET_LABEL[target];
 }
 
 /** 丢失清单 → 给人看的一段话。 */
 export function describeLosses(target: TargetFormat, losses: readonly Loss[]): string {
   if (losses.length === 0) return "";
   return (
-    `这份谱里有 ${losses.length} 样东西，存成 ${TARGET_LABEL[target]} 之后会丢：\n\n` +
+    t("loss.body", { n: losses.length, format: targetName(target) }) + "\n\n" +
     losses.map((l) => `　· ${l.name}`).join("\n") +
-    "\n\n要继续吗？"
+    "\n\n" + t("loss.continue")
   );
 }

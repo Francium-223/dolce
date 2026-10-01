@@ -1703,7 +1703,8 @@ export class PartMeasureLayout {
       if (fEq(skip, next.measureInfo.dur)) skip = new Fraction(0);
     }
 
-    let prevBeat = -1;
+    // 起点取不可能的拍号：小节比拍号长时 `skip` 为负，第一拍可能算到 -1
+    let prevBeat = -Infinity;
     let beatSize = new Fraction(1);
     if (ts.beatType === 4 || ts.beatType === 2) {
       // quarter/half beat

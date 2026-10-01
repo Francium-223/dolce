@@ -8,6 +8,7 @@
 
 import type { Clef, Diagnostic, Key, PlayPass, SourceSpan, Time } from "../model/doc";
 import { clefFromName } from "../model/jianpu";
+import { t as tr } from "../i18n";
 
 /** ASCII 规范形的字段名。 */
 export type FieldName =
@@ -182,7 +183,7 @@ export function parseKey(value: string): { key: Key; error?: string } {
 
   // 音名 + 可选 mode：`bB`、`Bb`、`Em`、`F# mixolydian`
   const m = /^([#b♯♭]?)([A-Ga-g])([#b♯♭]?)\s*([A-Za-z]*)$/.exec(body.trim());
-  if (!m) return { key: { fifths: 0 }, error: `看不懂的调号：${value}` };
+  if (!m) return { key: { fifths: 0 }, error: tr("diag.badKey", { v: value }) };
   const letter = m[2]!.toUpperCase();
   const acc = (m[1] || m[3] || "").replace("♯", "#").replace("♭", "b");
   const spelling = normalizeSpelling(acc + letter);
@@ -192,7 +193,7 @@ export function parseKey(value: string): { key: Key; error?: string } {
     // **保留原文拼写**，不要退成 C：退了就把信息丢了，而且往返不幂等
     const key: Key = { fifths: 0, spelling };
     if (tonicDegree !== undefined && tonicDegree !== "1") key.tonicDegree = tonicDegree;
-    return { key, error: `没有这个调：${spelling}（已保留原文）` };
+    return { key, error: tr("diag.noSuchKey", { v: spelling }) };
   }
 
   // mode 只取前三字母（ABC §3.1.14：「only the first three letters of each mode are parsed」），
@@ -221,7 +222,7 @@ export function parseTime(value: string): { time?: Time; error?: string } {
   if (/^C$/i.test(v)) return { time: { beats: 4, beatType: 4, symbol: "common" } };
   if (/^none$/i.test(v)) return {};
   const m = /^(\d+)\s*\/\s*(\d+)$/.exec(v);
-  if (!m) return { error: `看不懂的拍号：${value}` };
+  if (!m) return { error: tr("diag.badTime", { v: value }) };
   return { time: { beats: Number(m[1]), beatType: Number(m[2]) } };
 }
 
@@ -328,7 +329,7 @@ export function parsePlayOrder(
       diagnostics.push({
         severity: "warning",
         code: "bad-playorder",
-        message: `看不懂的演唱顺序项：${s}`,
+        message: tr("diag.badPlayOrder", { v: s }),
         source,
       });
       continue;

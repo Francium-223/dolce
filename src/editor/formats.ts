@@ -15,6 +15,7 @@ import { puHighlighter } from "../pu/highlight";
 import { j123Highlighter } from "../j123/highlight";
 import { decodeJpwabc, encodeJpwabc } from "./fileio";
 import { parsePu } from "../pu";
+import { t } from "../i18n";
 import { relayoutPuText } from "../pu/relayout";
 import type { FitMeasure } from "../pu/phrase";
 import { parse123, parseAbc } from "../j123/parse";
@@ -152,7 +153,7 @@ const PU: FormatAdapter = {
   decode: (bytes) =>
     new TextDecoder(bytes[0] === 0xff || bytes[0] === 0xfe ? "utf-16" : "utf-8").decode(bytes),
   encode: utf8,
-  label: (host) => (host.puDialectName === null ? "文本谱" : `文本谱·${host.puDialectName}`),
+  label: (host) => (host.puDialectName === null ? t("fmt.pu.label") : t("fmt.pu.labelWith", { dialect: host.puDialectName })),
   // 头部第一条 T:/B:
   title: (host) => {
     const first = host

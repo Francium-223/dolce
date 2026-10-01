@@ -15,6 +15,7 @@
 
 import type { SourceSpan } from "../model/doc";
 import type { DurationScan, LexError, LexResult, NoteScan, Token } from "./types";
+import { t as tr } from "../i18n";
 
 /** 小节线写法 → 归一名。**按从长到短匹配**，否则 `||` 永远匹配不到。
  *  `[|]` 是不可见小节线——与 `.jpwabc` 和 ABC 都同形同义（语料 3.2%）。 */
@@ -196,7 +197,7 @@ export abstract class AbcFamilyLexer {
         const run = /^&+/.exec(line.slice(i))![0];
         if (run.length > 1) {
           i += run.length;
-          errors.push({ message: `尚未支持的多声部写法 \`${run}\``, source: span(start, run.length) });
+          errors.push({ message: tr("diag.abc.multiVoice", { run }), source: span(start, run.length) });
           push({ kind: "unknown", text: run }, start, run.length);
           continue;
         }
@@ -223,7 +224,7 @@ export abstract class AbcFamilyLexer {
       if (ch === "[" && /^\[[A-Za-z]\s*[:：]/.test(line.slice(i))) {
         const close = line.indexOf("]", i);
         if (close < 0) {
-          errors.push({ message: "inline 字段缺 `]`", source: span(start, line.length - start) });
+          errors.push({ message: tr("diag.abc.inlineOpen"), source: span(start, line.length - start) });
           i = line.length;
           continue;
         }
@@ -296,7 +297,7 @@ export abstract class AbcFamilyLexer {
       if (ch === "!") {
         const close = line.indexOf("!", i + 1);
         if (close < 0) {
-          errors.push({ message: "装饰记号缺右 `!`", source: span(start, line.length - start) });
+          errors.push({ message: tr("diag.abc.decoOpen"), source: span(start, line.length - start) });
           i = line.length;
           continue;
         }
@@ -310,7 +311,7 @@ export abstract class AbcFamilyLexer {
       if (ch === '"') {
         const close = line.indexOf('"', i + 1);
         if (close < 0) {
-          errors.push({ message: "和弦/注记缺右引号", source: span(start, line.length - start) });
+          errors.push({ message: tr("diag.abc.quoteOpen"), source: span(start, line.length - start) });
           i = line.length;
           continue;
         }
@@ -339,7 +340,7 @@ export abstract class AbcFamilyLexer {
       if (ch === "{") {
         const close = line.indexOf("}", i);
         if (close < 0) {
-          errors.push({ message: "倚音缺 `}`", source: span(start, line.length - start) });
+          errors.push({ message: tr("diag.abc.graceOpen"), source: span(start, line.length - start) });
           i = line.length;
           continue;
         }
@@ -471,7 +472,7 @@ export abstract class AbcFamilyLexer {
 
       // 认不出来的字符——报一条、往前走一格，**不要停**（半截文本也要能给出大部分结果）
       i++;
-      errors.push({ message: `认不出的记号 \`${ch}\``, source: span(start, 1) });
+      errors.push({ message: tr("diag.abc.badChar", { ch }), source: span(start, 1) });
       push({ kind: "unknown", text: ch }, start, 1);
     }
 

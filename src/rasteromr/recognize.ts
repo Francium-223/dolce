@@ -3479,6 +3479,7 @@ export async function recognizeRasterPage(
   const notes = buildNotes(pg, ctx, beams, stems, hollowish);
   attachAccidentalsByPitch(pg, ctx, notes);
   splitUnisons(notes, stems, beams, raster.bin, unit.space);
+  fixDottedPairs(notes, unit.space);
   findTuplets(pg, beams, stems, notes);
 
   // ── 演奏法与力度 ─────────────────────────────────────────────────────────
@@ -4452,6 +4453,34 @@ function inkSystemBarlines(pg: SPage, bin: Binary, sp: number): void {
           pushSeg(pg, pg.objs.length + pg.segs.length + 1, { x0: x, y0: b.box.top, x1: x, y1: b.box.bottom, lw: l.lw, maxLw: l.lw });
         });
       }
+  }
+}
+
+/**
+ * **附点八分后面跟的那个八分，其实是十六分**。「附点八分 + 十六分」凑一拍是最常见的附点节奏，
+ * 低分辨率底本上十六分的两条符尾糊成一条，读成八分（新编赞美诗 373 仰望天家歌整首都是这个节奏，
+ * 每个小节多出八分之一拍，后面的音拍位全错开）。「附点八分 + 八分」在这类谱里几乎不出现，
+ * 所以附点八分右边**同一声部**（干朝向相同、同一小节）紧跟的那一个八分改成十六分；和弦里的几个头一起改。
+ * 干朝向不明的不动。
+ */
+function fixDottedPairs(notes: StaffNote[], sp: number): void {
+  const barOf = (n: StaffNote) => n.staff.bars.find((b) => n.x >= b.left && n.x < b.right);
+  const by = new Map<Staff, StaffNote[]>();
+  for (const n of notes) if (!n.rest) (by.get(n.staff) ?? by.set(n.staff, []).get(n.staff)!).push(n);
+  for (const ns of by.values()) {
+    ns.sort((a, b) => a.x - b.x);
+    for (const a of ns) {
+      if (a.dots !== 1 || a.base !== 1 / 8 || a.stemUp === null) continue;
+      const bar = barOf(a);
+      const next = ns.find((b) => b.x > a.x + sp * 0.8 && b.stemUp === a.stemUp && barOf(b) === bar);
+      if (!next || next.x - a.x > sp * 6) continue;
+      for (const b of ns) {
+        if (Math.abs(b.x - next.x) > sp * 0.6 || b.stemUp !== a.stemUp || b.base !== 1 / 8 || b.dots) continue;
+        b.base = 1 / 16;
+        b.duration = 1 / 16;
+        b.beams = Math.max(b.beams, 2);
+      }
+    }
   }
 }
 

@@ -248,6 +248,7 @@ async function boot() {
   if (progress) app.playback.bindProgress(progress, document.getElementById("play-time"));
   const speedSel = document.getElementById("sel-speed") as HTMLSelectElement | null;
   if (speedSel) app.playback.bindSpeedSelect(speedSel);
+  app.playback.bindToggles(document.getElementById("btn-loop") as HTMLButtonElement | null, document.getElementById("btn-metronome") as HTMLButtonElement | null);
   const openScore = async () => { if (await app.openFile()) revealWorkspace(); };
   document.getElementById("btn-open")?.addEventListener("click", () => void openScore());
   document.getElementById("btn-start-score")?.addEventListener("click", () => void openScore());

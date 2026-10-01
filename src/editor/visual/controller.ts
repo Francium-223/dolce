@@ -1663,6 +1663,12 @@ export class VisualEditController {
     }, kind === "annotation" ? "文字" : "力度（p mf f…）", { keys });
   }
 
+  /** 选区里的音（按原文顺序；试听的循环段用）。插入模式为空。 */
+  selectedNoteIds(): number[] {
+    if (this.host.view.state.selection.main.empty) return [];
+    return [...new Set(this.selectedEntries().filter((e) => e.kind === "note").map((e) => e.id))];
+  }
+
   /** 移调对话框：全曲换调或选中的音移几个半音（`transpose.ts`）。 */
   private transpose(): boolean {
     const doc = this.host.syncDoc();

@@ -658,6 +658,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
       bookSheets: this.bookSheets,
       browserBookSheet: this._browserBookSheet,
       playSpeed: this.playback.speed,
+      playMetronome: this.playback.metronome,
       omrFormat: this.omr.format,
       omrFollow: this.omr.follow,
       omrKind: this.omr.kind,
@@ -1895,6 +1896,14 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     }
     this._playCache = { doc, forExpanded, src };
     return src;
+  }
+
+  /** PlaybackHost：循环段——谱面上选中的第一个到最后一个音（可视化编辑的选区；五线谱 / 混排换成画出来那份的 id）。没有选区为 null。 */
+  loopPoints(): { first: PlayPoint; last: PlayPoint } | null {
+    const ids = this.visual.selectedNoteIds();
+    if (!ids.length) return null;
+    const map = (id: ElementId): ElementId => (this.mode === "mixed" ? this._srcToMixed.get(id)?.[0] ?? id : id);
+    return { first: { id: map(ids[0]!), pass: 1 }, last: { id: map(ids[ids.length - 1]!), pass: 1 } };
   }
 
   /** PlaybackHost：用户在谱面上选中了某个音就从那儿起播。 */

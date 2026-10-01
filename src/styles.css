@@ -586,6 +586,7 @@ button:focus-visible, select:focus-visible {
 .beat-count { font-size: 12px; padding: 1px 6px; border-radius: 4px; color: #e03131; border: 1px solid rgba(224, 49, 49, 0.5); cursor: pointer; }
 .beat-check-button { min-width: 26px; }
 .palette-button.active { color: #1565ff; }
+.playback-toggle.active { color: #1565ff; background: var(--panel-hover); }
 .visual-palette { display: flex; flex-wrap: wrap; gap: 6px 12px; padding: 6px 12px; border-bottom: 1px solid var(--border); background: var(--canvas); }
 .visual-palette[hidden] { display: none; }
 .visual-palette-group { display: flex; flex-wrap: wrap; gap: 3px; align-items: center; }

@@ -24,6 +24,7 @@ export interface PersistedSettings {
   browserBookSheet?: unknown;
   /** 交 PlaybackController 自己校验 */
   playSpeed?: unknown;
+  playMetronome?: unknown;
   /** 交 OmrController 自己校验 */
   omrFormat?: unknown;
   /** 排版稿里跟随选中显示原图片段（同上） */

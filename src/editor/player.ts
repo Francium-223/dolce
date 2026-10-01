@@ -35,6 +35,8 @@ interface Session {
   /** 按起音排好的音（秒） */
   notes: { t0: number; t1: number; pitch: number; velocity: number }[];
   duration: number;
+  /** 节拍器每一拍（秒）；没开节拍器为空 */
+  clicks: { t: number; down: boolean }[];
   /** 原生音源要的 MIDI（首次用到时才生成） */
   src: PlaySource;
   opts: PlayOptions | undefined;
@@ -58,6 +60,15 @@ export function timelineSeconds(src: PlaySource, opts?: PlayOptions): { tl: Time
 export function anchorSeconds(tl: Timeline, spq: number, point: PlayPoint): number | null {
   const a = findAnchor(tl.anchors, point, (x) => x.chord.id) ?? findAnchor(tl.allAnchors, point, (x) => x.chord.id);
   return a ? a.t0 * spq : null;
+}
+
+/** 一段音（`first` 起音到 `last` 收尾）的秒数区间；找不到为 null。循环段用。 */
+export function spanSeconds(tl: Timeline, spq: number, first: PlayPoint, last: PlayPoint): { from: number; to: number } | null {
+  const a = findAnchor(tl.allAnchors, first, (x) => x.chord.id);
+  const b = findAnchor(tl.allAnchors, last, (x) => x.chord.id);
+  if (!a || !b) return null;
+  const end = b.t0 + (b.chord.duration?.toFloat() ?? 0);
+  return end > a.t0 ? { from: a.t0 * spq, to: end * spq } : null;
 }
 
 function findAnchor<A extends { pass: number }>(
@@ -100,6 +111,10 @@ export class ScorePlayer {
   private pausedAt = 0;
   /** 采样：下一个要递给 smplr 的音 */
   private feedIdx = 0;
+  /** 下一个要排的节拍器嘀嗒 */
+  private clickIdx = 0;
+  /** 循环段（秒）：播到 `to` 跳回 `from`。null = 不循环 */
+  private loop: { from: number; to: number } | null = null;
   /** 采样：已递出去、可能还没响完的音的撤销函数（定位 / 停止时撤掉） */
   private fed: { end: number; stop: (time?: number) => void }[] = [];
   private curIdx = -1;
@@ -149,6 +164,7 @@ export class ScorePlayer {
         }))
         .sort((a, b) => a.t0 - b.t0),
       duration: tl.duration * spq,
+      clicks: opts?.metronome ? tl.clicks.map((c) => ({ t: c.t * spq, down: c.down })) : [],
       src,
       opts,
       midi: null,
@@ -156,7 +172,8 @@ export class ScorePlayer {
     const start = Math.max(0, Math.min(startSec, this.session.duration));
 
     this.setState("loading");
-    this.useNative = this.nativeOk !== false && isTauriRuntime();
+    // 节拍器的嘀嗒用 WebAudio 排，与原生 MIDI 播放器的时钟对不齐：开着节拍器一律用内置采样
+    this.useNative = this.nativeOk !== false && isTauriRuntime() && !opts?.metronome;
     if (!this.useNative) {
       try {
         await this.ensureSampler();
@@ -222,6 +239,11 @@ export class ScorePlayer {
     await this.startAt(t, gen);
   }
 
+  /** 设循环段（秒）；null 取消。播放中设了也立即生效。 */
+  setLoop(r: { from: number; to: number } | null): void {
+    this.loop = r && r.to > r.from ? r : null;
+  }
+
   /** 当前会话里某个音的起音秒数（点音符跳转用）；不在这份会话里为 null。 */
   timeOf(point: PlayPoint): number | null {
     const s = this.session;
@@ -238,6 +260,7 @@ export class ScorePlayer {
     if (this.useNative) this.nativeStop();
     this.session = null;
     this.feedIdx = 0;
+    this.clickIdx = 0;
     this.pausedAt = 0;
     this.curIdx = -1;
     this.onChord(null, 0);
@@ -287,6 +310,9 @@ export class ScorePlayer {
         if (n.t1 > t + 0.05) this.feedNote(n, t);
       }
       this.feedIdx = i;
+      let k = 0;
+      while (k < s.clicks.length && s.clicks[k]!.t < t - 1e-6) k++;
+      this.clickIdx = k;
       this.feed();
     }
     this.moveCursor(t);
@@ -315,10 +341,15 @@ export class ScorePlayer {
     const ctx = this.ctx;
     const inst = this.inst;
     if (!s || !ctx || !inst || this.useNative) return;
-    const horizon = ctx.currentTime - this.base + FEED_AHEAD;
+    // 循环段的尾巴之后不递：到了尾巴会跳回段首
+    const horizon = Math.min(ctx.currentTime - this.base + FEED_AHEAD, this.loop?.to ?? Infinity);
     while (this.feedIdx < s.notes.length && s.notes[this.feedIdx].t0 < horizon) {
       this.feedNote(s.notes[this.feedIdx], this.segStart);
       this.feedIdx++;
+    }
+    while (this.clickIdx < s.clicks.length && s.clicks[this.clickIdx]!.t < horizon) {
+      this.feedClick(s.clicks[this.clickIdx]!);
+      this.clickIdx++;
     }
     const now = ctx.currentTime;
     if (this.fed.length > 64) this.fed = this.fed.filter((f) => f.end > now);
@@ -331,6 +362,23 @@ export class ScorePlayer {
     const duration = Math.max(0.05, n.t1 - t0);
     const stop = this.inst!.start({ note: n.pitch, time, duration, velocity: n.velocity });
     this.fed.push({ end: time + duration, stop });
+  }
+
+  /** 节拍器一声：短促的正弦嘀嗒，小节第一拍高一些、响一些。 */
+  private feedClick(c: { t: number; down: boolean }): void {
+    const ctx = this.ctx!;
+    const time = this.base + c.t;
+    if (time < ctx.currentTime) return;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.frequency.value = c.down ? 1760 : 1320;
+    gain.gain.setValueAtTime(0, time);
+    gain.gain.linearRampToValueAtTime(c.down ? 0.5 : 0.3, time + 0.002);
+    gain.gain.exponentialRampToValueAtTime(0.001, time + 0.05);
+    osc.connect(gain).connect(ctx.destination);
+    osc.start(time);
+    osc.stop(time + 0.06);
+    this.fed.push({ end: time + 0.06, stop: () => { try { osc.stop(); } catch { /* 已停 */ } } });
   }
 
   /** 采样：撤掉递出去的音（还在 smplr 队列里的取消，已发声的停掉）。 */
@@ -384,6 +432,10 @@ export class ScorePlayer {
   private tick = (): void => {
     if (this.state !== "playing" || !this.session) return;
     const t = Math.max(this.segStart, this.now());
+    if (this.loop && t >= this.loop.to) {
+      void this.seek(this.loop.from);
+      return;
+    }
     if (t >= this.session.duration + 0.3) {
       this.stop();
       return;

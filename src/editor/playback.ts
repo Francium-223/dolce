@@ -3,7 +3,7 @@
 // 从 App 里切出来的一块。**谱面高亮不在这里**——按元素 id + 遍次找到画出来的那个音
 // （`ScorePainter.highlight`），那属于「谁在画谱面」，由 App 转给排版器。
 // 控制器只通过 PlaybackHost 要「当前该播哪份谱」（由 ScoreDoc 拼的 `PlaySource`）与「高亮到这个元素」。
-import { anchorSeconds, ScorePlayer, timelineSeconds, type PlayPoint, type PlayState } from "./player";
+import { anchorSeconds, ScorePlayer, spanSeconds, timelineSeconds, type PlayPoint, type PlayState } from "./player";
 import { SPEED_STEPS, TEMPO, type PlayOptions, type PlaySource, type Timeline } from "../score/timeline";
 import type { ElementId } from "../model/doc";
 
@@ -15,6 +15,8 @@ export interface PlaybackHost {
   playable(): PlaySource | null;
   /** 从哪个音开始播（用户在谱面上选中了某个音时）。 */
   startPoint(): PlayPoint | undefined;
+  /** 循环段：谱面上选中的第一个与最后一个音；没有选区为 null（整首循环）。 */
+  loopPoints(): { first: PlayPoint; last: PlayPoint } | null;
   /** 播到某个元素：把谱面高亮挪过去并保证可见。null = 清高亮。 */
   highlightPlaying(id: ElementId | null, pass: number): void;
 
@@ -47,6 +49,12 @@ export class PlaybackController {
   readonly partVolumes: number[] = [];
   /** 播放速度倍率（相对谱面标注速度）。持久化。 */
   speed = 1;
+  /** 节拍器（每拍一声）。持久化 */
+  metronome = false;
+  /** 循环播放：有选区循环选区，没有循环整首。会话内 */
+  loop = false;
+  private loopBtnEl: HTMLButtonElement | null = null;
+  private metroBtnEl: HTMLButtonElement | null = null;
 
   constructor(private host: PlaybackHost) {}
 
@@ -65,10 +73,58 @@ export class PlaybackController {
   }
 
   // ---------------- 持久化 ----------------
-  loadSettings(s: { playSpeed?: unknown }): void {
+  loadSettings(s: { playSpeed?: unknown; playMetronome?: unknown }): void {
     if (typeof s.playSpeed === "number" && s.playSpeed > 0) {
       this.speed = clampSpeed(s.playSpeed);
     }
+    this.metronome = s.playMetronome === true;
+    this.syncToggles();
+  }
+
+  /** 循环、节拍器两个开关按钮。 */
+  bindToggles(loop: HTMLButtonElement | null, metronome: HTMLButtonElement | null): void {
+    this.loopBtnEl = loop;
+    this.metroBtnEl = metronome;
+    loop?.addEventListener("click", () => this.setLoop(!this.loop));
+    metronome?.addEventListener("click", () => this.setMetronome(!this.metronome));
+    this.syncToggles();
+  }
+
+  private syncToggles(): void {
+    for (const [el, on] of [[this.loopBtnEl, this.loop], [this.metroBtnEl, this.metronome]] as const) {
+      if (!el) continue;
+      el.classList.toggle("active", on);
+      el.setAttribute("aria-pressed", String(on));
+    }
+  }
+
+  /** 循环开关：播放中立即按当前选区（没有选区整首）定循环段。 */
+  setLoop(on: boolean): void {
+    this.loop = on;
+    this.syncToggles();
+    if (this.player && this.active) this.player.setLoop(on ? this.loopRange() : null);
+  }
+
+  /** 节拍器开关（持久化）：播放中从当前位置接着播（开着节拍器改用内置音色）。 */
+  setMetronome(on: boolean): void {
+    this.metronome = on;
+    this.syncToggles();
+    this.host.saveSettings();
+    const p = this.player;
+    const src = this.host.playable();
+    if (!p || !this.active || !src) return;
+    const at = p.position;
+    const paused = p.state === "paused";
+    void this.run(() => p.play(src, this.options(), at, paused)).then(() => p.setLoop(this.loop ? this.loopRange() : null));
+  }
+
+  /** 循环段（秒）：选区那一段，没有选区整首。 */
+  private loopRange(): { from: number; to: number } | null {
+    const src = this.host.playable();
+    const t = src ? this.timeline(src) : null;
+    if (!t) return null;
+    const pts = this.host.loopPoints();
+    return (pts && spanSeconds(t.tl, t.spq, pts.first, pts.last)) ?? { from: 0, to: t.tl.duration * t.spq };
   }
 
   // ---------------- 工具条绑定 ----------------
@@ -200,7 +256,7 @@ export class PlaybackController {
 
   /** 试听/导出 MIDI 共用的播放参数。 */
   options(): PlayOptions {
-    return { partVolumes: this.effectiveVolumes(), speed: this.speed };
+    return { partVolumes: this.effectiveVolumes(), speed: this.speed, ...(this.metronome ? { metronome: true } : {}) };
   }
 
   // ---------------- 播放 ----------------
@@ -213,6 +269,8 @@ export class PlaybackController {
       return;
     }
     let start = this.cueSec;
+    const loop = this.loop ? this.loopRange() : null;
+    if (loop && (start === null || start < loop.from || start >= loop.to)) start = loop.from;
     if (start === null) {
       const pt = this.host.startPoint();
       const t = pt ? this.timeline(src) : null;
@@ -220,6 +278,7 @@ export class PlaybackController {
     }
     this.cueSec = null;
     const p = this.instance();
+    p.setLoop(loop);
     await this.run(() => p.play(src, this.options(), start ?? 0));
   }
 

@@ -22,6 +22,8 @@ export const SPEED_STEPS = [0.5, 0.6, 0.75, 0.9, 1, 1.1, 1.25, 1.5, 2] as const;
 export interface PlayOptions {
   /** Per-part linear volume in [0,1]; index = part index. Missing/undefined = 1. */
   partVolumes?: number[];
+  /** 试听时打节拍器（每拍一声，小节第一拍重） */
+  metronome?: boolean;
   /** 播放速度倍率（1 = 谱面标注速度）。夹在 [0.25, 3]。 */
   speed?: number;
 }
@@ -109,6 +111,8 @@ export interface Timeline {
   anchors: Anchor[]; // melody (part 0) sounding chords, ascending by t0 — for cursor
   /** 所有声部、所有 voice 的起音和弦（按 t0 升序，同刻按声部序）。五线谱的竖直播放线跟它走：女高音休止、别的声部在唱也照走 */
   allAnchors: Anchor[];
+  /** 节拍器每一拍（四分音符为单位）；`down` = 小节第一拍。复拍子（6/8、9/8、12/8）按附点四分打 */
+  clicks: { t: number; down: boolean }[];
   duration: number; // total length in quarter notes
 }
 
@@ -165,6 +169,7 @@ export function buildTimeline(src: PlaySource): Timeline {
   const notes: TimedNote[] = [];
   const anchors: Anchor[] = [];
   const allAnchors: Anchor[] = [];
+  const clicks: Timeline["clicks"] = [];
   let pos = 0; // running timeline position in quarter notes
   /** 各声部各音高最近一个音（延音线收尾时找它延长） */
   const lastByPitch = new Map<string, TimedNote>();
@@ -201,11 +206,18 @@ export function buildTimeline(src: PlaySource): Timeline {
           }
         }
       }
-      pos += Math.min(measureLen(src, mid), endOffset) - startOffset;
+      const len = Math.min(measureLen(src, mid), endOffset);
+      const time = src.parts[0]?.measures[mid]?.time;
+      if (time) {
+        const compound = time.beatType === 8 && time.beats % 3 === 0 && time.beats > 3;
+        const beat = (4 / time.beatType) * (compound ? 3 : 1);
+        for (let k = Math.ceil(startOffset / beat - 1e-9); k * beat < len - 1e-9; k++) clicks.push({ t: pos + k * beat - startOffset, down: k === 0 });
+      }
+      pos += len - startOffset;
     }
   }
 
   anchors.sort((a, b) => a.t0 - b.t0);
   allAnchors.sort((a, b) => a.t0 - b.t0); // 稳定排序：同刻的仍按声部序
-  return { notes, anchors, allAnchors, duration: pos };
+  return { notes, anchors, allAnchors, clicks, duration: pos };
 }

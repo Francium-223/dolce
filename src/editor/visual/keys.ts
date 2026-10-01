@@ -12,12 +12,16 @@ export type VisualMode = "edit" | "insert";
 export interface KeyBinding {
   /** `KeyboardEvent.key`（字符键按产生的字符认，`#` 就是 `#`） */
   key: string;
+  /** 按物理键认（`Digit3`）：带 Alt 的组合一律这么认——Mac 上 Option+3 产生的字符是 `£`、欧洲键盘 Ctrl+Alt 是 AltGr */
+  code?: string;
   shift?: boolean;
   /** Ctrl（Windows/Linux）或 ⌘（macOS） */
   mod?: boolean;
+  /** Alt / Option。缺省不看 Alt（老绑定照旧） */
+  alt?: boolean;
 }
 
-export type ActionGroup = "模式" | "移动与选择" | "音符" | "时值" | "记号" | "换行" | "编辑";
+export type ActionGroup = "模式" | "移动与选择" | "音符" | "时值" | "记号" | "换行" | "编辑" | "小节" | "声部";
 
 export interface VisualAction {
   id: string;
@@ -94,6 +98,33 @@ export const VISUAL_ACTIONS: readonly VisualAction[] = [
     modes: ["edit"], help: "在选中音符挂的记号（和弦名、延长号等装饰、注记、圆滑线）之间轮换选中" },
   { id: "mark.prev", label: "上一个记号", group: "记号", keys: [{ key: "Tab", shift: true }], keyText: "Shift+Tab",
     modes: ["edit"], help: "反方向轮换" },
+  { id: "chord.add", label: "加和弦音", group: "音符",
+    keys: ["1", "2", "3", "4", "5", "6", "7"].map((d) => ({ key: d, code: `Digit${d}`, alt: true })), keyText: "Alt+1–7",
+    modes: ["edit"], help: "往选中的音上叠一个音（唱名，放在最高音之上最近处），成为和弦。MusicXML 可用；Alt+点击和弦里的某个符头单独选中它、按 Delete 只删它" },
+  { id: "voice.set", label: "声部", group: "声部",
+    keys: ["1", "2", "3", "4"].map((d) => ({ key: d, code: `Digit${d}`, alt: true, mod: true })), keyText: "Ctrl+Alt+1–4",
+    help: "插入模式下新插的音落在第几声部（同一谱表上的第二、三、四条旋律，符干各朝一边）。MusicXML 可用" },
+  { id: "meas.append", label: "追加小节", group: "小节", keys: [{ key: "b", mod: true }], keyText: "Ctrl/⌘+B",
+    help: "在曲末追加一个空小节（整小节休止），所有声部一起加" },
+  { id: "meas.insert", label: "前插小节", group: "小节", keys: [{ key: "b", mod: true, shift: true }], keyText: "Ctrl/⌘+Shift+B",
+    help: "在选中（光标所在）那一小节前面插一个空小节" },
+  { id: "meas.delete", label: "删除小节", group: "小节", keys: [{ key: "Delete", mod: true }, { key: "Backspace", mod: true }], keyText: "Ctrl/⌘+Delete",
+    help: "删掉选中的小节（选了几小节就删几小节）；MusicXML 所有声部一起删" },
+  { id: "meas.key", label: "调号…", group: "小节", keys: [], keyText: "", help: "从这一小节起换调号：输入 1=G、G、bB、F# 之类" },
+  { id: "meas.time", label: "拍号…", group: "小节", keys: [], keyText: "", help: "从这一小节起换拍号：输入 3/4、6/8 之类" },
+  { id: "meas.tempo", label: "速度…", group: "小节", keys: [], keyText: "", help: "这一小节开头标速度：输入每分钟拍数（♩= 几），0 或留空去掉" },
+  { id: "bar.single", label: "普通小节线", group: "小节", keys: [], keyText: "", help: "选中小节线（或所在小节的尾线）改回普通单线" },
+  { id: "bar.double", label: "双小节线", group: "小节", keys: [], keyText: "", help: "所在小节的尾线改成双线" },
+  { id: "bar.final", label: "终止线", group: "小节", keys: [], keyText: "", help: "所在小节的尾线改成终止线" },
+  { id: "bar.repeatStart", label: "反复开始", group: "小节", keys: [], keyText: "", help: "所在小节的头线改成反复开始 |:" },
+  { id: "bar.repeatEnd", label: "反复结束", group: "小节", keys: [], keyText: "", help: "所在小节的尾线改成反复结束 :|" },
+  { id: "volta.1", label: "第一房", group: "小节", keys: [], keyText: "", help: "选中的小节标成第一房（再点一次去掉）" },
+  { id: "volta.2", label: "第二房", group: "小节", keys: [], keyText: "", help: "选中的小节标成第二房（再点一次去掉）" },
+  { id: "jump.segno", label: "𝄋 记号", group: "小节", keys: [], keyText: "", help: "这一小节开头标 segno（D.S. 跳回这里）" },
+  { id: "jump.coda", label: "⊕ 尾声", group: "小节", keys: [], keyText: "", help: "这一小节开头标 coda" },
+  { id: "jump.dc", label: "D.C.", group: "小节", keys: [], keyText: "", help: "这一小节末尾标 D.C.（从头反复）" },
+  { id: "jump.ds", label: "D.S.", group: "小节", keys: [], keyText: "", help: "这一小节末尾标 D.S.（从 𝄋 处反复）" },
+  { id: "jump.fine", label: "Fine", group: "小节", keys: [], keyText: "", help: "这一小节末尾标 Fine（反复后到此结束）" },
   { id: "view.formatMarks", label: "显示格式标记", group: "编辑", keys: [{ key: "m", mod: true, shift: true }], keyText: "Ctrl/⌘+Shift+M",
     help: "谱面上显示或隐藏换行符 ↵ 与换页符 ⤓（点一下即选中）" },
   { id: "edit.undo", label: "撤销", group: "编辑", keys: [{ key: "z", mod: true }], keyText: "Ctrl/⌘+Z",
@@ -104,17 +135,31 @@ export const VISUAL_ACTIONS: readonly VisualAction[] = [
 
 /** 按下的键对应哪个动作（没有返回 null）。 */
 export function actionOfKey(ev: KeyboardEvent): VisualAction | null {
+  return keyHit(ev)?.action ?? null;
+}
+
+/** 按下的键对应哪个动作、以及它代表的字符（按物理键认的绑定给 `KeyBinding.key`，不是 Option 打出来的 `£`）。 */
+export function keyHit(ev: KeyboardEvent): { action: VisualAction; key: string } | null {
   const mod = ev.ctrlKey || ev.metaKey;
   // 字母键带 Shift 时 `key` 是大写，统一按小写比
   const key = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;
+  // 先认按物理键的（Alt 组合）：Windows 上 Alt+1 的 `key` 仍是「1」，先走字符那一轮就被当成改唱名
   for (const a of VISUAL_ACTIONS) {
     for (const k of a.keys) {
+      if (!k.code || ev.code !== k.code || !!k.mod !== mod || !!k.alt !== ev.altKey || !!k.shift !== ev.shiftKey) continue;
+      return { action: a, key: k.key };
+    }
+  }
+  for (const a of VISUAL_ACTIONS) {
+    for (const k of a.keys) {
+      if (k.code) continue;
+      if (k.alt !== undefined && k.alt !== ev.altKey) continue;
       if (k.key.toLowerCase() !== key.toLowerCase()) continue;
       if (!!k.mod !== mod) continue;
       // 符号键（`#`、`(`、`|`）本身就要按 Shift 才打得出，不看 Shift
       const shiftMatters = k.key.length > 1 || /[a-z]/i.test(k.key);
       if (shiftMatters && !!k.shift !== ev.shiftKey) continue;
-      return a;
+      return { action: a, key: ev.key };
     }
   }
   return null;

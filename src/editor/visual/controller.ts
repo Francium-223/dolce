@@ -21,9 +21,10 @@ import {
   addSustain, clearBeams, deleteEntries, double, dropInlineSustain, type EditCtx, type EditOutcome, groupEnd, halve, insertNote, insertToken,
   isError, noteCtx, noteSpans, notesIn, setAccidental, setDegree, shiftOctave, toggleDeco, toggleDot, toggleSlur, toggleTie,
 } from "./ops";
-import { actionOfKey, type VisualAction, type VisualMode } from "./keys";
+import { keyHit, type VisualAction, type VisualMode } from "./keys";
 import { selectionInfo } from "./selinfo";
 import { inlineEditing, openInlineEditor } from "./inline";
+import { measureEdit } from "./measureops";
 import { runModelAction, type ModelActionCtx } from "./modelops";
 import {
   type Box, boxInPage, charIndexAt, inkBoxInPage, clearOverlay, drawBlock, drawBreak, drawCaret, hitThroughOverlay, musicBox, rightEdgeInBand,
@@ -134,6 +135,10 @@ export class VisualEditController {
   private pickedBreak: { after: ElementId; sel: number } | null = null;
   /** 插入模式的「当前时值」：新插的音符用它 */
   curDur: NoteDuration = { halvings: 0, dots: 0 };
+  /** 声部输入：插入模式新插的音落在第几声部（`.musicxml` 用；Ctrl+Alt+1–4） */
+  curVoice = 1;
+  /** Alt+点击单独选中的和弦音（从低到高第几个）；`sel` 是选中时的选区，选区一动就作废 */
+  private pickedNote: { id: ElementId; index: number; from: number; to: number } | null = null;
 
   constructor(private host: VisualHost) {}
 
@@ -337,7 +342,7 @@ export class VisualEditController {
     }
     if (this.modeEl) {
       this.modeEl.hidden = !on;
-      this.modeEl.textContent = this.mode === "edit" ? "编辑" : `插入 · ${durName(this.curDur)}`;
+      this.modeEl.textContent = this.mode === "edit" ? "编辑" : `插入 · ${durName(this.curDur)}${this.curVoice > 1 ? ` · 声部${this.curVoice}` : ""}`;
       this.modeEl.dataset.mode = this.mode;
     }
     if (this.paletteEl) {
@@ -362,6 +367,11 @@ export class VisualEditController {
    *  见 `VisualHost.barlineEl` / `sustainEl`）；取不到就退回宿主音符那个（旧行为）。 */
   private elOf(entry: SyncEntry): SVGGraphicsElement | null {
     return this.ownEl(entry) ?? this.host.entryEl(entry);
+  }
+
+  /** 条目在谱面上的元素（给弹出框定位）。 */
+  elOfEntry(e: SyncEntry): SVGGraphicsElement | null {
+    return this.elOf(e);
   }
 
   /** 条目**自己**那个图元（没有就 null，不退回宿主音符）：小节线、增时线、弧。 */
@@ -502,6 +512,17 @@ export class VisualEditController {
 
   /** 编辑方块：选区罩住的元素，按页、按行各画一个。 */
   private drawEditBlock(from: number, to: number): void {
+    // Alt+点击选中的和弦音：方块只罩那个符头
+    const pn = this.pickedChordNote();
+    if (pn) {
+      const e = this.host.sync.ordered().find((x) => x.kind === "note" && x.id === pn.id);
+      const head = e ? this.noteheadsOf(e)[pn.index] : undefined;
+      const hit = head ? inkBoxInPage(head.el) : null;
+      if (hit) {
+        drawBlock(hit.svg, hit.box);
+        return;
+      }
+    }
     const dotOf = this.pickedDot();
     if (dotOf) {
       // 选中的是附点：方块只罩附点
@@ -574,6 +595,8 @@ export class VisualEditController {
       this.swallowClick = false;
       return true;
     }
+    // Alt+点击和弦里的某个符头（五线谱）：单独选中这一个音（Delete 只删它）
+    if (ev.altKey && entry?.kind === "note" && this.host.surfaceKind() === "staff" && this.pickChordNote(entry, ev.clientY)) return true;
     // 点在换行符号上：选中它
     const t = ev.target instanceof Element ? ev.target.closest(".vis-break") : null;
     const brk = t ? this.breakEls.get(t) : undefined;
@@ -714,6 +737,59 @@ export class VisualEditController {
     let b = pivot;
     while (!isEdge(nav[b + 1])) b++;
     this.select(nav[a]!.from, this.groupEnd(nav[b]!));
+    return true;
+  }
+
+  /** 当前格式能不能做这个动作（菜单不列、面板灰掉）。 */
+  available(a: VisualAction): boolean {
+    const model = this.host.modelEditing();
+    if (a.id === "chord.add" || a.id === "voice.set") return model;
+    if (a.group === "小节") return model || !!this.host.editDialect()?.measure;
+    return true;
+  }
+
+  /** 文本格式的小节操作（`measureops.ts`）。 */
+  private measureText(id: string, value: string | null): boolean {
+    const c = this.editCtx();
+    if (!c) return true;
+    return this.apply(measureEdit(c, id, value));
+  }
+
+  /** Alt+点击单独选中的和弦音；选区挪开了就作废。 */
+  private pickedChordNote(): { id: ElementId; index: number } | null {
+    const p = this.pickedNote;
+    const sel = this.host.view.state.selection.main;
+    if (!p || sel.from !== p.from || sel.to !== p.to) return null;
+    return { id: p.id, index: p.index };
+  }
+
+  /** 和弦组里的各个符头（SMuFL 符头区 U+E0A0–E0FF 的字），按纵坐标从下到上（= 音从低到高）。
+   *  纵坐标取字的**基线**在屏幕上的位置：SMuFL 符头的墨心就在基线上，而 `getBoundingClientRect` 给的是整行字体盒（CLAUDE.md 那条）。 */
+  private noteheadsOf(entry: SyncEntry): { el: SVGTextElement; y: number }[] {
+    const el = this.host.entryEl(entry);
+    if (!el) return [];
+    return [...el.querySelectorAll("text")]
+      .filter((t) => {
+        const c = t.textContent?.codePointAt(0) ?? 0;
+        return c >= 0xe0a0 && c <= 0xe0ff;
+      })
+      .map((t) => ({ el: t, y: t.getScreenCTM() ? new DOMPoint(0, 0).matrixTransform(t.getScreenCTM()!).y : 0 }))
+      .sort((a, b) => b.y - a.y);
+  }
+
+  private pickChordNote(entry: SyncEntry, cy: number): boolean {
+    const heads = this.noteheadsOf(entry);
+    if (heads.length < 2) return false;
+    let k = 0;
+    let best = Infinity;
+    heads.forEach((h, i) => {
+      const d = Math.abs(h.y - cy);
+      if (d < best) (best = d), (k = i);
+    });
+    const span = this.host.sync.spanOfNote(entry.id) ?? entry;
+    this.pickedNote = { id: entry.id, index: k, from: span.from, to: span.to };
+    this.select(span.from, span.to);
+    this.host.setStatus(`选中了和弦里从低往高第 ${k + 1} 个音，Delete 只删它`);
     return true;
   }
 
@@ -976,9 +1052,9 @@ export class VisualEditController {
 
   private onKeyDown(ev: KeyboardEvent): void {
     if (!this.host.visualEnabled() || inlineEditing()) return;
-    const a = actionOfKey(ev);
-    if (!a) return;
-    if (this.runChecked(a, ev.key)) {
+    const hit = keyHit(ev);
+    if (!hit) return;
+    if (this.runChecked(hit.action, hit.key)) {
       ev.preventDefault();
       ev.stopPropagation();
     }
@@ -1009,6 +1085,20 @@ export class VisualEditController {
       get curDur() {
         return ctl.curDur;
       },
+      get curVoice() {
+        return ctl.curVoice;
+      },
+      get pickedChordNote() {
+        return ctl.pickedChordNote();
+      },
+      prompt: (hint, initial) => new Promise((resolve) => {
+        const first = ctl.selectedEntries()[0] ?? [...ctl.navigable()].reverse().find((e) => e.to <= ctl.host.view.state.selection.main.head);
+        const anchor = (first && ctl.elOfEntry(first)) ?? ctl.host.scorePane;
+        openInlineEditor(anchor, initial, ({ value }) => {
+          ctl.host.scorePane.focus({ preventScroll: true });
+          resolve(value);
+        }, hint);
+      }),
       freshModel: () => ctl.host.freshModel(),
       writeModel: (doc) => ctl.host.writeModel(doc),
       syncDoc: () => ctl.host.syncDoc(),
@@ -1030,6 +1120,7 @@ export class VisualEditController {
         return ctl.mode;
       },
       run: (a, key) => ctl.runChecked(a, key),
+      available: (a) => ctl.available(a),
       refocus: () => ctl.host.scorePane.focus({ preventScroll: true }),
     };
   }
@@ -1099,6 +1190,29 @@ export class VisualEditController {
       case "nav.extendPrev": return this.move(-1, true);
       case "nav.extendNext": return this.move(1, true);
       case "sel.all": return this.selectAll();
+      case "chord.add":
+        this.host.setStatus("简谱一个声部只印一路旋律：和弦音请另起声部（123 的 V:），这里只对 MusicXML 生效");
+        return true;
+      case "meas.append": case "meas.insert": case "meas.delete":
+      case "bar.single": case "bar.double": case "bar.final": case "bar.repeatStart": case "bar.repeatEnd":
+      case "volta.1": case "volta.2":
+      case "jump.segno": case "jump.coda": case "jump.dc": case "jump.ds": case "jump.fine":
+        return this.measureText(a.id, null);
+      case "meas.key": case "meas.time": case "meas.tempo": {
+        const hint = a.id === "meas.key" ? "调号，如 1=G、bB、F#" : a.id === "meas.time" ? "拍号，如 3/4、6/8" : "速度（每分钟拍数），0 去掉";
+        void this.modelCtx.prompt(hint, "").then((v) => {
+          if (v !== null) this.measureText(a.id, v);
+        });
+        return true;
+      }
+      case "voice.set": {
+        this.curVoice = Number(key) || 1;
+        this.host.setStatus(this.host.modelEditing()
+          ? `插入模式新插的音落在第 ${this.curVoice} 声部`
+          : "文本格式的多声部在源码里用 V: 分开写（123 / ABC），这里只对 MusicXML 生效");
+        this.refresh();
+        return true;
+      }
       case "nav.home": return this.rowEdge(-1);
       case "nav.end": return this.rowEdge(1);
       case "mark.next": return this.cycleMark(1);

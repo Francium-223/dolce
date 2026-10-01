@@ -8,11 +8,20 @@ import { VISUAL_ACTIONS, type VisualAction, type VisualMode } from "./keys";
 /** 面板与菜单里不列的：移动、轮换这类纯键盘操作，和面板自己的开关 */
 const KEYBOARD_ONLY = new Set(["nav.prev", "nav.next", "nav.extendPrev", "nav.extendNext", "nav.home", "nav.end", "mark.next", "mark.prev"]);
 
-/** 唱名那个动作展开成一排：1–7、0 */
+/** 唱名那个动作展开成一排：1–7、0；加和弦音 1–7；声部 1–4 */
 const DIGITS = ["1", "2", "3", "4", "5", "6", "7", "0"];
+const ROWS: Record<string, { keys: string[]; label: (d: string) => string; title: (d: string) => string }> = {
+  "note.digit": { keys: DIGITS, label: (d) => d, title: (d) => (d === "0" ? "休止" : `唱名 ${d}`) },
+  "chord.add": { keys: DIGITS.slice(0, 7), label: (d) => `+${d}`, title: (d) => `加和弦音：唱名 ${d}` },
+  "voice.set": { keys: ["1", "2", "3", "4"], label: (d) => `声${d}`, title: (d) => `新插的音落在第 ${d} 声部` },
+};
+/** 右键菜单里收进「小节」子菜单的那组 */
+const SUBMENU_GROUP = "小节";
 
 export interface MenuRunner {
   readonly mode: VisualMode;
+  /** 当前格式能不能做这个动作（和弦音、声部只对 MusicXML；小节操作要格式有写法表）。缺省都能 */
+  available?(a: VisualAction): boolean;
   run(a: VisualAction, key?: string): boolean;
   /** 跑完把焦点还给谱面（键盘接着能用） */
   refocus(): void;
@@ -59,6 +68,11 @@ const SHORT: Record<string, string> = {
   "brk.page": "\u2913", // ⤓
   "del.forward": "\u2326", // ⌦
   "del.back": "\u232B", // ⌫
+  "meas.append": "+\u2502", "meas.insert": "\u2502+", "meas.delete": "\u2212\u2502",
+  "meas.key": "1=", "meas.time": "\u00BE", "meas.tempo": "\u2669=",
+  "bar.single": "\u2502", "bar.double": "\u2016", "bar.final": "\u2502\u258C", "bar.repeatStart": "\u2016:", "bar.repeatEnd": ":\u2016",
+  "volta.1": "\u23B41.", "volta.2": "\u23B42.",
+  "jump.segno": "\u{1D10B}", "jump.coda": "\u{1D10C}", "jump.dc": "D.C.", "jump.ds": "D.S.", "jump.fine": "Fine",
   "view.formatMarks": "\u00B6", // ¶
   "edit.undo": "\u21B6", // ↶
   "edit.redo": "\u21B7", // ↷
@@ -78,9 +92,10 @@ export function buildPalette(root: HTMLElement, r: MenuRunner): () => void {
       groups.set(a.group, g);
       root.appendChild(g);
     }
-    if (a.id === "note.digit") {
-      for (const d of DIGITS) {
-        const el = button(d === "0" ? "0" : d, `${d === "0" ? "休止" : `唱名 ${d}`}（${a.help}）`, () => {
+    const row = ROWS[a.id];
+    if (row) {
+      for (const d of row.keys) {
+        const el = button(row.label(d), `${row.title(d)}（${a.keyText}）：${a.help}`, () => {
           r.run(a, d);
           r.refocus();
         }, "visual-palette-digit");
@@ -97,7 +112,7 @@ export function buildPalette(root: HTMLElement, r: MenuRunner): () => void {
     entries.push({ a, el });
   }
   return () => {
-    for (const { a, el } of entries) el.disabled = !usable(a, r.mode);
+    for (const { a, el } of entries) el.disabled = !usable(a, r.mode) || r.available?.(a) === false;
   };
 }
 
@@ -111,11 +126,11 @@ function actionsFor(target: MenuTarget, mode: VisualMode): VisualAction[] {
     case "break":
       return all.filter((a) => a.id === "del.forward" || a.id.startsWith("edit."));
     case "caret":
-      return all.filter((a) => ["note.digit", "sus.add", "bar.insert", "brk.line", "brk.page", "del.forward", "del.back", "mode.edit", "dur.halve", "dur.double"].includes(a.id));
+      return all.filter((a) => ["note.digit", "voice.set", "sus.add", "bar.insert", "brk.line", "brk.page", "del.forward", "del.back", "mode.edit", "dur.halve", "dur.double"].includes(a.id) || a.group === SUBMENU_GROUP);
     case "note":
-      return all.filter((a) => !["mode.edit", "del.back", "view.formatMarks"].includes(a.id));
+      return all.filter((a) => !["mode.edit", "del.back", "view.formatMarks", "voice.set"].includes(a.id));
     default:
-      return all.filter((a) => a.id.startsWith("edit.") || a.id === "view.formatMarks");
+      return all.filter((a) => a.id.startsWith("edit.") || a.id === "view.formatMarks" || a.group === SUBMENU_GROUP);
   }
 }
 
@@ -137,28 +152,58 @@ export function showMenu(x: number, y: number, target: MenuTarget, r: MenuRunner
     r.run(a, key);
     r.refocus();
   };
-  for (const a of actionsFor(target, r.mode)) {
-    if (a.id === "note.digit") {
-      const row = document.createElement("div");
-      row.className = "visual-menu-digits";
-      for (const d of DIGITS) row.appendChild(button(d, d === "0" ? "休止" : `唱名 ${d}`, pick(a, d)));
-      menu.appendChild(row);
-      continue;
-    }
-    const item = button("", a.help, pick(a), "visual-menu-item");
+  const item = (a: VisualAction): HTMLButtonElement => {
+    const it = button("", a.help, pick(a), "visual-menu-item");
     const label = document.createElement("span");
     label.textContent = a.label;
     const key = document.createElement("kbd");
     key.textContent = a.keyText;
-    item.append(label, key);
-    item.setAttribute("role", "menuitem");
-    menu.appendChild(item);
+    it.append(label, key);
+    it.setAttribute("role", "menuitem");
+    return it;
+  };
+  const actions = actionsFor(target, r.mode).filter((a) => r.available?.(a) !== false);
+  for (const a of actions) {
+    if (a.group === SUBMENU_GROUP) continue;
+    const row = ROWS[a.id];
+    if (row) {
+      const el = document.createElement("div");
+      el.className = "visual-menu-digits";
+      el.title = a.label;
+      for (const d of row.keys) el.appendChild(button(row.label(d), row.title(d), pick(a, d)));
+      menu.appendChild(el);
+      continue;
+    }
+    menu.appendChild(item(a));
+  }
+  // 小节操作收成一个可展开的子菜单（一共十几项，平铺会把菜单撑得比屏幕还高）
+  const sub = actions.filter((a) => a.group === SUBMENU_GROUP);
+  if (sub.length) {
+    const head = button("", "插删小节、调号拍号速度、小节线样式、房号、跳转记号", () => {
+      box.hidden = !box.hidden;
+      head.classList.toggle("open", !box.hidden);
+      place(); // 展开后变高了，重新贴回视口里
+      if (!box.hidden) box.scrollIntoView({ block: "nearest" });
+    }, "visual-menu-item visual-menu-sub");
+    const label = document.createElement("span");
+    label.textContent = "小节";
+    const arrow = document.createElement("kbd");
+    arrow.textContent = "▸";
+    head.append(label, arrow);
+    const box = document.createElement("div");
+    box.className = "visual-menu-subbox";
+    box.hidden = true;
+    for (const a of sub) box.appendChild(item(a));
+    menu.append(head, box);
   }
   document.body.appendChild(menu);
-  // 贴着指针弹出，出不了视口
-  const rect = menu.getBoundingClientRect();
-  menu.style.left = `${Math.min(x, window.innerWidth - rect.width - 8)}px`;
-  menu.style.top = `${Math.min(y, window.innerHeight - rect.height - 8)}px`;
+  // 贴着指针弹出，出不了视口（比视口还高时由 CSS 的 max-height 滚动）
+  function place(): void {
+    const rect = menu.getBoundingClientRect();
+    menu.style.left = `${Math.max(8, Math.min(x, window.innerWidth - rect.width - 8))}px`;
+    menu.style.top = `${Math.max(8, Math.min(y, window.innerHeight - rect.height - 8))}px`;
+  }
+  place();
   openMenu = menu;
   const away = (e: Event): void => {
     if (e instanceof KeyboardEvent && e.key !== "Escape") return;

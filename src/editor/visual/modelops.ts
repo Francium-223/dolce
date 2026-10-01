@@ -8,10 +8,12 @@
 import type { EditorView } from "@codemirror/view";
 import type { Chord, ElementId, ScoreDoc } from "../../model/doc";
 import {
-  addBeat, chordAtPos, deleteChords, insertChord, isEditError, locate, mergeMeasures, midiOf, type ChordPos, type EditHooks,
-  type InsertAnchor, type ModelEdit, posOf, scaleDuration, setBreakBefore, setDegree, shiftOctave, splitMeasure, stepDegree,
-  toggleAccidental, toggleDeco, toggleDot, toggleSlur, toggleTie,
+  addBeat, addChordNote, type BarKind, chordAtPos, chordOnset, deleteChords, deleteMeasures, insertChord, insertInVoice, insertMeasure,
+  isEditError, type JumpKind, locate, mergeMeasures, midiOf, type ChordPos, type EditHooks, type InsertAnchor, type ModelEdit, posOf,
+  removeChordNote, scaleDuration, setBarKind, setBreakBefore, setDegree, setKeyAt, setTempoAt, setTimeAt, shiftOctave, splitMeasure,
+  stepDegree, toggleAccidental, toggleDeco, toggleDot, toggleEnding, toggleJump, toggleSlur, toggleTie,
 } from "../../model/edit";
+import { parseKeyInput, parseTempoInput, parseTimeInput } from "./measureinput";
 import { dropEmbeddedLayout, forgetNoteLayout } from "../../model/xmlsurface";
 import type { SyncEntry, SyncIndex } from "../sync";
 import type { NoteDuration } from "./dialect";
@@ -35,8 +37,14 @@ export interface ModelActionCtx {
   /** 选区碰到的条目 */
   selectedEntries(): SyncEntry[];
   readonly curDur: NoteDuration;
+  /** 声部输入：插入模式新插的音落在第几声部（1–4） */
+  readonly curVoice: number;
+  /** Alt+点击单独选中的和弦里某个音（从低到高第几个）；没有为 null */
+  readonly pickedChordNote: { id: ElementId; index: number } | null;
   /** 按键发声 */
   play(midi: number): void;
+  /** 弹一个输入框问一句（调号、拍号、速度），放弃为 null */
+  prompt(hint: string, initial: string): Promise<string | null>;
 }
 
 const HOOKS: EditHooks = { forgetStem: forgetNoteLayout, forgetLayout: dropEmbeddedLayout };
@@ -124,6 +132,18 @@ function entryBeforeCaret(ctx: ModelActionCtx): SyncEntry | null {
 function entryAfterCaret(ctx: ModelActionCtx): SyncEntry | null {
   const head = ctx.view.state.selection.main.head;
   return ctx.navigable().find((e) => e.from >= head) ?? null;
+}
+
+/** 选区（或光标前那个元素）落在哪几小节：`from`..`to` 是小节下标。小节线条目算它前面那一小节。 */
+function selectedMeasures(ctx: ModelActionCtx, doc: ScoreDoc): { si: number; from: number; to: number } | null {
+  const sel = ctx.view.state.selection.main;
+  const es = sel.empty ? [entryBeforeCaret(ctx) ?? entryAfterCaret(ctx)].filter((e): e is SyncEntry => !!e) : ctx.selectedEntries();
+  const locs = es.map((e) => locate(doc, e.id)).filter((l): l is NonNullable<typeof l> => l !== null);
+  if (!locs.length) return null;
+  // 插入模式光标落在小节线后面：那是下一小节的开头
+  const after = sel.empty && es[0] && (es[0].kind === "barline" || es[0].kind === "break") && es[0].to <= sel.head ? 1 : 0;
+  const mis = locs.map((l) => l.mi + after);
+  return { si: locs[0]!.si, from: Math.min(...mis), to: Math.max(...mis) };
 }
 
 /** 插入位置：光标前是音符就接在它后面；是小节线 / 换行就是下一小节开头；什么都没有就是第一小节开头。 */
@@ -217,9 +237,94 @@ export function runModelAction(ctx: ModelActionCtx, a: VisualAction, key: string
       if (edit) return need((doc, l) => setDegree(doc, l, d, HOOKS), true);
       return commit(ctx, (doc) => {
         const at = insertAnchor(ctx, doc);
-        return at ? insertChord(doc, at, d, ctx.curDur, HOOKS) : { error: "这里插不进音符" };
+        if (!at) return { error: "这里插不进音符" };
+        // 声部输入：光标所在时刻、别的声线
+        const ref = "after" in at ? locate(doc, at.after) : null;
+        if (ref && ref.chord.voice !== ctx.curVoice) {
+          const onset = (chordOnset(doc, ref.chord.id) ?? 0) + ref.chord.duration.divisions;
+          return insertInVoice(doc, { si: ref.si, pi: ref.pi, mi: ref.mi, onset, staff: ref.chord.staff }, ctx.curVoice, d, ctx.curDur, HOOKS);
+        }
+        if ("measureStart" in at && at.measureStart.voice !== ctx.curVoice) {
+          const m = at.measureStart;
+          return insertInVoice(doc, { si: m.si, pi: m.pi, mi: m.mi, onset: 0, staff: 1 }, ctx.curVoice, d, ctx.curDur, HOOKS);
+        }
+        return insertChord(doc, at, d, ctx.curDur, HOOKS);
       }, true);
     }
+    case "chord.add": {
+      const d = Number(key);
+      const id = ids().pop();
+      if (id === undefined) {
+        ctx.setStatus("先选中一个音符");
+        return true;
+      }
+      return commit(ctx, (doc) => addChordNote(doc, id, d, HOOKS), true);
+    }
+    case "voice.set": return null; // 控制器记下当前声部
+    case "meas.append":
+      return commit(ctx, (doc) => insertMeasure(doc, 0, doc.songs[0]?.parts[0]?.measures.length ?? 0, HOOKS));
+    case "meas.insert":
+      return commit(ctx, (doc) => {
+        const r = selectedMeasures(ctx, doc);
+        return insertMeasure(doc, r?.si ?? 0, r?.from ?? 0, HOOKS);
+      });
+    case "meas.delete":
+      return commit(ctx, (doc) => {
+        const r = selectedMeasures(ctx, doc);
+        return r ? deleteMeasures(doc, r.si, r.from, r.to, HOOKS) : { error: "先选中要删的小节" };
+      });
+    case "meas.key":
+    case "meas.time":
+    case "meas.tempo": {
+      const hint = a.id === "meas.key" ? "调号，如 1=G、bB、F#" : a.id === "meas.time" ? "拍号，如 3/4、6/8" : "速度（每分钟拍数），0 去掉";
+      void ctx.prompt(hint, "").then((v) => {
+        if (v === null) return;
+        commit(ctx, (doc) => {
+          const r = selectedMeasures(ctx, doc);
+          if (!r) return { error: "先选中一个小节里的音" };
+          if (a.id === "meas.key") {
+            const f = parseKeyInput(v);
+            return f === null ? { error: `读不懂调号「${v}」` } : setKeyAt(doc, r.si, r.from, f, HOOKS);
+          }
+          if (a.id === "meas.time") {
+            const t = parseTimeInput(v);
+            return t ? setTimeAt(doc, r.si, r.from, t.beats, t.beatType, HOOKS) : { error: `读不懂拍号「${v}」` };
+          }
+          const bpm = parseTempoInput(v);
+          return bpm === null ? { error: `读不懂速度「${v}」` } : setTempoAt(doc, r.si, r.from, bpm);
+        });
+      });
+      return true;
+    }
+    case "bar.single":
+    case "bar.double":
+    case "bar.final":
+    case "bar.repeatStart":
+    case "bar.repeatEnd": {
+      const kind = a.id.slice(4) as BarKind;
+      return commit(ctx, (doc) => {
+        const r = selectedMeasures(ctx, doc);
+        if (!r) return { error: "先选中一个小节里的音或小节线" };
+        return setBarKind(doc, r.si, kind === "repeatStart" ? r.from : r.to, kind);
+      });
+    }
+    case "volta.1":
+    case "volta.2":
+      return commit(ctx, (doc) => {
+        const r = selectedMeasures(ctx, doc);
+        return r ? toggleEnding(doc, r.si, r.from, r.to, a.id === "volta.1" ? 1 : 2) : { error: "先选中要标房号的小节" };
+      });
+    case "jump.segno":
+    case "jump.coda":
+    case "jump.dc":
+    case "jump.ds":
+    case "jump.fine":
+      return commit(ctx, (doc) => {
+        const r = selectedMeasures(ctx, doc);
+        const kind = a.id.slice(5) as JumpKind;
+        if (!r) return { error: "先选中一个小节里的音" };
+        return toggleJump(doc, r.si, kind === "segno" || kind === "coda" ? r.from : r.to, kind);
+      });
     case "oct.up": return need((doc, l) => shiftOctave(doc, l, 1, HOOKS), true);
     case "oct.down": return need((doc, l) => shiftOctave(doc, l, -1, HOOKS), true);
     case "step.up": return need((doc, l) => stepDegree(doc, l, 1, HOOKS), true);
@@ -273,6 +378,9 @@ export function runModelAction(ctx: ModelActionCtx, a: VisualAction, key: string
     }
     case "del.forward":
     case "del.back": {
+      // Alt+点击单独选中的和弦音：只删它
+      const pn = ctx.pickedChordNote;
+      if (edit && pn) return commit(ctx, (doc) => removeChordNote(doc, pn.id, pn.index, HOOKS));
       // 选中的是一段文字（歌词、标题）：直接改原文里那几个字
       const text = edit ? ctx.sync.range(sel.from, sel.to).find((e) => (e.kind === "lyric" || e.kind === "header") && e.from === sel.from && e.to === sel.to) : undefined;
       if (text) return removeText(ctx, text);

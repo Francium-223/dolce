@@ -43,7 +43,7 @@ MusicXML 双向（导入为 `ScoreDoc`；简谱档与成书经 `model/jianpuinpu
 ## 在谱面上编辑
 
 没有代码区，谱面上改的是模型（`model/edit.ts`），改完经 `toxml.ts` 整份重写；索引按 DOM 节点的文档序对到隐藏代码区里的原文
-（`editor/sync.ts::buildXml`）。判据见 [可视化编辑](可视化编辑.md)「`.musicxml`：改模型」。增删音、改时值、拆并小节后整曲的版面坐标作废，改由五线谱引擎自动铺排。
+（`editor/sync.ts::buildXml`）。判据见 [实现/可视化编辑](../实现/可视化编辑.md)「MusicXML：改模型」。增删音、改时值、拆并小节后整曲的版面坐标作废，改由五线谱引擎自动铺排。
 
 ## 已知限制
 

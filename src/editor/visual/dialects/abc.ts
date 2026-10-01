@@ -13,6 +13,8 @@ import type { Accidental, ScoreDoc } from "../../../model/doc";
 import { jpTonicOctaveShift, keyAlter, tonicStep } from "../../../score/jppitch";
 import { type EditDialect, keyFifthsAt, type NoteCtx, type NoteDuration, type NoteToken } from "../dialect";
 import { colonFields } from "../header";
+import { abcFamilyMeasure } from "../measureops";
+import { keyTonic } from "../measureinput";
 
 const STEPS = "CDEFGAB";
 const ACC_OF: Record<string, Accidental> = { "^^": "double-sharp", __: "double-flat", "^": "sharp", _: "flat", "=": "natural" };
@@ -141,6 +143,7 @@ export const DIALECT_ABC: EditDialect = {
     return { fifths: keyFifthsAt(doc, pos), unitQuarters: unitAt(state, pos) };
   },
   headerFields: (text) => colonFields(text, { T: "text", C: "text", Q: "text", K: "key", M: "time" }),
+  measure: abcFamilyMeasure(keyTonic),
   sustain: "inline",
   sep: " ",
   barline: "|",

@@ -4,6 +4,8 @@
 import type { Accidental } from "../../../model/doc";
 import { dotsRange, type EditDialect, type NoteDuration, type NoteToken, runRange } from "../dialect";
 import { colonFields } from "../header";
+import { abcFamilyMeasure } from "../measureops";
+import { keyTonic } from "../measureinput";
 
 const ACC_OF: Record<string, Accidental> = {
   "#": "sharp", b: "flat", n: "natural", "##": "double-sharp", bb: "double-flat",
@@ -47,6 +49,8 @@ export const DIALECT_123: EditDialect = {
     return `${degree}${"_".repeat(dur.halvings)}${".".repeat(dur.dots)}`;
   },
   headerFields: (text) => colonFields(text, { T: "text", C: "text", Q: "text", K: "key", M: "time" }),
+  // 首调写法 `1=bB`：升降号在前（简谱习惯）
+  measure: abcFamilyMeasure((f) => `1=${keyTonic(f).replace(/^([A-G])([#b])$/, "$2$1")}`),
   sustain: "token",
   sep: " ",
   barline: "|",

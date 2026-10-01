@@ -18,19 +18,23 @@ export function inlineEditing(): boolean {
   return open !== null;
 }
 
-export function openInlineEditor(anchor: Element, value: string, onDone: (d: InlineDone) => void): void {
+export function openInlineEditor(anchor: Element, value: string, onDone: (d: InlineDone) => void, placeholder = ""): void {
   open?.blur();
   const r = anchor.getBoundingClientRect();
   const input = document.createElement("input");
   input.type = "text";
   input.className = "vis-inline";
   input.value = value;
+  if (placeholder) {
+    input.placeholder = placeholder;
+    input.title = placeholder;
+  }
   const size = Math.max(12, Math.min(40, r.height * 0.8));
   Object.assign(input.style, {
     left: `${r.left - 4}px`,
     top: `${r.top + r.height / 2 - size * 0.8}px`,
     fontSize: `${size}px`,
-    width: `${Math.max(r.width + size * 2, size * 4)}px`,
+    width: `${Math.max(r.width + size * 2, size * 4, placeholder ? placeholder.length * size * 0.9 : 0)}px`,
   });
   let finished = false;
   const finish = (d: InlineDone): void => {

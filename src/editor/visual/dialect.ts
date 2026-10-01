@@ -7,6 +7,7 @@ import type { Accidental } from "../../model/doc";
 import type { EditorState } from "@codemirror/state";
 import type { ScoreDoc } from "../../model/doc";
 import type { HeaderField } from "./header";
+import type { MeasureSyntax } from "./measureops";
 
 /** 与格式无关的音符 token。只描述可视化编辑要改的那几样，其余原样保留在 `pre` / `post`。 */
 export interface NoteToken {
@@ -115,6 +116,8 @@ export interface EditDialect {
   slurInToken: boolean;
   /** 页眉字段（标题、署名、调号拍号…）在原文里的位置（`header.ts`）：谱面上点页眉跳到原文、原文光标点亮页眉 */
   headerFields?(text: string): HeaderField[];
+  /** 小节操作的写法表（插删小节、换调换拍、小节线样式、房号、跳转，`measureops.ts`）；没有 = 这种格式请去源码改 */
+  measure?: MeasureSyntax;
   /** 换行不是符号的格式：给出「在 `afterId` 之后加 / 去掉一处换行」后的整份新原文。 */
   relayoutBreaks?(state: EditorState, doc: ScoreDoc, afterId: number, add: boolean, page: boolean): string | null;
 }

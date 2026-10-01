@@ -99,6 +99,9 @@ export function checkMeasureDurations(doc: ScoreDoc, opts: BeatCheckOptions = {}
         if (r.byVoice.size < 2) return;
         for (const [, q] of [...r.byVoice].slice(1)) {
           if (Math.abs(q - r.got) < EPS) continue;
+          // MusicXML 的副声部可以提前收尾（合唱谱女低、男低唱半小节就并回主声部的和弦、共用符干），
+          // 末尾的 `<forward>` 读进来不留元素，短了不算错；只查比主声部长的
+          if (xml && q < r.got) continue;
           const issue: BeatIssue = { songIndex, partIndex, measureIndex, want: r.got, got: q, ids: r.m.elements.map((e) => e.id) };
           const src = r.m.elements.find((e) => e.source)?.source;
           if (src) issue.source = src;

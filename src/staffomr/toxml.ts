@@ -137,6 +137,10 @@ export function toMusicXml(lines: StaffLineResult[], opts: StaffXmlOptions = {})
  *    首尾相接；这一小节本来就有音读错了，位置对不齐是次要的。
  *
  * 声部之间用 `<backup>` 把时间倒回小节头（MusicXML 的规矩）。
+ *
+ * 大谱表（`staffNo` > 0）的声部号在**整个 part 里**编：第 k 行谱的声部 v 写成 `(k-1)*4 + v`
+ *（下谱表 5、6，通行写法），且一律写 `<voice>`。各行谱都从 1 编的话，上下谱表的
+ * voice 1 被读成同一个声部，拍数自检把两行的时值加在一起（每小节都成了两倍）。
  */
 function emitVoices(inBar: StaffNote[], ticks: (d: number) => number, staffNo: number): string {
   // **起点不能用 `ticks`**：那个函数有 `Math.max(1, …)` 的下限（时值再短也得占一格），
@@ -144,8 +148,10 @@ function emitVoices(inBar: StaffNote[], ticks: (d: number) => number, staffNo: n
   const at = (dur: number) => Math.round(ticks(1) * dur);
   let body = "";
   const voices = [...new Set(inBar.map((n) => n.voice))].sort((a, b) => a - b);
-  const withVoice = voices.length > 1;
+  const withVoice = voices.length > 1 || staffNo > 0;
+  const voiceBase = staffNo > 0 ? (staffNo - 1) * 4 : 0;
   const timed = inBar.every((n) => n.group?.timed);
+  const full = timed ? voiceTicks(inBar, ticks) : 0;
   voices.forEach((v, vi) => {
     const vn = inBar.filter((n) => n.voice === v);
     // 按 offset 出时要按 offset 排：`splitVoice` 之后同一声部的和弦在数组里
@@ -186,8 +192,15 @@ function emitVoices(inBar: StaffNote[], ticks: (d: number) => number, staffNo: n
       if (n.wedgeStop) body += `<direction placement="below"><direction-type><wedge number="1" type="stop"/></direction-type></direction>`;
       if (n.wedgeStart)
         body += `<direction placement="below"><direction-type><wedge number="1" type="${n.wedgeStart}"/></direction-type></direction>`;
-      body += noteXml(n, ticks(n.duration), staffNo, withVoice);
+      body += noteXml(n, ticks(n.duration), staffNo, withVoice, voiceBase);
       if (!n.chordExtra && !n.grace) cur += ticks(n.duration);
+    }
+    // 按拍位排满的小节里，提前收尾的声部补 `<forward>` 到小节末：合唱谱的女低、男低常常
+    // 唱半小节就并回主声部的和弦（共用符干）。不补的话，换行谱前按最长声部写的 `<backup>`
+    // 会倒过小节头，下一行谱整体前移。
+    if (timed && cur > 0 && cur < full) {
+      body += `<forward><duration>${full - cur}</duration></forward>`;
+      cur = full;
     }
     if (vi < voices.length - 1 && cur > 0) body += `<backup><duration>${cur}</duration></backup>`;
   });
@@ -210,18 +223,19 @@ function voiceTicks(inBar: StaffNote[], ticks: (d: number) => number): number {
   return used;
 }
 
-function noteXml(n: StaffNote, dur: number, staffNo = 0, withVoice = false): string {
+function noteXml(n: StaffNote, dur: number, staffNo = 0, withVoice = false, voiceBase = 0): string {
   const id = currentNoteId?.(n);
-  return id ? noteXmlRaw(n, dur, staffNo, withVoice).replace(/^<note>/, `<note id="${escapeXml(id)}">`) : noteXmlRaw(n, dur, staffNo, withVoice);
+  const xml = noteXmlRaw(n, dur, staffNo, withVoice, voiceBase);
+  return id ? xml.replace(/^<note>/, `<note id="${escapeXml(id)}">`) : xml;
 }
 
-function noteXmlRaw(n: StaffNote, dur: number, staffNo = 0, withVoice = false): string {
+function noteXmlRaw(n: StaffNote, dur: number, staffNo = 0, withVoice = false, voiceBase = 0): string {
   const type = noteType(n.base);
   const dots = "<dot/>".repeat(n.dots);
   // `<staff>` 排在 `<notations>` 之前、`<stem>` 之后（MusicXML 的子元素顺序）
   const staffEl = staffNo ? `<staff>${staffNo}</staff>` : "";
   // `<voice>` 排在 `<duration>`/`<tie>` 之后、`<type>` 之前
-  const voiceEl = withVoice ? `<voice>${n.voice}</voice>` : "";
+  const voiceEl = withVoice ? `<voice>${n.voice + voiceBase}</voice>` : "";
   if (n.rest)
     return `<note><rest/><duration>${dur}</duration>${voiceEl}<type>${type}</type>${dots}${staffEl}</note>`;
   // **倚音不占拍子**：MusicXML 的 `<grace/>` 排在最前（`<chord/>` 之前），
@@ -240,9 +254,9 @@ function noteXmlRaw(n: StaffNote, dur: number, staffNo = 0, withVoice = false): 
   // `<notations>` 排在 `<lyric>` 之前（MusicXML 的子元素顺序）
   const nots: string[] = [];
   if (n.tieStop) nots.push(`<tied type="stop"/>`);
-  if (n.tieStart) nots.push(`<tied type="start"/>`);
+  if (n.tieStart) nots.push(n.tieDashed ? `<tied type="start" line-type="dashed"/>` : `<tied type="start"/>`);
   if (n.slurStop) nots.push(`<slur type="stop" number="1"/>`);
-  if (n.slurStart) nots.push(`<slur type="start" number="1"/>`);
+  if (n.slurStart) nots.push(n.slurDashed ? `<slur type="start" number="1" line-type="dashed"/>` : `<slur type="start" number="1"/>`);
   if (n.tuplet) nots.push(`<tuplet type="start"/>`);
   // `<notations>` 里子元素有固定次序：tied / slur / tuplet / ornaments / articulations / fermata
   const arts: string[] = [];

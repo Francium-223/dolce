@@ -435,8 +435,18 @@ function dropSectionLabel(chars: OcrChar[]): OcrChar[] {
  * 两边的个数才对得上——「字数相等按序号」是映射里唯一准的那条路。
  * 一个字格于是拿到「字 + 尾随标点」（如「深，」），与简谱那条路的口径一致。
  */
+/** 去掉行首的段号连同后面的点、顿号（「1.Ho-ly」）：数字不是歌词字、`LYRIC_CH` 会滤掉，可跟着的点留下来，
+ *  领到第一个字前面成了「.Ho」（Holy, Holy, Holy 四段都是）。 */
+function dropVerseNumber(chars: OcrChar[]): OcrChar[] {
+  const s = [...chars].sort((a, b) => a.xFrac - b.xFrac);
+  if (!s.length || !/^[0-9]$/.test(s[0].ch)) return chars;
+  let k = 0;
+  while (k < s.length && /^[0-9.．、\s]$/.test(s[k].ch)) k++;
+  return s.slice(k);
+}
+
 export function foldLyricChars(chars: OcrChar[]): OcrChar[] {
-  chars = dropSectionLabel(chars).filter((c) => LYRIC_CH.test(c.ch));
+  chars = dropSectionLabel(dropVerseNumber(chars)).filter((c) => LYRIC_CH.test(c.ch));
   const out: OcrChar[] = [];
   let lead = "";
   for (const c of chars) {
@@ -696,7 +706,7 @@ export function stripWithout(strip: LyricStrip, spans: [number, number][]): Lyri
  * 而下游只拿 x 去对音符。
  */
 export function latinCells(strip: LyricStrip, chars: OcrChar[]): { box: Rect; ch: string }[] {
-  const keep = chars.filter((c) => LATIN_CH.test(c.ch)).sort((a, b) => a.xFrac - b.xFrac);
+  const keep = dropVerseNumber(chars).filter((c) => LATIN_CH.test(c.ch)).sort((a, b) => a.xFrac - b.xFrac);
   if (!keep.length) return [];
   // 条内的**空白列区间**（分数坐标），按 x 排：词界就在这些区间里
   const col = new Int32Array(strip.w);
@@ -734,7 +744,7 @@ export function latinCells(strip: LyricStrip, chars: OcrChar[]): { box: Rect; ch
     const end = next ? Math.min(c.xFrac + pitch, next.xFrac) : Math.min(1, c.xFrac + pitch);
     out.push(boxAt(c.xFrac, end, c.ch));
     // 两个字之间**夹着一段空白列**就补个空格（`splitSyllables` 见空格断词）
-    if (next && blanks.some((b) => b[0] >= c.xFrac && b[1] <= next.xFrac)) out.push(boxAt(end, next.xFrac, " "));
+    if (next && blanks.some((b) => (b[0] + b[1]) / 2 > c.xFrac && (b[0] + b[1]) / 2 < next.xFrac)) out.push(boxAt(end, next.xFrac, " "));
   });
   return out;
 }

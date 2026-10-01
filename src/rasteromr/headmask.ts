@@ -744,6 +744,22 @@ const ALONG_FREE_SOLID = 2.5;
 const SOLID_ALONG_SCORE = 0.45;
 const SOLID_ALONG_INK = 0.6;
 
+/** 同一列上下两段干、中间隔着不到 `STEM_JOIN_GAP` 格的，接成一根。中段贴着的头把竖段截断了
+ *（Holy, Holy, Holy m13 男高 C♮4 在加线上、与男低 F♯2 共干：下段只剩 4.46 格，够不上 `SOLID_ALONG_MIN`）。 */
+const STEM_JOIN_GAP = 1.2;
+function joinStems(stems: LineSeg[], unit: RasterUnit): LineSeg[] {
+  const sp = unit.space;
+  const tol = unit.lineThick + 1;
+  const segs = stems.map((v) => ({ v, x: (v.x0 + v.x1) / 2, top: Math.min(v.y0, v.y1), bot: Math.max(v.y0, v.y1) })).sort((a, b) => a.top - b.top);
+  const out: LineSeg[] = [];
+  for (const a of segs)
+    for (const b of segs) {
+      if (b === a || Math.abs(a.x - b.x) > tol || b.top <= a.bot || b.top - a.bot > sp * STEM_JOIN_GAP) continue;
+      out.push({ ...a.v, x0: a.x, x1: a.x, y0: a.top, y1: b.bot });
+    }
+  return out;
+}
+
 export function solidHeadsAlongStems(
   bin: Binary,
   nl: Binary,
@@ -773,7 +789,7 @@ export function solidHeadsAlongStems(
       }
     return n ? k / n : 0;
   };
-  for (const v of stems) {
+  for (const v of [...stems, ...joinStems(stems, unit)]) {
     const vx = (v.x0 + v.x1) / 2;
     const top = Math.min(v.y0, v.y1);
     const bot = Math.max(v.y0, v.y1);

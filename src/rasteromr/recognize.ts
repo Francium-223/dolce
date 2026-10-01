@@ -32,7 +32,7 @@ import { findStaffLabels, labelKey, normalizeLabel, type LabelStrip } from "./st
 import { findHarmonyStrips, harmonyKey, harmonyLine, readHarmonyStrip, type HarmonyStrip, type HarmonyToken } from "./harmony";
 import { findRasterWedges, type RasterWedge } from "./wedge";
 import { groupDynamics, type RasterDynamic } from "./dynamics";
-import { findRasterSlurs } from "./slur";
+import { findRasterDashedSlurs, findRasterSlurs } from "./slur";
 import { ContourLedger } from "./ledger";
 import { attachHarmonies, attachLyrics, buildLyricLines, type LyricLine } from "../staffomr/textanalyze";
 import { attachSlurs, markSlurNotes, reconnectSlurs, type SlurArc } from "../staffomr/slur";
@@ -1864,13 +1864,9 @@ export async function recognizeRasterPage(
   // 左高右低错开、纵向搭上一格以上，两根之间在**原图**上有两道横墨（整行从左笔连到右笔），
   // 各比谱线厚、相隔 0.6 格以上。
   // 字典认领过的窄块也当种子：竖笔单独一块时字典会把它认成 `wiggleTrill` 之类
-  for (const c of blobs) {
-    if (claimed.has(c.id) || merged.has(c.id)) continue;
-    const b = c.bbox;
-    if (b.w > unit.space * 0.4 || b.h < unit.space * 0.3) continue;
-    const sx = b.x + Math.floor(b.w / 2);
-    const seed = vRunAt(nl, sx, b.y + Math.floor(b.h / 2));
-    if (!seed) continue;
+  /** 从一根竖笔（`sx` 列、纵向 `seed`）起认还原号：右边或左边 `NAT_GAP` 格处另有一根，左高右低错开，
+   *  两根之间在原图上有两道比谱线厚的横墨。认出来返回盒。 */
+  const natFrom = (sx: number, seed: [number, number]): Rect | null => {
     let hit: Rect | null = null;
     for (const side of [1, -1]) {
       for (let dx = Math.round(unit.space * NAT_GAP[0]); dx <= unit.space * NAT_GAP[1] && !hit; dx++) {
@@ -1894,6 +1890,32 @@ export async function recognizeRasterPage(
       }
       if (hit) break;
     }
+    return hit;
+  };
+  // 宽到一格、带着两截横笔的无主块也当种子，从它最左那几列的竖笔起量：加线上的音的还原号，右竖笔下半截
+  // 顺着加线连进了符头那团墨，剩下的左竖笔连着两截横笔成一块（Holy, Holy, Holy m14 女低 C♮4，0.83×2.8 格）
+  for (const c of blobs) {
+    if (claimed.has(c.id) || merged.has(c.id)) continue;
+    const b = c.bbox;
+    if (b.h < unit.space * 0.3) continue;
+    let sx = b.x + Math.floor(b.w / 2);
+    let seed = b.w <= unit.space * 0.4 ? vRunAt(nl, sx, b.y + Math.floor(b.h / 2)) : null;
+    if (b.w > unit.space * 0.4) {
+      if (b.w > unit.space * 1.0 || b.h < unit.space * 1.5) continue;
+      for (let x = b.x; x < b.x + Math.min(b.w, unit.space * 0.3) && !seed; x++) {
+        for (let y = b.y; y < b.y + b.h; y++) {
+          if (!nl.data[y * nl.w + x]) continue;
+          const r = vRunAt(nl, x, y);
+          if (r && r[1] - r[0] >= unit.space * 1.5) {
+            seed = r;
+            sx = x + 1;
+          }
+          break;
+        }
+      }
+    }
+    if (!seed) continue;
+    const hit = natFrom(sx, seed);
     if (!hit) continue;
     const box = hit;
     // 盒里的碎符号（竖笔认成的装饰音之类）换掉；与盒大片相交的别的符号在，就不认
@@ -2633,6 +2655,19 @@ export async function recognizeRasterPage(
     for (const box of solidHeadsAlongStems(raster.bin, nl, masks, unit, pitchGrid, onLineY, [...prims.vSegs, ...stemSegs], blackHeads, [...others, ...prims.beams.map((b) => b.box)])) {
       syms.push({ box, code: "noteheadBlack" });
       ledger.claim(box, "along:noteheadBlack");
+      // 这些头错过了上面认还原号那一步。整个还原号顺着加线连进了这团墨、一块无主的碎块都不剩时
+      //（Holy, Holy, Holy m13 男高 C♮4 与男低 F♯2 共干），从头左边 0.2~1.6 格里穿过头心的长竖笔起再认一次
+      const cy = Math.round(box.y + box.h / 2);
+      for (let x = Math.round(box.x - unit.space * 1.6); x <= box.x - unit.space * 0.2; x++) {
+        const run = vRunAt(nl, x, cy);
+        if (!run || run[1] - run[0] < unit.space * 1.5) continue;
+        const nat = natFrom(x + 1, run);
+        if (nat && !syms.some((s0) => overlapFrac(nat, s0.box) > 0.3)) {
+          syms.push({ box: nat, code: "accidentalNatural" });
+          ledger.claim(nat, "accid:accidentalNatural");
+        }
+        break;
+      }
     }
   }
 
@@ -2727,7 +2762,37 @@ export async function recognizeRasterPage(
       // 带外到 `FAR_HEAD` 格的块只交全音符形状那一路（第三条加线上的全音符离外线正好 3 格：称谢歌伴奏 m16 F#3），
       // 模板那一路不放：谱表下三四格常是歌词字
       const inFar = (y: number) => groups.some((g) => y > g.lines[0].y - unit.space * FAR_HEAD && y < g.lines[4].y + unit.space * FAR_HEAD);
-      const free = blobs.filter((c) => !claimed.has(c.id) && !dictClaimed.has(c.id) && !merged.has(c.id) && inFar(c.bbox.y + c.bbox.h / 2));
+      // **半个全音符先被认成了实心头**：夹在两线之间的全音符去谱线后劈成左右两个月牙，粗的那半
+      // 窄得不到一格、却过了实心头那一关（Holy, Holy, Holy m8 低音 A2：右半 0.92×1.17 格、左半 1.0 格没人认）。
+      // 实心头必有符干——没干、旁边贴着一块同高的无主月牙、两块并起来有全音符宽的，改认全音符
+      const isFree = (c: (typeof blobs)[number]) => !claimed.has(c.id) && !dictClaimed.has(c.id) && !merged.has(c.id);
+      for (let i = syms.length - 1; i >= 0; i--) {
+        const s0 = syms[i]!;
+        if (s0.code !== "noteheadBlack" || s0.box.w > unit.space * 0.95) continue;
+        const sb = s0.box;
+        const stemmed = prims.vSegs.some((v) => {
+          const vx = (v.x0 + v.x1) / 2;
+          return (Math.abs(vx - sb.x) <= unit.space * 0.2 || Math.abs(vx - (sb.x + sb.w)) <= unit.space * 0.2) && Math.min(v.y0, v.y1) <= sb.y + sb.h && Math.max(v.y0, v.y1) >= sb.y;
+        });
+        if (stemmed) continue;
+        const mates = blobs.filter((c) => {
+          if (!isFree(c) || c.bbox.w > unit.space * 1.1) return false;
+          const r = c.bbox;
+          const vov = Math.min(sb.y + sb.h, r.y + r.h) - Math.max(sb.y, r.y);
+          const hgap = r.x > sb.x ? r.x - (sb.x + sb.w) : sb.x - (r.x + r.w);
+          return vov >= Math.max(sb.h, r.h) * 0.8 && hgap >= -unit.lineThick - 1 && hgap <= unit.space * 0.5;
+        });
+        if (mates.length !== 1) continue;
+        const r = mates[0]!.bbox;
+        const x0 = Math.min(sb.x, r.x);
+        const y0 = Math.min(sb.y, r.y);
+        const wb = { x: x0, y: y0, w: Math.max(sb.x + sb.w, r.x + r.w) - x0, h: Math.max(sb.y + sb.h, r.y + r.h) - y0 };
+        if (wb.w < unit.space * 1.3 || wb.w > unit.space * 2.2) continue;
+        syms.splice(i, 1, { box: wb, code: "noteheadWhole" });
+        merged.add(mates[0]!.id);
+        ledger.claim(wb, "halves:noteheadWhole");
+      }
+      const free = blobs.filter((c) => isFree(c) && inFar(c.bbox.y + c.bbox.h / 2));
       /** 本页已认二分头的中位尺寸（开口内腔那一档用）。 */
       const halves = syms.filter((s0) => s0.code === "noteheadHalf");
       const med = (xs: number[]) => xs.sort((p, q) => p - q)[xs.length >> 1];
@@ -3683,6 +3748,29 @@ export async function recognizeRasterPage(
   // 所以要在松叶**之后**跑，把松叶认走的先剔掉。
   const slurs = findRasterSlurs(cmap, unit, ledger.unclaimed(), pg.objs.length + pg.segs.length + 1000);
   for (const sl of slurs) ledger.claim({ x: sl.obj.box.left, y: sl.obj.box.top, w: sl.obj.box.right - sl.obj.box.left, h: sl.obj.box.bottom - sl.obj.box.top }, "slur");
+  // 虚线弧（`slur.ts::findRasterDashedSlurs`）：无主块之外，只被歌词字格认过的短划也算（弧两头那截常落在歌词带上沿，
+  // Holy, Holy, Holy m10）；上方还是下方看近旁最近的符头；离谱表四格半开外的不认（歌词带里成串的连字符）
+  const dashSide = (x0: number, x1: number, y: number): "above" | "below" | null => {
+    const sp = unit.space;
+    if (!pg.staves.some((st) => y > st.box.top - sp * 4.5 && y < st.box.bottom + sp * 4.5)) return null;
+    let best: { d: number; cy: number } | null = null;
+    for (const n of notes) {
+      if (n.rest) continue;
+      const b = n.sym.box;
+      if (b.right < x0 - sp || b.left > x1 + sp) continue;
+      const cy = (b.top + b.bottom) / 2;
+      const d = Math.abs(cy - y);
+      if (d <= sp * 3 && (!best || d < best.d)) best = { d, cy };
+    }
+    return best ? (y < best.cy ? "above" : "below") : null;
+  };
+  const lyricOnly = cmap.contours.filter((c) => {
+    const cl = ledger.claimsOf(c.id);
+    return cl.length > 0 && cl.every((k) => k.by === "lyric");
+  });
+  const dashed = findRasterDashedSlurs([...ledger.unclaimed(), ...lyricOnly], unit, pg.objs.length + pg.segs.length + 1000 + slurs.length, dashSide);
+  for (const sl of dashed) ledger.claim({ x: sl.obj.box.left, y: sl.obj.box.top, w: sl.obj.box.right - sl.obj.box.left, h: sl.obj.box.bottom - sl.obj.box.top }, "slur:dashed");
+  slurs.push(...dashed);
   attachSlurs(slurs, notes, unit.space);
   reconnectSlurs(pg, slurs);
   markSlurNotes(slurs);
@@ -4997,8 +5085,18 @@ function findDots(bin: Binary, syms: RasterSym[], unit: RasterUnit, staffYs: num
     const cy = b.y + b.h / 2;
     const above = colHead(b, 0.3, 3.2);
     if (above && colHead(b, -0.1, 0.7) && !colHead(b, -3.2, -0.3)) return DOT_BELOW_PUSHED;
-    if (colHead(b, 0.3, 1.2) || (above && onLine(Math.round(cy)))) return DOT_BELOW_STACKED;
+    if (colHead(b, 0.3, 1.2) || ((above || stemDown(b)) && onLine(Math.round(cy)))) return DOT_BELOW_STACKED;
     return DOT_BELOW;
+  };
+  /** 干从头的左缘往下伸（下声部）：左缘一像素内有一段 1.5 格以上的竖墨，谱线行算连着。
+   *  下声部线上的音附点写在**下方的间**（Holy, Holy, Holy m11 男低 G2 附点四分，点心在头心下 0.5 格）。 */
+  const stemDown = (b: Rect) => {
+    for (let x = Math.max(0, b.x - 1); x <= Math.min(bin.w - 1, b.x + 1); x++) {
+      let run = 0;
+      for (let y = Math.round(b.y + b.h / 2); y < bin.h && (bin.data[y * bin.w + x] || onLine(y)); y++) run++;
+      if (run >= sp * 1.5 + b.h / 2) return true;
+    }
+    return false;
   };
   /** 点落在这个头的附点窗口里吗。 */
   const inWindow = (b: Rect, d: Rect) => {

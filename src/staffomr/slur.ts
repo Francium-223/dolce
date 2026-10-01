@@ -21,6 +21,8 @@ export interface SlurArc {
   to?: StaffNote;
   /** 是连音线（两端同音高）而不是圆滑线。 */
   tie: boolean;
+  /** 画成虚线（位图路 `findRasterDashedSlurs`）。 */
+  dashed?: boolean;
 }
 
 /**
@@ -319,6 +321,10 @@ export function markSlurNotes(arcs: SlurArc[]): void {
     if (sl.from) {
       if (sl.tie) sl.from.tieStart = true;
       else sl.from.slurStart = true;
+      if (sl.dashed) {
+        if (sl.tie) sl.from.tieDashed = true;
+        else sl.from.slurDashed = true;
+      }
     }
     if (sl.to) {
       if (sl.tie) sl.to.tieStop = true;

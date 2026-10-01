@@ -688,6 +688,9 @@ export interface StaffNote {
   slurStop?: boolean;
   tieStart?: boolean;
   tieStop?: boolean;
+  /** 起头的那条圆滑线 / 连音线画成虚线（`<slur line-type="dashed">`）。 */
+  slurDashed?: boolean;
+  tieDashed?: boolean;
 }
 
 /**
@@ -1380,10 +1383,13 @@ function splitVoice(chords: StaffChord[], expect: number): void {
   //
   // 真正的「一个声部整小节长音」当然存在，但那时另一层也不会是孤例；
   // 这里只剔**层里只有一个和弦、且它自己就占满一小节**的那种，并回第一声部。
+  // 而且只剔排在真声部**前面**的：排在后面的挤不掉真旋律，倒常是真的——合唱谱男低一个全音符、
+  // 男高两个二分（Holy, Holy, Holy m8），并回第一声部就接在男高后面，这小节成了八拍。
   const solo = (grp: StaffChord[]) => grp.length === 1 && Math.abs(grp[0].dur - expect) < EPS;
-  const real = layers.filter((grp) => !solo(grp));
+  const firstReal = layers.findIndex((grp) => !solo(grp));
+  const real = firstReal < 0 ? [] : layers.filter((grp, i) => i >= firstReal || !solo(grp));
   const merged = real.length && real.length < layers.length ? real : layers;
-  const extra = merged === layers ? [] : layers.filter((grp) => solo(grp));
+  const extra = merged === layers ? [] : layers.filter((grp) => !real.includes(grp));
   merged.forEach((grp, i) => {
     for (const ch of grp) {
       ch.voice = i + 1;

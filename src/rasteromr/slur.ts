@@ -123,3 +123,76 @@ function fakeArcObj(id: number, box: Rect): PObj {
   o.addTag("Slur");
   return o;
 }
+
+// ── 虚线弧 ─────────────────────────────────────────────────────────────────
+//
+// 诗歌本里第二段起唱法不同的那几处，圆滑线 / 连音线画成**虚线**（Holy, Holy, Holy 十二条）。
+// 每一截只有 0.7×0.25 格，单看是噪点；成串看：一截截**等宽、等距、排成一线**的短横划。
+// 两端那一截常粘在符头、符干上，认出来的只是中段——端点仍落在两个音符之间，`attachSlurs` 挂得上。
+
+/** 一截短划的尺寸（格）：宽、高上限，宽高比下限。弧两头那截是斜的，8×5 像素（0.42 格高、宽高比 1.6）。 */
+const DASH_W = [0.35, 1.0] as const;
+const DASH_H = 0.5;
+const DASH_ASPECT = 1.4;
+/** 相邻两截的间隔（格）、竖向错开上限（格），宽度比上下限。 */
+const DASH_GAP = [0.25, 0.9] as const;
+const DASH_DY = 0.35;
+const DASH_WR = [0.6, 1.6] as const;
+/** 至少几截；各间隔之间最多差多少（格）。 */
+const DASH_MIN = 3;
+const DASH_GAP_SPREAD = 0.3;
+
+/**
+ * 从无主 contour 里串出虚线弧。`side(x0, x1, y)` 由调用方给：这一串近旁的符头在它下方返回 `"above"`
+ *（弧画在音符上方）、在上方返回 `"below"`，近旁没有符头、或落在歌词带那种地方返回 `null`（不认）。
+ */
+export function findRasterDashedSlurs(
+  only: Contour[],
+  unit: RasterUnit,
+  nextId: number,
+  side: (x0: number, x1: number, y: number) => "above" | "below" | null,
+): SlurArc[] {
+  const sp = unit.space;
+  const dashes = only
+    .filter((c) => {
+      const b = c.bbox;
+      return b.w >= sp * DASH_W[0] && b.w <= sp * DASH_W[1] && b.h <= sp * DASH_H && b.w >= b.h * DASH_ASPECT;
+    })
+    .map((c) => c.bbox)
+    .sort((a, b) => a.x - b.x);
+  const used = new Set<Rect>();
+  const out: SlurArc[] = [];
+  for (const d0 of dashes) {
+    if (used.has(d0)) continue;
+    const chain = [d0];
+    for (;;) {
+      const cur = chain[chain.length - 1]!;
+      const cy = cur.y + cur.h / 2;
+      const next = dashes.find((d) => {
+        if (used.has(d) || chain.includes(d)) return false;
+        const gap = d.x - (cur.x + cur.w);
+        const wr = d.w / cur.w;
+        return gap >= sp * DASH_GAP[0] && gap <= sp * DASH_GAP[1] && Math.abs(d.y + d.h / 2 - cy) <= sp * DASH_DY && wr >= DASH_WR[0] && wr <= DASH_WR[1];
+      });
+      if (!next) break;
+      chain.push(next);
+    }
+    if (chain.length < DASH_MIN) continue;
+    const gaps = chain.slice(1).map((d, i) => d.x - (chain[i]!.x + chain[i]!.w));
+    if (Math.max(...gaps) - Math.min(...gaps) > sp * DASH_GAP_SPREAD) continue;
+    const first = chain[0]!;
+    const last = chain[chain.length - 1]!;
+    const ly = first.y + first.h / 2;
+    const ry = last.y + last.h / 2;
+    const midY = chain.reduce((a, d) => a + d.y + d.h / 2, 0) / chain.length;
+    const where = side(first.x, last.x + last.w, midY);
+    if (!where) continue;
+    for (const d of chain) used.add(d);
+    const x0 = first.x;
+    const y0 = Math.min(...chain.map((d) => d.y));
+    const box: Rect = { x: x0, y: y0, w: last.x + last.w - x0, h: Math.max(...chain.map((d) => d.y + d.h)) - y0 };
+    out.push({ obj: fakeArcObj(nextId + out.length, box), lx: x0, ly, rx: last.x + last.w - 1, ry, above: where === "above", tie: false, dashed: true });
+  }
+  return out;
+}
+

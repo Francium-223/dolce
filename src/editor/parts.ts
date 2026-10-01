@@ -58,7 +58,16 @@ export function patchVoiceLine(text: string, pi: number, props: { name?: string;
   const lines = text.split("\n");
   const seen: string[] = [];
   let at = -1;
+  // 只看第一首（面板列的是第一首的声部）：多曲文件后面曲子的 `V:` 不算
+  let tunes = 0;
+  let end = lines.length;
   for (const [i, l] of lines.entries()) {
+    if (/^\s*X:/.test(l) && ++tunes > 1) {
+      end = i;
+      break;
+    }
+  }
+  for (const [i, l] of lines.slice(0, end).entries()) {
     const m = /^\s*V:\s*(\S+)/.exec(l);
     if (!m || seen.includes(m[1]!)) continue;
     seen.push(m[1]!);
@@ -68,7 +77,9 @@ export function patchVoiceLine(text: string, pi: number, props: { name?: string;
     }
   }
   const setAttr = (line: string, key: string, value: string | undefined, quoted: boolean): string => {
-    const re = new RegExp(`\\s${key}=(?:"[^"]*"|\\S+)`);
+    // ABC 的简写 `nm=` / `snm=` 与全称是同一个属性：一起换掉，免得改完两个名字
+    const alias = key === "name" ? "|nm" : key === "subname" ? "|snm" : "";
+    const re = new RegExp(`\\s(?:${key}${alias})=(?:"[^"]*"|\\S+)`, "g");
     const stripped = line.replace(re, "");
     if (!value) return stripped;
     return `${stripped} ${key}=${quoted ? `"${value.replace(/"/g, "'")}"` : value}`;
@@ -85,7 +96,7 @@ export function patchVoiceLine(text: string, pi: number, props: { name?: string;
     return lines.join("\n");
   }
   if (seen.length === 0 && pi === 0) {
-    const k = lines.findIndex((l) => /^\s*K:/.test(l));
+    const k = lines.slice(0, end).findIndex((l) => /^\s*K:/.test(l));
     if (k < 0) return null;
     lines.splice(k + 1, 0, apply("V:1"));
     return lines.join("\n");
@@ -128,15 +139,25 @@ export function showPartsPanel(app: App): void {
   openPanel = overlay;
 
   /** 改结构的一步：先问一声会不会丢注释（123 / ABC 整份重出），做完重画。 */
-  const structural = async (what: string, mutate: (doc: ScoreDoc) => boolean | number | void, isStructure = true): Promise<void> => {
+  /** `remap`：声部序号怎么变（旧 → 新，删掉为 -1），按声部记的会话设置跟着走 */
+  const structural = async (
+    what: string, mutate: (doc: ScoreDoc) => boolean | number | void, isStructure = true, remap?: (i: number) => number,
+  ): Promise<void> => {
     if (app.docFormat !== "musicxml" && hasComments(app.getText())) {
       const ok = await showConfirmDialog("改声部", `「${what}」要按模型整份重出源码，源码里的 % 注释会丢掉（可撤销）。继续吗？`);
       if (!ok) return;
     }
     if (!app.editParts(mutate, isStructure)) app.setStatus(`没能${what}`);
-    else app.setStatus(`已${what}（可撤销）`);
+    else {
+      if (remap) app.remapParts(remap);
+      app.setStatus(`已${what}（可撤销）`);
+    }
     render();
   };
+  /** 序号映射：a、b 两个声部对调 / 在 at 后面插一个 / 删掉 at（并进别的也算删） */
+  const swapMap = (a: number, b: number) => (i: number): number => (i === a ? b : i === b ? a : i);
+  const insertAfter = (at: number) => (i: number): number => (i > at ? i + 1 : i);
+  const removed = (at: number) => (i: number): number => (i === at ? -1 : i > at ? i - 1 : i);
 
   function render(): void {
     body.replaceChildren();
@@ -302,17 +323,17 @@ export function showPartsPanel(app: App): void {
       // 操作
       const ops = el("td", "parts-ops");
       ops.append(
-        btn("↑", "上移", () => void structural("上移声部", (d) => movePart(d, 0, pi, pi - 1)), !can || pi === 0),
-        btn("↓", "下移", () => void structural("下移声部", (d) => movePart(d, 0, pi, pi + 1)), !can || pi === parts.length - 1),
-        btn("复制", "复制这个声部（插在它后面）", () => void structural("复制声部", (d) => duplicatePart(d, 0, pi)), !can),
-        btn("按声线拆", "闭合谱：第二条声线拆成下面一个新声部（如 S/A 一行谱拆成两行）", () => void structural("按声线拆分", (d) => splitByVoice(d, 0, pi)), !can || shape.voices < 2),
-        btn("按和弦拆", "闭合谱：和弦里最低的音拆成下面一个新声部（单音两边各一份）", () => void structural("按和弦拆分", (d) => splitByChord(d, 0, pi)), !can || !shape.chords),
+        btn("↑", "上移", () => void structural("上移声部", (d) => movePart(d, 0, pi, pi - 1), true, swapMap(pi, pi - 1)), !can || pi === 0),
+        btn("↓", "下移", () => void structural("下移声部", (d) => movePart(d, 0, pi, pi + 1), true, swapMap(pi, pi + 1)), !can || pi === parts.length - 1),
+        btn("复制", "复制这个声部（插在它后面）", () => void structural("复制声部", (d) => duplicatePart(d, 0, pi), true, insertAfter(pi)), !can),
+        btn("按声线拆", "闭合谱：第二条声线拆成下面一个新声部（如 S/A 一行谱拆成两行）", () => void structural("按声线拆分", (d) => splitByVoice(d, 0, pi), true, insertAfter(pi)), !can || shape.voices < 2),
+        btn("按和弦拆", "闭合谱：和弦里最低的音拆成下面一个新声部（单音两边各一份）", () => void structural("按和弦拆分", (d) => splitByChord(d, 0, pi), true, insertAfter(pi)), !can || !shape.chords),
         // 123 / ABC 的写出端不写小节内临时声部（`&`），并成第二声线会丢音：合成闭合谱只对 MusicXML
         btn("并入上一个", app.docFormat === "musicxml" ? "合成闭合谱：这个声部并进上一个声部当第二声线" : "合成闭合谱只对 MusicXML（123 / ABC 的一个声部只写一路旋律）",
-          () => void structural("合并声部", (d) => mergeInto(d, 0, pi - 1, pi)), !can || pi === 0 || app.docFormat !== "musicxml"),
+          () => void structural("合并声部", (d) => mergeInto(d, 0, pi - 1, pi), true, removed(pi)), !can || pi === 0 || app.docFormat !== "musicxml"),
         btn("删除", "删掉这个声部", () => {
           void showConfirmDialog("删除声部", `删掉「${part.name || `声部 ${pi + 1}`}」？（可撤销）`).then((ok) => {
-            if (ok) void structural("删除声部", (d) => deletePart(d, 0, pi));
+            if (ok) void structural("删除声部", (d) => deletePart(d, 0, pi), true, removed(pi));
           });
         }, !can || parts.length < 2),
       );

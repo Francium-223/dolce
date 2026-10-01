@@ -2026,6 +2026,23 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
   /** 简谱档的歌词取自哪个声部（MusicXML；null = 跟简谱旋律同一个声部）。会话内 */
   lyricPart: number | null = null;
 
+  /** 声部增删、排序、拆合之后：按声部记的会话设置（隐藏、简谱旋律、歌词来源、静音独奏音量）跟着声部走。
+   *  `map` 旧序号 → 新序号，删掉（并走）的为 -1。 */
+  remapParts(map: (i: number) => number): void {
+    const hidden = [...this.hiddenParts];
+    this.hiddenParts.clear();
+    for (const i of hidden) if (map(i) >= 0) this.hiddenParts.add(map(i));
+    this.melodyPart = Math.max(0, map(this.melodyPart));
+    if (this.lyricPart !== null) {
+      const j = map(this.lyricPart);
+      this.lyricPart = j >= 0 ? j : null;
+    }
+    this.playback.remapParts(map);
+    this._puScoreCache = null;
+    this.reloadNow();
+    if (this.mode === "mixed") void this._renderMixedPages();
+  }
+
   setPartVisible(i: number, on: boolean): void {
     if (on) this.hiddenParts.delete(i);
     else this.hiddenParts.add(i);
@@ -2954,7 +2971,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
       const snap = this.omr.snapshot();
       void saveDraft({
         time: Date.now(), filePath: this.filePath, docFormat: this.docFormat, text,
-        ...(snap ? { project: packProject(snap, __APP_VERSION__) } : {}),
+        ...(snap ? { project: packProject(snap, __APP_VERSION__, true) } : {}),
       });
     }, 3000);
   }

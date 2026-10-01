@@ -17,28 +17,38 @@ export interface Draft {
   project?: Uint8Array;
 }
 
+/** 连接只开一次（每存一次开一个新连接、又从不关，会攒一堆） */
+let dbp: Promise<IDBDatabase | null> | null = null;
 function open(): Promise<IDBDatabase | null> {
-  return new Promise((resolve) => {
+  dbp ??= new Promise((resolve) => {
     try {
       const req = indexedDB.open(DB, 1);
       req.onupgradeneeded = () => req.result.createObjectStore(STORE);
-      req.onsuccess = () => resolve(req.result);
+      req.onsuccess = () => {
+        const db = req.result;
+        db.onclose = () => { dbp = null; };
+        resolve(db);
+      };
       req.onerror = () => resolve(null);
     } catch {
       resolve(null);
     }
   });
+  return dbp;
 }
 
+/** 按事务完成算数（配额超了是在事务 abort 时才报，请求 success 不代表写进去了）。 */
 async function tx<T>(mode: IDBTransactionMode, fn: (st: IDBObjectStore) => IDBRequest<T>): Promise<T | undefined> {
   const db = await open();
   if (!db) return undefined;
   return new Promise((resolve) => {
     try {
-      const req = fn(db.transaction(STORE, mode).objectStore(STORE));
-      req.onsuccess = () => resolve(req.result);
-      req.onerror = () => resolve(undefined);
+      const t = db.transaction(STORE, mode);
+      const req = fn(t.objectStore(STORE));
+      t.oncomplete = () => resolve(req.result);
+      t.onerror = t.onabort = () => resolve(undefined);
     } catch {
+      dbp = null; // 连接坏了（被浏览器关掉等）：下次重开
       resolve(undefined);
     }
   });

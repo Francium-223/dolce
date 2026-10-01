@@ -251,7 +251,22 @@ export class PlaybackController {
   /** 换了一份谱：静音、独奏作废（声部数与次序都可能变了）。 */
   resetMix(): void {
     this.partMuted.length = 0;
+    this.partVolumes.length = 0;
     this.solo = null;
+  }
+
+  /** 声部增删、排序了：静音、独奏、音量跟着声部走（`map` 旧序号 → 新序号，删掉的为 -1）。 */
+  remapParts(map: (i: number) => number): void {
+    const vol = [...this.partVolumes];
+    const muted = [...this.partMuted];
+    this.partVolumes.length = 0;
+    this.partMuted.length = 0;
+    vol.forEach((v, i) => { const j = map(i); if (j >= 0 && v !== undefined) this.partVolumes[j] = v; });
+    muted.forEach((m, i) => { const j = map(i); if (j >= 0 && m) this.partMuted[j] = m; });
+    if (this.solo !== null) {
+      const j = map(this.solo);
+      this.solo = j >= 0 ? j : null;
+    }
   }
 
   /** 试听/导出 MIDI 共用的播放参数。 */

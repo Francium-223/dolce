@@ -52,7 +52,8 @@ const extOf = (name: string, mime?: string): string => {
   return "jpg";
 };
 
-export function packProject(s: ProjectSnapshot, appVersion: string): Uint8Array {
+/** `fast`：自动保存草稿用——二值图不压缩（大图压一遍要在主线程卡几百毫秒，草稿几秒存一次） */
+export function packProject(s: ProjectSnapshot, appVersion: string, fast = false): Uint8Array {
   const files: Zippable = {};
   const manifest = {
     version: PROJECT_VERSION,
@@ -71,10 +72,10 @@ export function packProject(s: ProjectSnapshot, appVersion: string): Uint8Array 
   if (s.emitted !== null) files["emitted.txt"] = strToU8(s.emitted);
   if (s.jianpu) {
     files["result/recognized.json"] = strToU8(JSON.stringify(s.jianpu.score, replacer));
-    files["result/bin.raw"] = s.jianpu.bin.data;
+    files["result/bin.raw"] = fast ? [s.jianpu.bin.data, { level: 0 }] : s.jianpu.bin.data;
     if (s.jianpu.meta) files["result/meta.json"] = strToU8(JSON.stringify(s.jianpu.meta, replacer));
   }
-  return zipSync(files, { level: 6 });
+  return zipSync(files, { level: fast ? 1 : 6 });
 }
 
 /** 读识别项目。版本比这份代码新、或包坏了抛错（说明给用户看）。缺条目按能还原多少还原多少。 */
@@ -87,18 +88,28 @@ export function unpackProject(bytes: Uint8Array): ProjectSnapshot {
   }
   const mf = files["manifest.json"];
   if (!mf) throw new Error("识别项目缺 manifest.json");
-  const manifest = JSON.parse(strFromU8(mf)) as {
+  let manifest: {
     version: number; kind: ProjectKind; docFormat: DocFormatId; omrFormat?: string; recogKind?: string; recogView?: string;
     sources: { file: string; name: string; mime?: string }[]; bin?: { w: number; h: number };
   };
+  try {
+    manifest = JSON.parse(strFromU8(mf));
+  } catch {
+    throw new Error("识别项目的 manifest.json 坏了");
+  }
+  if (typeof manifest?.version !== "number") throw new Error("识别项目的 manifest.json 没有版本号");
   if (manifest.version > PROJECT_VERSION) throw new Error("这个识别项目是新版本存的，请升级 jpeditor 后再打开");
+  if (!(["jianpu", "staff", "vector"] as unknown[]).includes(manifest.kind)) throw new Error("识别项目的识别路认不出：" + String(manifest.kind));
+  if (!(["jpwabc", "pu", "123", "abc", "musicxml"] as unknown[]).includes(manifest.docFormat)) throw new Error("识别项目的谱格式认不出：" + String(manifest.docFormat));
+  if (!Array.isArray(manifest.sources)) manifest.sources = [];
   const text = files["doc.txt"] ? strFromU8(files["doc.txt"]) : "";
   const emitted = files["emitted.txt"] ? strFromU8(files["emitted.txt"]) : null;
   const sources = manifest.sources.flatMap((s) => (files[s.file] ? [{ name: s.name, mime: s.mime, bytes: files[s.file]! }] : []));
   let jianpu: ProjectSnapshot["jianpu"];
   const rec = files["result/recognized.json"];
   const raw = files["result/bin.raw"];
-  if (manifest.kind === "jianpu" && rec && raw && manifest.bin) {
+  // 二值图尺寸对不上（包坏了）就不还原识别结果，打开后按原图重识别
+  if (manifest.kind === "jianpu" && rec && raw && manifest.bin && raw.length === manifest.bin.w * manifest.bin.h) {
     jianpu = {
       score: JSON.parse(strFromU8(rec), reviver) as RecognizedScore,
       bin: { w: manifest.bin.w, h: manifest.bin.h, data: raw },

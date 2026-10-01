@@ -21,6 +21,7 @@ import type { PlayPoint } from "./player";
 import type { DocFormatId } from "./formats";
 import { confirmDiscardEdits, type FormatOption, type FormatSource, type FormatSwitch } from "./formatswitch";
 import { reprojectRecognized, type Reprojected } from "../omr/reproject";
+import type { ProjectKind, ProjectSnapshot } from "./omrproject";
 
 /** 是否 PDF 字节（mime 或 `%PDF-` 魔数）。与 `omr/decode.ts` 里那份同判据。 */
 function isPdfBytes(bytes: Uint8Array, mime?: string): boolean {
@@ -52,6 +53,8 @@ export interface OmrHost {
   setStatus(text: string): void;
   /** 当前状态栏文本 */
   readonly status: string;
+  /** 当前文档的源格式（识别项目存它） */
+  readonly docFormat: DocFormatId;
   saveSettings(): void;
   stopPlayback(): void;
   /** 点中识别框：停止中记为起播点，播放中跳过去。 */
@@ -250,6 +253,7 @@ export class OmrController implements FormatSource {
     this.clear();
     this.lastInputs = [...files];
     this.staffResult = res;
+    this.sessionKind = "staff";
     this.host.adoptStaffXml(res.xml);
     this.staffEmitted = this.host.getText();
     this.host.setContextControl(this.kindField(), true);
@@ -262,6 +266,76 @@ export class OmrController implements FormatSource {
         (s.bars ? `，满拍小节 ${Math.round((s.full / s.bars) * 100)}%` : "") + "。谱面上可直接校对修改",
     );
     return true;
+  }
+
+  /** 这次识别走的哪条路（识别项目按它存与还原）；没有识别会话为 null */
+  sessionKind: ProjectKind | null = null;
+
+  /** 识别会话的快照（存 `.jpomr` 与自动保存用）；没有会话为 null。 */
+  snapshot(): ProjectSnapshot | null {
+    if (!this.sessionKind || !this.lastInputs.length) return null;
+    const docFormat = this.host.docFormat;
+    const base: ProjectSnapshot = {
+      kind: this.sessionKind, docFormat, text: this.host.getText(),
+      emitted: this.sessionKind === "jianpu" ? this.emitted : this.staffEmitted,
+      omrFormat: this.format, recogKind: this.kind, recogView: this.view,
+      sources: this.lastInputs.map((f, k) => ({ name: f.name ?? `source-${k + 1}`, ...(f.mime ? { mime: f.mime } : {}), bytes: f.bytes })),
+    };
+    if (this.sessionKind === "jianpu" && this.score && this.bin) base.jianpu = { score: this.score, bin: this.bin, meta: this.meta };
+    return base;
+  }
+
+  /**
+   * 还原一个识别会话（打开 `.jpomr`、恢复自动保存）：**不重跑识别**。简谱：识别结果、二值图、点选映射照存的还原，
+   * 原文换成存的那份（手改过的）。五线谱：原文落地同打开 `.musicxml`，对照数据等第一次进原图对照时从原图补（`ensureStaffResult`）。
+   */
+  async restore(s: ProjectSnapshot): Promise<void> {
+    this.clear();
+    if (s.omrFormat && isOmrFormat(s.omrFormat)) this.format = s.omrFormat;
+    if (s.recogKind === "auto" || s.recogKind === "jianpu" || s.recogKind === "staff") this.kind = s.recogKind;
+    if (s.recogView === "inplace" || s.recogView === "floating" || s.recogView === "original") this.setRecogView(s.recogView);
+    this.syncKindSelects();
+    this.lastInputs = s.sources.map((x) => ({ bytes: x.bytes, ...(x.mime ? { mime: x.mime } : {}), name: x.name }));
+    if (s.kind === "jianpu" && s.jianpu) {
+      this.emit(s.jianpu.score, s.jianpu.bin);
+      if (this.host.getText() !== s.text) this.host.setText(s.text);
+      this.meta = s.jianpu.meta;
+      this.idMap = null;
+      this.emitted = s.emitted;
+      this.sessionKind = "jianpu";
+      this.host.setContextControl(this.kindField(), true);
+      await this.toggle(); // 进原图对照，同刚识别完
+      return;
+    }
+    // 五线谱会话只出 MusicXML；万一存的是别的格式（旧包、手工拼的包），照原格式落地，对照数据仍按原图补
+    if (s.docFormat === "musicxml") this.host.adoptStaffXml(s.text);
+    else this.host.adoptText(s.docFormat, s.text, null);
+    this.staffEmitted = s.emitted;
+    this.sessionKind = s.kind;
+    this.host.setContextControl(this.kindField(), true);
+    if (s.kind === "staff" && this.lastInputs.length) {
+      if (this.btnEl) this.btnEl.textContent = "原图对照";
+      this.host.setContextControl(this.btnEl, true);
+    }
+  }
+
+  /** 五线谱项目重开后第一次进对照：从原图重跑识别补回逐页位图与音符坐标（不动原文）。 */
+  private async ensureStaffResult(): Promise<boolean> {
+    if (this.staffResult || this.sessionKind !== "staff" || !this.lastInputs.length) return this.staffResult !== null;
+    const rb = await import("../rasteromr/browser");
+    this.progress("正在从原图载入对照数据…");
+    try {
+      const pdfs: Uint8Array[] = [];
+      for (const f of this.lastInputs) pdfs.push(await rb.asRasterPdf(f.bytes, f.mime));
+      this.staffResult = await rb.recognizeRasterPdfs(pdfs, {
+        onPage: (done, total) => this.progress(`正在从原图载入对照数据… ${done}/${total} 页`),
+      });
+      this.host.setStatus("");
+      return true;
+    } catch (e) {
+      this.host.setStatus("载入对照数据失败：" + (e instanceof Error ? e.message : String(e)));
+      return false;
+    }
   }
 
   /** 位图五线谱的识别结果（各页位图与音符坐标），对照视图用；简谱识别或清掉后为 null */
@@ -442,7 +516,10 @@ export class OmrController implements FormatSource {
       return false;
     }
     // 五线谱只出 MusicXML，且只进混排视图（理由见 OmrHost.adoptStaffXml）。
+    const inputs = this.lastInputs;
     this.clear();
+    this.lastInputs = inputs;
+    this.sessionKind = "vector";
     this.host.setContextControl(this.kindField(), true);
     const jpOk = this.host.adoptStaffXml(res.musicxml);
     this.host.setStatus(
@@ -472,6 +549,7 @@ export class OmrController implements FormatSource {
       this.host.adoptText(out.kind, out.text, null);
     }
     this.beatMarks = recognizedBeatIssues(rec);
+    this.sessionKind = "jianpu";
     this.meta = out.meta; // 点选映射按写出文本的源区间生成（`omr/meta.ts`）；.jpwabc / ABC 没有
     this.bin = bin;
     this.score = rec;
@@ -486,6 +564,7 @@ export class OmrController implements FormatSource {
   // ---------------- 核对视图 ----------------
   /** 在「简谱模式」与「识别模式」（二值图+半透明识别叠加）之间切换。需先有 OMR 识别结果。 */
   async toggle(): Promise<void> {
+    if (this.host.mode !== "recognize" && !this.staffResult && this.sessionKind === "staff") await this.ensureStaffResult();
     if (!this.hasResult) return;
     this.host.stopPlayback();
     if (this.host.mode === "recognize") {
@@ -979,6 +1058,7 @@ export class OmrController implements FormatSource {
     this.host.setContextControl(this.followBtn, false);
     this.host.setContextControl(this.kindField(), false);
     this.staffResult = null;
+    this.sessionKind = null;
     this.followSelection(null);
     if (this.host.mode === "recognize") {
       this.host.setRecognizeMode(false);

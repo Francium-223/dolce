@@ -299,11 +299,16 @@ const isCurrentFormat = (app: App, id: ConvertTarget): boolean => {
  *  - `.musicxml`：没有代码区，另存成文本格式就是「转成它再编辑」——转过去（`convertToTextDoc`）再落盘，
  *    之后编辑的就是新存的那份。 */
 function saveAsItems(app: App): ExportItem[] {
-  const items: ExportItem[] = [{
+  const items: ExportItem[] = [];
+  // 有识别会话：识别项目排第一（原图、识别结果与在改的谱一起，重开接着核对）
+  if (app.omr.snapshot()) {
+    items.push({ label: "识别项目（.jpomr）", available: () => true, run: async (a) => void (await a.saveProject(true)) });
+  }
+  items.push({
     label: `${app.docFormat === "musicxml" ? "MusicXML" : app.adapter.defaultExt.replace(/^\./, "").toUpperCase()}（当前格式）`,
     available: () => true,
     run: (a) => a.saveFileAs(),
-  }];
+  });
   for (const t of CONVERT_TARGETS) {
     if (isCurrentFormat(app, t.id)) continue;
     items.push({

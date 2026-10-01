@@ -7,8 +7,10 @@ export const PU_EXT = ["pu", "fq", "jps", "txt"] as const;
 /** 123 格式（简谱主格式，ABC 方言）。UTF-8，一首一文件。 */
 export const J123_EXT = ["123"] as const;
 /** 乐谱文档（编辑器直接打开的）。 */
+/** 识别项目（原图 + 识别结果 + 在改的原文，`editor/omrproject.ts`）。 */
+export const PROJECT_EXT = ["jpomr"] as const;
 export const DOC_EXT = [
-  "jpwabc", ...J123_EXT, ...PU_EXT, "xml", "musicxml", "abc",
+  "jpwabc", ...J123_EXT, ...PU_EXT, "xml", "musicxml", "abc", ...PROJECT_EXT,
 ] as const;
 // **以前这里有个 `CONVERTED_EXT`**：`.xml`/`.musicxml`/`.abc` 导入后要强制另存为别的格式，
 // 所以不记文件路径。现在五种源格式都原生打开、存回原格式，这个概念没有了。
@@ -22,6 +24,7 @@ export const isPuFile = (name: string): boolean => re(PU_EXT).test(name);
 export const is123File = (name: string): boolean => re(J123_EXT).test(name);
 export const isDocFile = (name: string): boolean => re(DOC_EXT).test(name);
 export const isImageFile = (name: string): boolean => re(IMAGE_EXT).test(name);
+export const isProjectFile = (name: string): boolean => re(PROJECT_EXT).test(name);
 
 /** `<input type=file accept>` 用的串。 */
 export const acceptAttr = (exts: readonly string[]): string => exts.map((e) => `.${e}`).join(",");

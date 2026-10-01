@@ -36,7 +36,8 @@ import type { JpwMeta, JpwRange } from "../omr/types";
 import { loadConverter, type HanDirection } from "../common/hanconv";
 import { convertScoreDoc, convertSourceText, detectHanDirection } from "../model/hanconv";
 import { isTauriRuntime, saveBytes } from "./fileio";
-import { DOC_EXT, acceptAttr, is123File, isPuFile } from "../common/filetypes";
+import { DOC_EXT, acceptAttr, is123File, isProjectFile, isPuFile } from "../common/filetypes";
+import { clearDraft, loadDraft, saveDraft } from "./autosave";
 import { formatOf, type DocFormatId, type FormatAdapter, type FormatHost } from "./formats";
 import { SyncIndex, type SyncEntry } from "./sync";
 import { VisualEditController, type VisualHost } from "./visual/controller";
@@ -45,6 +46,7 @@ import { hitThroughOverlay } from "./visual/overlay";
 import type { EditDialect } from "./visual/dialect";
 import { describeLosses, planSave } from "../model/capability";
 import { withMelodyFirst } from "../model/parts";
+import { packProject, PROJECT_EXT, unpackProject } from "./omrproject";
 import { dropEmbeddedLayout } from "../model/xmlsurface";
 import { CONVERT_TARGETS, isConvertTarget, targetSpec, type ConvertTarget } from "../model/convert";
 import { showChoiceDialog, showConfirmDialog } from "./dialogs";
@@ -700,6 +702,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
         // 识别映射随用户编辑迁移偏移，保持点选仍落在正确 token。
         this.omr.remapMeta((m) => mapMeta(m, u.changes));
         this.scheduleReload();
+        this._scheduleDraft();
       }
       // 光标/选区一动就同步到谱面。文档改了不在这里同步——索引还是旧偏移，
       // 等 reload 重建完索引再由 _buildSync 刷一次。
@@ -2007,11 +2010,17 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
   // ---------------- file I/O ----------------
   /** 按扩展名落地：.abc / .123 / 文本谱 / .musicxml（无代码区）各进原生格式；其余按 UTF-16 .jpwabc 读。 */
   importBytes(bytes: Uint8Array, name: string): void {
+    // 识别项目：还原整个识别会话（原图、识别结果、在改的原文），不重跑识别
+    if (isProjectFile(name)) {
+      void this.openProject(bytes, name);
+      return;
+    }
     // 任何新导入都使上一次的识别叠加产物失效（识别结果由 OmrController 在本调用之后重设）。
     this.omr.clear();
     this._documentLoaded();
     this.formats.use(null);
     this._importBytes(bytes, name);
+    this.markClean();
     // 原文是真身：代码区标题栏的格式下拉可以换成别的格式看、切回来逐字还原（`FileFormatSource`）
     const origin = this._originFormat();
     if (origin) {
@@ -2783,9 +2792,15 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
   }
 
   async saveFile(): Promise<void> {
+    // 有识别会话：存成识别项目（原图、识别结果、在改的原文一起），重开接着核对；只要文本用「另存为」
+    if (this.omr.snapshot()) {
+      await this.saveProject(false);
+      return;
+    }
     if (this.filePath && isTauriRuntime()) {
       // 存回原文件 = 原格式进原格式出，不会丢东西，不必问
       await this.writeTo(this.filePath);
+      this.markClean();
       return;
     }
     await this.saveFileAs();
@@ -2794,6 +2809,8 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
   async saveFileAs(): Promise<void> {
     // 落盘细节（对话框 / a[download]）统一在 fileio.saveBytes，这里只管记住路径。
     const dest = await saveBytes(this.encodeForSave(), this.defaultSaveName());
+    // 浏览器版下载不回路径，也算存过了
+    this.markClean();
     if (!dest) return;
     this.filePath = dest;
     this.rememberLastFile(dest);
@@ -2854,6 +2871,95 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
       console.error("转换失败", e);
       return null;
     }
+  }
+
+  // ---------------- 自动保存与崩溃恢复（`autosave.ts`） ----------------
+  /** 与盘上（或刚打开时）一致的那份原文；null = 还没有这样一份（刚识别完、恢复的草稿） */
+  private _cleanText: string | null = null;
+  private _draftTimer: ReturnType<typeof setTimeout> | undefined;
+
+  /** 现在的内容与盘上一致（刚存盘、刚打开）：草稿作废。 */
+  markClean(): void {
+    this._cleanText = this.getText();
+    clearTimeout(this._draftTimer);
+    void clearDraft();
+  }
+
+  /** 改过之后 3 秒存一份草稿；内容与盘上一致就删掉草稿。识别会话连原图一起打包（恢复后不必重新识别）。 */
+  private _scheduleDraft(): void {
+    clearTimeout(this._draftTimer);
+    this._draftTimer = setTimeout(() => {
+      const text = this.getText();
+      if (text === this._cleanText) {
+        void clearDraft();
+        return;
+      }
+      const snap = this.omr.snapshot();
+      void saveDraft({
+        time: Date.now(), filePath: this.filePath, docFormat: this.docFormat, text,
+        ...(snap ? { project: packProject(snap, __APP_VERSION__) } : {}),
+      });
+    }, 3000);
+  }
+
+  /** 启动时：有上次没存的草稿（且与现在打开的不同）就问要不要恢复。恢复了返回 true。 */
+  async offerDraftRestore(): Promise<boolean> {
+    const d = await loadDraft();
+    if (!d || d.text === this.getText()) return false;
+    const when = new Date(d.time).toLocaleString();
+    const what = d.project ? "识别会话（连原图）" : d.filePath ? d.filePath.replace(/^.*[\\/]/, "") : "未命名的谱";
+    const ok = await showConfirmDialog("恢复未保存的内容", `发现上次没有保存的内容：${what}（${when}）。要恢复吗？不恢复会把它丢掉。`);
+    if (!ok) {
+      void clearDraft();
+      return false;
+    }
+    if (d.project) await this.openProject(d.project, d.filePath ?? `恢复.${PROJECT_EXT}`);
+    else this.adoptText(d.docFormat as DocFormatId, d.text, d.filePath);
+    this._cleanText = null; // 恢复回来的还没存
+    this.setStatus("已恢复上次未保存的内容（还没存盘）");
+    return true;
+  }
+
+  // ---------------- 识别项目 `.jpomr`（`omrproject.ts`） ----------------
+  /** 存识别项目。桌面版已有 `.jpomr` 路径且不是「另存」就直接覆盖，否则问路径（浏览器版下载）。 */
+  async saveProject(asNew: boolean): Promise<boolean> {
+    const snap = this.omr.snapshot();
+    if (!snap) {
+      this.setStatus("没有识别会话可存（识别项目要有原图）");
+      return false;
+    }
+    const bytes = packProject(snap, __APP_VERSION__);
+    if (!asNew && this.filePath && isProjectFile(this.filePath) && isTauriRuntime()) {
+      const { writeFile } = await import("@tauri-apps/plugin-fs");
+      await writeFile(this.filePath, bytes);
+    } else {
+      const dest = await saveBytes(bytes, `${this.documentTitle() || "识别项目"}.${PROJECT_EXT}`, "application/zip");
+      if (dest) {
+        this.filePath = dest;
+        this.rememberLastFile(dest);
+      }
+    }
+    this.markClean();
+    this.setStatus("已存为识别项目（原图、识别结果与在改的谱一起）");
+    return true;
+  }
+
+  /** 打开识别项目：还原识别会话（不重跑识别）。 */
+  async openProject(bytes: Uint8Array, name: string): Promise<boolean> {
+    let snap;
+    try {
+      snap = unpackProject(bytes);
+    } catch (e) {
+      this.setStatus("打不开识别项目：" + (e instanceof Error ? e.message : String(e)));
+      return false;
+    }
+    this.formats.use(null);
+    this._documentLoaded();
+    await this.omr.restore(snap);
+    this.filePath = isTauriRuntime() && isProjectFile(name) ? name : null;
+    this.markClean();
+    this.setStatus(`已打开识别项目（${snap.kind === "jianpu" ? "简谱" : "五线谱"}，${snap.sources.length} 份原图）`);
+    return true;
   }
 
   /** 存盘用的文件名：扩展名由适配器给。 */

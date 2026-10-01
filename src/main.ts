@@ -79,7 +79,7 @@ async function boot() {
     paletteBtn: document.getElementById("btn-palette") as HTMLButtonElement | null,
   });
   app.mountEditor(codePane, SAMPLE);
-  const win = window as unknown as { __app: App; __paint: ReturnType<typeof paintProbe>; __mixedModel: unknown; __omr: unknown; __raster: unknown; __xmlout: unknown; __pu: unknown; __book: unknown;
+  const win = window as unknown as { __app: App; __paint: ReturnType<typeof paintProbe>; __mixedModel: unknown; __omr: unknown; __raster: unknown; __project: unknown; __xmlout: unknown; __pu: unknown; __book: unknown;
     __j123: unknown; __pptx: unknown; __songbook: unknown };
   win.__app = app;
   // 统一排版器暴露（`new __paint.ScorePainter(__paint.resources)` + 请求），供混排 / 原样文档的无头回归脚本用。
@@ -91,6 +91,8 @@ async function boot() {
   win.__omr = import("./omr");
   // 位图五线谱的浏览器侧入口（在线 OCR）：回归脚本 `staff-measure-all.mjs --live` 拿它与离线缓存那条路比读数
   win.__raster = import("./rasteromr/browser");
+  // 识别项目打包 / 自动保存草稿：`omr-project-check.mjs` 拿字节做存—开往返
+  win.__project = Promise.all([import("./editor/omrproject"), import("./editor/autosave")]).then(([p, a]) => ({ ...p, ...a }));
   // 文本谱（番茄 / 有谱）解析与排版暴露，供 pu-*.mjs 回归。
   win.__pu = import("./pu");
   // PPTX 导出（序列化器 + 展开档另排一遍那个 painter）暴露，供 scripts/pptx-export.mjs 批量转出用。
@@ -148,6 +150,7 @@ async function boot() {
       changes: { from: 0, to: app.view.state.doc.length, insert: SAMPLE },
     });
     app.filePath = null;
+    app.markClean(); // 示例谱不算没存的内容
     revealWorkspace();
   };
   const setRecognitionBusy = (busy: boolean) => { recognitionProgress.hidden = !busy; };
@@ -285,6 +288,8 @@ async function boot() {
 
   // 自动加载上次打开的文件（仅 Tauri；失败则保持示例文本）
   if (await app.tryRestoreLastFile()) revealWorkspace();
+  // 上次没存的内容（自动保存的草稿）：问要不要恢复
+  if (await app.offerDraftRestore()) revealWorkspace();
 
   // 静默检查新版本（仅桌面版，自身还会判开关与 24h 节流）。延后是为了不和
   // 启动页、OMR 模型加载抢资源；查不到就什么都不做。

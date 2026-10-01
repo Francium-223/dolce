@@ -90,6 +90,11 @@ The interface is in Chinese.
 - **Save** writes back to the original format.
 - **Save As** converts between 123, JPWABC, ABC and the plain-text formats. Anything the target format can't hold
   is listed before you confirm.
+- A recognized score is saved as a **recognition project** (`.jpomr`): the source images, the recognition result
+  and the score being edited, all in one file. Reopen it to carry on proofreading against the source image without
+  recognizing again.
+- **Autosave.** Unsaved changes are kept as a local draft after a few seconds; after an unexpected close or reload
+  you are offered to restore it.
 - **Export** depends on the view:
   - Jianpu views: **vector PPTX**, **MIDI** and **MusicXML**.
   - Staff and mixed views: **PNG**, **PDF**, **MIDI** and **MusicXML**.
@@ -142,7 +147,8 @@ In the lyrics, CJK characters take one note each and need no spaces. Latin words
 | Plain-text jianpu | `.pu` `.fq` `.jps` `.txt` | ✅ | ✅ | ✅ | Fanqie and Shigeben dialects, detected automatically |
 | ABC | `.abc` | ✅ | ✅ | ✅ | Native parser: voices, repeats, endings, chords, ornaments… |
 | MusicXML | `.xml` `.musicxml` | ✅ | ✅ (directly on the score) | ✅ | Notes, measures, lyrics and titles can be edited on the score in every view; a single-voice score can also be converted to 123 etc. for text editing |
-| Image / PDF | `.png` `.jpg` `.webp` `.pdf` | OMR | — | — | Jianpu images and scanned PDFs; staff PDFs with a text layer |
+| Image / PDF | `.png` `.jpg` `.webp` `.pdf` | OMR | — | — | Jianpu images and scanned PDFs; staff PDFs, scanned or photographed staff notation |
+| Recognition project | `.jpomr` | ✅ | ✅ | ✅ | Source images + recognition result + the score being edited; reopens without recognizing again |
 
 ## Install
 

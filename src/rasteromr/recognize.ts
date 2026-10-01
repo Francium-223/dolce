@@ -1958,6 +1958,16 @@ export async function recognizeRasterPage(
     }
     return b.x - right < 0 ? Infinity : b.x - right;
   };
+  // 让位到谱表外的休止只在**两行的大谱表**里收：合唱谱一个声部一行，休止不出谱表，谱表外那一带是歌词与表情记号
+  //（不分的话合唱谱扫描档音符 80.59 → 80.42、歌词 65.81 → 65.46）。系统按左端的墨分（与建页时同一个函数）。
+  const sysBoxes = groupByLeftInk(raster.bin, groups.map((g) => ({ top: g.lines[0].y, bottom: g.lines[4].y, left: Math.max(...g.lines.map((l) => l.left)) })), unit);
+  const inGrandStaff = (b: Rect) => {
+    const cy = b.y + b.h / 2;
+    const g = groups.slice().sort((p, q) => Math.min(Math.abs(cy - p.lines[0].y), Math.abs(cy - p.lines[4].y)) - Math.min(Math.abs(cy - q.lines[0].y), Math.abs(cy - q.lines[4].y)))[0];
+    if (!g) return false;
+    const box = sysBoxes.find((q) => g.lines[0].y < q.y + q.h && g.lines[4].y > q.y);
+    return !!box && groups.filter((o) => o.lines[0].y < box.y + box.h && o.lines[4].y > box.y).length === 2;
+  };
   for (const c of blobs) {
     if (claimed.has(c.id) || dictClaimed.has(c.id) || merged.has(c.id)) continue;
     const b = c.bbox;
@@ -1966,7 +1976,29 @@ export async function recognizeRasterPage(
     if (w < QREST_W[0] || w > QREST_W[1] || h < QREST_H[0] || h > QREST_H[1]) continue;
     const fill = c.area / Math.max(1, b.w * b.h);
     if (fill < QREST_FILL[0] || fill > QREST_FILL[1]) continue;
-    if (!midOfStaff(b, lines, unit)) continue;
+    // 位置：谱表中线上下，或**让位到谱表外**（闭合谱一行两个声部，女低的休止压到第一线下方、男高的抬到第五线上方，
+    // 新编赞美诗 215 奇妙能力歌的四分休止心在第一线下 1.7 格）——头心离外线 `QREST_OFF` 格以内都收
+    const mid = midOfStaff(b, lines, unit);
+    if (!mid && !(offStaffRest(b, lines, unit) && inGrandStaff(b))) continue;
+    // 谱表外的：右边 2.4 格内挨着一个符头（头心落在这一块的高度里，上下各容半格）的是那个音的**升降号**，不是休止
+    //（归回父家歌下加一线 C♯4 的升号，尺寸正落在四分休止这一档，`sharpCrossbars` 在淡印上验不出横杠）
+    // 谱表外的：行首「谱号 + 调号 + 拍号」那一段不收——下面那两道行首闸按「块心在谱表里」找行，谱表外的块找不到行就放过去了
+    //（今要主自己歌调号头一个升号探出第五线，每行行首多一个四分休止）
+    if (!mid) {
+      const cy = b.y + b.h / 2;
+      const g = groups.slice().sort((p, q) => Math.min(Math.abs(cy - p.lines[0].y), Math.abs(cy - p.lines[4].y)) - Math.min(Math.abs(cy - q.lines[0].y), Math.abs(cy - q.lines[4].y)))[0];
+      if (g && b.x - Math.max(...g.lines.map((l) => l.left)) < unit.space * (STAFF_START + 4)) continue;
+    }
+    if (
+      !mid &&
+      syms.some((s0) => {
+        if (!s0.code.startsWith("notehead")) return false;
+        const dx = s0.box.x - (b.x + b.w);
+        const hy = s0.box.y + s0.box.h / 2;
+        return dx >= -unit.space * 0.3 && dx <= unit.space * 2.4 && hy >= b.y - unit.space * 0.5 && hy <= b.y + b.h + unit.space * 0.5;
+      })
+    )
+      continue;
     // **行首的谱号 + 调号那一段里没有四分休止。**
     //
     // 降号是「一根竖笔 + 一个小肚子」，在这套底本上与四分休止太像；
@@ -3477,6 +3509,22 @@ export async function recognizeRasterPage(
     }
   }
   const notes = buildNotes(pg, ctx, beams, stems, hollowish);
+  // 谱表外的四分休止再验一遍「是不是升降号」：收休止那时谱表外带加线的头还没认出来，贴着头的升降号拦不住
+  //（主爱说不尽歌低音谱表上方 C4 前的还原号）。右边 2.4 格内有个头、头心落在这一块的高度里（上下各容半格）的，删掉。
+  for (let i = notes.length - 1; i >= 0; i--) {
+    const r = notes[i];
+    if (!r.rest || r.sym.code !== "restQuarter") continue;
+    const rb = r.sym.box;
+    const cy = (rb.top + rb.bottom) / 2;
+    if (cy >= r.staff.box.top && cy <= r.staff.box.bottom) continue;
+    const beside = notes.some((n) => {
+      if (n.rest) return false;
+      const dx = n.sym.box.left - rb.right;
+      const hy = (n.sym.box.top + n.sym.box.bottom) / 2;
+      return dx >= -unit.space * 0.3 && dx <= unit.space * 2.4 && hy >= rb.top - unit.space * 0.5 && hy <= rb.bottom + unit.space * 0.5;
+    });
+    if (beside) notes.splice(i, 1);
+  }
   attachAccidentalsByPitch(pg, ctx, notes);
   splitUnisons(notes, stems, beams, raster.bin, unit.space);
   fixDottedPairs(notes, unit.space);
@@ -5425,6 +5473,18 @@ function snapHeadsToStems(syms: RasterSym[], segs: LineSeg[], unit: RasterUnit):
     }
   }
   return segs;
+}
+
+/** 让位到谱表外的休止：中心在第五线上方或第一线下方 `QREST_OFF` 格以内。 */
+const QREST_OFF = 2.2;
+function offStaffRest(box: { y: number; h: number }, lines: { y: number }[], unit: RasterUnit): boolean {
+  const cy = box.y + box.h / 2;
+  const ys = [...lines].map((l) => l.y).sort((a, b) => a - b);
+  for (let i = 0; i + 4 < ys.length; i += 5) {
+    if (cy < ys[i] && ys[i] - cy <= unit.space * QREST_OFF) return true;
+    if (cy > ys[i + 4] && cy - ys[i + 4] <= unit.space * QREST_OFF) return true;
+  }
+  return false;
 }
 
 function midOfStaff(box: { y: number; h: number }, lines: { y: number }[], unit: RasterUnit): boolean {

@@ -1105,14 +1105,37 @@ export function makeBars(pg: SPage): void {
     //   行末：终止线/复纵线到谱线右端还剩一小截（实测 p101 第二行剩 13pt）。
     // 休止也带 `Note` 标记，所以「一个都没有」是真的空——整小节休止不会被误删。
     // 只动头尾两条，中间的空条留着（那多半是真读漏了，删掉反而看不见）。
-    while (stf.bars.length > 1 && !stf.bars[0].notes.length) {
+    for (const b of stf.bars) sortByLeft(b.notes);
+  }
+  // **多行系统里头尾的空条要各行一起删**：只有一行空（那一行弱起的音、末小节的音没认出来），
+  // 单删它这一行就比别的行少一个小节，整行与别的行错开（新编赞美诗 104 复活良辰歌第二、三系统）。
+  // 各行的小节线对得上（头一条的右界 / 末一条的左界相差不过一格）才按系统判；对不上的照旧各删各的。
+  for (const g of systemGroups(pg)) {
+    const sp = g[0].stepDistance() * 2 || pg.space;
+    const dropHead = (stf: Staff) => {
       const gone = stf.bars.shift()!;
       // 删掉的那一条右端若是粗笔（`|:` 的 heavy-light），把样式挪到新的首小节左端。
       if (gone.rightStyle && !stf.bars[0].leftStyle) {
         stf.bars[0].leftStyle = gone.rightStyle === "light-heavy" ? "heavy-light" : gone.rightStyle;
       }
+    };
+    for (;;) {
+      const emptyHead = (stf: Staff) => stf.bars.length > 1 && !stf.bars[0].notes.length;
+      const cand = g.filter(emptyHead);
+      if (!cand.length) break;
+      const aligned = g.every((stf) => stf.bars.length > 1 && Math.abs(stf.bars[0].right - g[0].bars[0].right) <= sp);
+      if (aligned && cand.length < g.length) break; // 别的行这一小节有音：留着
+      for (const stf of cand) dropHead(stf);
+      if (!aligned) break;
     }
-    while (stf.bars.length > 1 && !stf.bars[stf.bars.length - 1].notes.length) stf.bars.pop();
-    for (const b of stf.bars) sortByLeft(b.notes);
+    for (;;) {
+      const emptyTail = (stf: Staff) => stf.bars.length > 1 && !stf.bars[stf.bars.length - 1].notes.length;
+      const cand = g.filter(emptyTail);
+      if (!cand.length) break;
+      const aligned = g.every((stf) => stf.bars.length > 1 && Math.abs(stf.bars[stf.bars.length - 1].left - g[0].bars[g[0].bars.length - 1].left) <= sp);
+      if (aligned && cand.length < g.length) break;
+      for (const stf of cand) stf.bars.pop();
+      if (!aligned) break;
+    }
   }
 }

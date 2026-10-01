@@ -11,13 +11,13 @@
 import type { Binary } from "../omr/types";
 import type { Box } from "../staffomr/model";
 import type { Component, Rect } from "../omr/types";
-import { findBarlines, findNoteheads, findStaves, findStems, findTails, isLeadNoteBarline, makeBars, makeSystems, unknownObjs } from "../staffomr/page";
+import { findBarlines, findNoteheads, findStaves, findStems, findTails, isLeadNoteBarline, makeBars, makeSystems, systemGroups, tagSystemBarlines, unknownObjs } from "../staffomr/page";
 import { accidentalAlter, isAccidental, isClef, timeSigDigit, type SmuflName } from "../staffomr/glyphs";
 import { buildNotes, calcAlters, checkBars, findClefKeyTime, keyFifths, lastTimeSignature, type BeamShape, type StaffContext, type StaffNote, type StemInfo, type BarCheck } from "../staffomr/notedata";
 import { attachDynamicTexts, attachNotations, attachWedges, findNotations, findTuplets } from "../staffomr/notations";
 import type { Seg, SPage, Staff, Sym, Tag } from "../staffomr/model";
 import { overlapY } from "../staffomr/model";
-import { buildRasterPage, makeSymObj, makeTextObj, type RasterSym } from "./adapt";
+import { buildRasterPage, makeSymObj, makeTextObj, pushSeg, type RasterSym } from "./adapt";
 import { binSig, blobImage, extendVSegs, findBlobs, findBraces, findPrimitives, groupByLeftInk, ledgerGrid, joinVSegs, removeStaffLines, verticalStrokes, type BeamQuad, type LineSeg, type RasterPrims } from "./prims";
 import { archCavity, stemWalledCavity, findRasterHeads, hollowHeadsByPitch, headsOnBareStems, probeBareStems, hollowHeadsFromCavities, hollowHeadsAlongStems, hollowHeadsFromHoles, hollowHeadsOnLedgers, hollowSlit, inkColumn, judgeHeadBox, mergeHoles, type PitchStep } from "./notehead";
 import { bootstrapClefs, matchTemplate, RasterGlyphLookup, type BootStaff } from "./rasterglyphs";
@@ -599,6 +599,8 @@ const VSEG_JOIN_DX = 2;
 const VSEG_JOIN_GAP = 1.2;
 /** 按竖笔数升号（`sharpsByStrokes`）的起点：谱号左缘往右多少格。 */
 const KEY_FROM = 2.4;
+/** 降号竖笔顶端到肚子中心的距离（格）。新编赞美诗 11 各行量得 1.5~1.6。 */
+const FLAT_STEM = 1.55;
 /** 粘连升号串（见谱号兜底那段）：盒高上限、竖笔高度范围（格）。 */
 const KEY_RUN_MAX_H = 5.2;
 const KEY_STROKE_H = [2.5, 3.4] as const;
@@ -3252,6 +3254,8 @@ export async function recognizeRasterPage(
   }
 
   findNoteheads(pg);
+  inkSystemBarlines(pg, raster.bin, unit.space);
+  tagSystemBarlines(pg);
   findStems(pg);
   tagLooseStems(pg);
   // 符尾**按位置自举**，不查字典（见 `bootstrapFlags`）
@@ -3267,6 +3271,7 @@ export async function recognizeRasterPage(
   demoteMidKeys(pg, ctx);
   extendKeyChains(pg, ctx);
   dropHeadsInKey(pg, ctx);
+  extendKeyByFlatStrokes(pg, ctx, raster.bin, unit);
   shareKeySignature(ctx);
   extendKeyByCarry(ctx, opts.carryKey);
   keyFromChords(pg, ctx, harmonies.map((h) => h.text), unit);
@@ -4347,6 +4352,202 @@ function sharpsByStrokes(bin: Binary, lineYs: number[], clef: Rect, sp: number):
     const pad = Math.round(sp * 0.2);
     out.push({ x: a.x0 - pad, y: t, w: b.x1 - a.x0 + 1 + pad * 2, h: Math.max(a.bottom, b.bottom) - t + 1 });
     lastX = b.x1;
+  }
+  return out;
+}
+
+/**
+ * **多行系统里一行有小节线、另一行同处没抽出竖段的，回原图上验墨补一根**（在 `tagSystemBarlines` 之前）。
+ *
+ * 粗一点、略斜的小节线过不了竖段抽取（新编赞美诗 12 颂主化功歌第一行高音谱表 x≈499：五像素宽、
+ * 自上而下往左漂两像素，一段都没抽出来），那一行就少一条小节线，与另一行错开。
+ * 以另一行「两端压在外线上的竖段」的 x 为准，在这一行左右 0.6 格内找一列：从第五线到第一线几乎不断墨
+ *（逐行可左右挪一列，总共漂不过 0.15 格）、是根细线、且上下都不伸出谱表（伸出去的是符干）。
+ * 作准的那一根自己也要过同一道验墨；各行都验到才补。
+ */
+function inkSystemBarlines(pg: SPage, bin: Binary, sp: number): void {
+  const tol = sp * 0.3;
+  const xTol = sp * 0.6;
+  const ink = (x: number, y: number) => x >= 0 && x < bin.w && y >= 0 && y < bin.h && bin.data[y * bin.w + x] === 1;
+  /** 这一行里含 x 的那段横向连续墨的宽度 */
+  const runW = (x: number, y: number) => {
+    let a = x;
+    let b = x;
+    while (ink(a - 1, y)) a--;
+    while (ink(b + 1, y)) b++;
+    return b - a + 1;
+  };
+  /**
+   * 从 (x0, y0) 往下走到 y1（逐行可左右挪一列，总共漂不过 0.15 格）。返回断墨的行数、最长一段断口、
+   * 横向墨宽过 0.4 格的行数（穿过符头、升号横杠、谱线的那些行）与走过的列范围。
+   */
+  const walk = (x0: number, y0: number, y1: number) => {
+    let x = x0;
+    let miss = 0;
+    let run = 0;
+    let worst = 0;
+    let wide = 0;
+    let lo = x0;
+    let hi = x0;
+    for (let y = y0; y <= y1; y++) {
+      if (ink(x, y)) run = 0;
+      else if (ink(x - 1, y)) (x--, (run = 0));
+      else if (ink(x + 1, y)) (x++, (run = 0));
+      else {
+        miss++;
+        worst = Math.max(worst, ++run);
+        continue;
+      }
+      if (Math.abs(x - x0) > sp * 0.15) return null;
+      if (runW(x, y) > sp * 0.4) wide++;
+      lo = Math.min(lo, x);
+      hi = Math.max(hi, x);
+    }
+    return { miss, worst, wide, lo, hi };
+  };
+  /** [y0, y1] 这几行里，[xa, xb] 左右各一列内有墨的行占比 */
+  const inked = (xa: number, xb: number, y0: number, y1: number) => {
+    let n = 0;
+    for (let y = y0; y <= y1; y++) {
+      let any = false;
+      for (let x = xa - 1; x <= xb + 1 && !any; x++) any = ink(x, y);
+      if (any) n++;
+    }
+    return n / Math.max(1, y1 - y0 + 1);
+  };
+  /** st 这一行在 cx 左右 range 像素内有没有一根小节线模样的竖墨；有则返回它的列 */
+  const barAt = (st: Staff, cx: number, range: number): number | null => {
+    const top = Math.round(st.box.top);
+    const bottom = Math.round(st.box.bottom);
+    const rows = bottom - top + 1;
+    for (let d = 0; d <= range; d++)
+      for (const x of d ? [Math.round(cx) - d, Math.round(cx) + d] : [Math.round(cx)]) {
+        const w = walk(x, top, bottom);
+        if (!w || w.miss > rows * 0.06 || w.worst > 2) continue;
+        // 细线：除去五条谱线那几行，横向墨宽的行不能多（贴着符头、穿过升号的竖笔过不了）
+        if (w.wide > rows * 0.3) continue;
+        // 上下各往外 0.4~0.9 格那一截不能有墨（符干、连谱号、系统线都会伸出去）
+        if (inked(w.lo, w.hi, Math.round(top - sp * 0.9), Math.round(top - sp * 0.4)) > 0.3) continue;
+        if (inked(w.lo, w.hi, Math.round(bottom + sp * 0.4), Math.round(bottom + sp * 0.9)) > 0.3) continue;
+        return x;
+      }
+    return null;
+  };
+  for (const g of systemGroups(pg)) {
+    if (g.length < 2) continue;
+    const lands = (y: number) => g.some((st) => Math.abs(y - st.box.top) <= tol || Math.abs(y - st.box.bottom) <= tol);
+    const barOn = (l: Seg, st: Staff) =>
+      l.isV && (!l.hasAnyTag() || l.hasTag("BarLine")) && l.top <= st.box.top + tol && l.bottom >= st.box.bottom - tol && lands(l.top) && lands(l.bottom) && Math.abs(st.box.left - l.cx) >= sp;
+    for (const a of g)
+      for (const l of pg.segs.filter((q) => barOn(q, a))) {
+        const lack = g.filter((b) => b !== a && !pg.segs.some((m) => barOn(m, b) && Math.abs(m.cx - l.cx) <= xTol));
+        if (!lack.length) continue;
+        // 作准的那一根自己也得过验墨：被谱线切出来、恰好两端压在外线上的一截符干不算
+        if (barAt(a, l.cx, 2) === null) continue;
+        const xs = lack.map((b) => barAt(b, l.cx, Math.round(xTol)));
+        if (xs.some((x) => x === null)) continue;
+        lack.forEach((b, i) => {
+          const x = xs[i]!;
+          pushSeg(pg, pg.objs.length + pg.segs.length + 1, { x0: x, y0: b.box.top, x1: x, y1: b.box.bottom, lw: l.lw, maxLw: l.lw });
+        });
+      }
+  }
+}
+
+/**
+ * **降号按竖笔补足个数**（`flatsByStrokes`）：三四个降号挤在一起、笔画又淡时，按块只认出一两个，
+ * 各行认出的个数还不一样，整首被当成移调（新编赞美诗 11 荣归天父歌四个降号各行读成 -1/-2/0）。
+ * 竖笔数的毛病是**数少**（淡笔断开就少一根），所以**只增不减**：取「至少两行数到这么多」的最大个数 k，
+ * 数到 k 以上、而按块认出的降号不足 k 的行补到 k；别的行由 `shareKeySignature` 接着补。
+ * 调号里已有升号的行不动。
+ */
+function extendKeyByFlatStrokes(pg: SPage, ctx: Map<Staff, StaffContext>, bin: Binary, unit: { space: number; height: number }): void {
+  const rows: { c: StaffContext; flats: Rect[] }[] = [];
+  for (const c of ctx.values()) {
+    if (!c.clef || c.staff.lineYs.length !== 5 || c.key.some((k) => k.code === "accidentalSharp")) continue;
+    const cb = c.clef.box;
+    const flats = flatsByStrokes(bin, c.staff.lineYs, { x: cb.left, y: cb.top, w: cb.right - cb.left, h: cb.bottom - cb.top }, c.clef.code === "fClef", unit.space);
+    if (flats.length) rows.push({ c, flats });
+  }
+  let k = 0;
+  for (let n = 7; n >= 1 && !k; n--) if (rows.filter((r) => r.flats.length >= n).length >= 2) k = n;
+  if (!k) return;
+  for (const { c, flats } of rows) {
+    if (flats.length < k || c.key.filter((q) => q.code === "accidentalFlat").length >= k) continue;
+    c.key = flats.slice(0, k).map((box, i) => {
+      const sym = makeSymObj(pg.objs.length + pg.segs.length + 1 + i, { box, code: "accidentalFlat" }, unit.height).sym;
+      sym.addTag("Key");
+      return sym;
+    });
+  }
+}
+
+/**
+ * **按竖笔数调号降号**（与 `sharpsByStrokes` 同一路）。降号是一根 1.5~3 格的竖笔、肚子在右下：
+ * 从谱号后起逐根取竖笔，要求
+ *   - 竖笔顶端的高低照调号的固定次序走（B E A D G C F：升 1.5 格、降 2 格交替），头一个落在 B 的位置上；
+ *   - 相邻两根隔 0.5~1.6 格（升号的两根竖笔隔不到 0.5 格、顶端齐平，过不了）；
+ *   - 竖笔下半截右侧的墨比左侧多（肚子；符头在朝上干的左下、朝下干的右上，拍号 4 的竖笔左边有墨）。
+ * 不合的那一根起就停。返回各降号的盒。
+ */
+function flatsByStrokes(bin: Binary, lineYs: number[], clef: Rect, bass: boolean, sp: number): Rect[] {
+  const top = lineYs[0];
+  const bottom = lineYs[lineYs.length - 1];
+  const x0 = Math.round(clef.x + Math.min(clef.w, sp * KEY_FROM));
+  const box: Rect = { x: x0, y: Math.max(0, Math.round(top - sp * 2)), w: Math.round(sp * 9), h: Math.round(bottom - top + sp * 3.5) };
+  if (box.x + box.w > bin.w || box.y + box.h > bin.h) return [];
+  // 降号的竖笔细、常略斜：逐列量最长竖墨会在换列处断成两截不够高。先把这一块左右各抹宽一像素再量
+  const smear: Binary = { w: box.w, h: box.h, data: new Uint8Array(box.w * box.h) };
+  for (let y = 0; y < box.h; y++)
+    for (let x = 0; x < box.w; x++) {
+      const row = (box.y + y) * bin.w + box.x + x;
+      if (bin.data[row] || (x > 0 && bin.data[row - 1]) || (x + 1 < box.w && bin.data[row + 1])) smear.data[y * box.w + x] = 1;
+    }
+  const strokes = verticalStrokes(smear, { x: 0, y: 0, w: box.w, h: box.h }, sp * 1.2, Math.max(2, Math.round(sp * 0.25)))
+    .map((k) => ({ ...k, x0: k.x0 + box.x, x1: k.x1 + box.x, top: k.top + box.y, bottom: k.bottom + box.y }))
+    .filter((k) => k.x1 - k.x0 + 1 <= sp * 0.5);
+  // 各降号**肚子中心**相对头一个（B）的高低（格，向上为负）
+  const STEP = [0, -1.5, 0.5, -1, 1, -0.5, 1.5];
+  // B 的肚子中心：高音谱表第三线，低音谱表第二线（自上而下第四条）
+  const bY = lineYs[bass ? 3 : 2];
+  const isLine = (y: number) => lineYs.some((l) => Math.abs(y - l) <= Math.max(1, sp * 0.12));
+  /** [x0, x1] × [y0, y1] 里的墨占比，不算谱线那几行 */
+  const density = (xa: number, xb: number, ya: number, yb: number) => {
+    let ink = 0;
+    let tot = 0;
+    for (let y = Math.round(ya); y <= Math.round(yb); y++) {
+      if (y < 0 || y >= bin.h || isLine(y)) continue;
+      for (let x = Math.round(xa); x <= Math.round(xb); x++) {
+        if (x < 0 || x >= bin.w) continue;
+        tot++;
+        if (bin.data[y * bin.w + x]) ink++;
+      }
+    }
+    return tot ? ink / tot : 0;
+  };
+  const out: Rect[] = [];
+  let lastX = x0;
+  for (const [i, k] of strokes.entries()) {
+    if (out.length >= 7 || k.h > sp * 3.2) break;
+    // 紧跟着一根差不多高的竖笔：那是升号的两根竖笔（赞美三一歌两个升号的头一根落在 B 的位置上，被数成一个降号）
+    const nx = strokes[i + 1];
+    if (nx && (nx.x0 - k.x1) / sp < 0.5 && nx.h >= sp * 1.8 && k.h >= sp * 1.8) break;
+    const gap = (k.x0 - lastX) / sp;
+    if (out.length ? gap > 1.6 : gap > 3.2) break;
+    // 紧挨着上一根的短笔是它肚子的右缘，跳过
+    if (out.length && gap < 0.5) continue;
+    // 按**顶端**对位：竖笔顶端在肚子中心上方 `FLAT_STEM` 格。底端不可靠——容了断口之后会顺着谱线、肚子的弧接下去
+    const cy = k.top + sp * FLAT_STEM;
+    const fits =
+      Math.abs((cy - bY) / sp - STEP[out.length]) <= 0.45 &&
+      density(k.x1 + 1, k.x1 + sp * 0.6, cy - sp * 0.5, cy + sp * 0.4) - density(k.x0 - sp * 0.6, k.x0 - 1, cy - sp * 0.5, cy + sp * 0.4) >= 0.15;
+    if (!fits) {
+      // 头一个之前的杂笔（谱号的边角）跳过；串起来之后不合就停
+      if (!out.length) continue;
+      break;
+    }
+    out.push({ x: k.x0 - 1, y: k.top, w: Math.round(sp * 0.8), h: Math.round(sp * (FLAT_STEM + 0.5)) });
+    lastX = k.x1;
   }
   return out;
 }

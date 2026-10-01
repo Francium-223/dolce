@@ -44,7 +44,7 @@ function fakePath(id: number, x: number, y: number, w: number, h: number, lw: nu
 }
 
 /** 一条线段 → 一个 `PObj` 加一个 `Seg`（一段一个对象，位图这边没有「一个对象里好几条线」的事）。 */
-function pushSeg(pg: SPage, id: number, s: LineSeg): Seg {
+export function pushSeg(pg: SPage, id: number, s: LineSeg): Seg {
   const left = Math.min(s.x0, s.x1);
   const right = Math.max(s.x0, s.x1);
   const top = Math.min(s.y0, s.y1);

@@ -856,8 +856,36 @@ export function findBarlines(pg: SPage): boolean {
     }
   }
 
+  // **多行系统里，小节线不会只在一行上有**：只在一行上「盖满」、别的行那个位置都没有像样的竖线，
+  // 是和弦的长干（新编赞美诗 3 万世之宗歌第二行高音谱表，B3–D5 的干上下都压在外线上，
+  // 高音谱表多切一刀、低音谱表没切，这一行两个谱表从此错开一小节）。
+  // 别的行上的那一根不论挂没挂成符干都算（挂错的由 `tagSystemBarlines` 先行纠正，这里只求别误删）。
+  // 只要**有一行**对得上就留：扫描件上四五行的系统，总有一两行的小节线断得不成样子，
+  // 要求行行都有的话真小节线成批丢（合唱谱扫描档满拍 65.8 → 62.1）。
+  {
+    const groups = systemGroups(pg).filter((g) => g.length >= 2);
+    const allV = pg.segs.filter((s) => s.isV);
+    for (const l of [...covers]) {
+      const ts = topStaff.get(l)!;
+      const g = groups.find((x) => x.includes(ts));
+      if (!g) continue;
+      const sp = ts.stepDistance() * 2 || pg.space;
+      const spans = (m: Seg, st: Staff) => m.top <= st.box.top + sp * 0.25 && m.bottom >= st.box.bottom - sp * 0.25;
+      // 没挂成符干、压着那一行够半个谱表高的也算：小节线被符头、字压断成两截时没有哪一截盖满
+      //（颂主化功歌第一行高音谱表的小节线都是半截的，靠下面「短小节线」那一步按同 x 收回来）
+      const half = (m: Seg, st: Staff) => !m.hasTag("Stem") && Math.min(m.bottom, st.box.bottom) - Math.max(m.top, st.box.top) >= boxH(st.box) * 0.5;
+      if (!g.some((st) => st !== ts && (spans(l, st) || allV.some((m) => m !== l && Math.abs(m.cx - l.cx) <= sp * 0.6 && (spans(m, st) || half(m, st)))))) covers.delete(l);
+    }
+  }
+
   let found = false;
   const barX: { x: number; st: Staff }[] = [];
+  // `tagSystemBarlines` 先定下的也进表（短小节线按同 x 补收要用）
+  for (const l of pg.segs) {
+    if (!l.isV || !l.hasTag("BarLine")) continue;
+    const st = pg.staves.find((q) => l.top <= q.box.bottom && l.bottom >= q.box.top);
+    if (st) (barX.push({ x: l.cx, st }), (found = true));
+  }
   for (const it of covers) {
     const ts = topStaff.get(it)!;
     // 与谱表左端重合的是系统线，不算小节线
@@ -898,6 +926,38 @@ export function findBarlines(pg: SPage): boolean {
   return found;
 }
 
+/**
+ * **大谱表上下两行同 x 都盖满谱行的竖线，先定成小节线**（位图路在 `findStems` 之前调）。
+ *
+ * 闭合谱（SATB 两行）的小节线上下两行各画一截、x 对齐。`findStems` 先于 `findBarlines`，
+ * 小节线后紧跟的头、或小节线前贴着的头会把它抢成符干（新编赞美诗 6 赞美三一歌第二行低音谱表，
+ * 行首弱起两个八分的头右缘贴着小节线），那一行从此少一条小节线，后面整行与另一行错开一个小节。
+ * 单看一行分不开「两端压在外线上的符干」与小节线（`findStems` 里那条注释试过，更差）；
+ * 但**同一系统每一行在同一 x 都有一根两端压在外线上的竖线**，就只能是小节线。
+ * 只管由左端标记连起来的多行系统；与谱表左端重合的（系统线）不动。
+ */
+export function tagSystemBarlines(pg: SPage): void {
+  const vlines = pg.segs.filter((s) => s.isV && !s.hasAnyTag());
+  for (const g of systemGroups(pg)) {
+    if (g.length < 2) continue;
+    const sp = g[0].stepDistance() * 2 || pg.space;
+    const tol = sp * 0.3;
+    const lands = (y: number) => g.some((st) => Math.abs(y - st.box.top) <= tol || Math.abs(y - st.box.bottom) <= tol);
+    /** 这根竖线盖满 st、两端都落在本系统某行的外线上 */
+    const barOn = (l: Seg, st: Staff) =>
+      l.top <= st.box.top + tol && l.bottom >= st.box.bottom - tol && lands(l.top) && lands(l.bottom) && Math.abs(st.box.left - l.cx) >= Math.max(l.lw, 1) * 2;
+    const per = g.map((st) => vlines.filter((l) => barOn(l, st)));
+    // 上下两行的 x 容 0.6 格：扫描件歪一点，隔着十几格歌词的两行就错开三四个像素（赞美三一歌 234 对 230）；
+    // 小节线与相邻的干至少隔一格
+    const xTol = sp * 0.6;
+    for (const l of per[0]) {
+      const mates = per.map((ls) => ls.filter((m) => Math.abs(m.cx - l.cx) <= xTol));
+      if (mates.some((ms) => !ms.length)) continue;
+      for (const ms of mates) for (const m of ms) if (!m.hasAnyTag()) m.addTag("BarLine");
+    }
+  }
+}
+
 // ── makeSystems ─────────────────────────────────────────────────────────────
 
 /**
@@ -922,7 +982,7 @@ export function makeSystems(pg: SPage): void {
 const SYS_BREAK_GAP = 0.8;
 
 /** 谱行按系统分组（各组内自上而下）。`makeSystems` 与 `findBarlines` 的短小节线补收共用。 */
-function systemGroups(pg: SPage): Staff[][] {
+export function systemGroups(pg: SPage): Staff[][] {
   const marks: Box[] = [
     ...pg.segsWithTag("SysLine").map((s) => s.box),
     ...pg.symbols.filter((s) => s.code === "bracket" || s.code === "brace").map((s) => s.box),

@@ -202,14 +202,20 @@ export class OmrController implements FormatSource {
     btn.addEventListener("click", () => void this.showPages());
   }
 
-  /** 有识别会话（有原图）时才给「原图页」 */
+  /** 有原图就给「原图页」（识别失败了也给：横着拍的图要先转过来再识别） */
   private syncPagesBtn(): void {
-    this.host.setContextControl(this.pagesBtn, this.sessionKind !== null && this.lastInputs.length > 0);
+    this.host.setContextControl(this.pagesBtn, this.lastInputs.length > 0);
   }
 
-  private async showPages(): Promise<void> {
+  /** 这次识别有没有原图（识别失败也算：起始页据此给「调整原图后重试」）。 */
+  get hasInputs(): boolean {
+    return this.lastInputs.length > 0;
+  }
+
+  /** 打开原图页面板；按新列表重识别后回调 `after(成功没有)`。 */
+  async showPages(after?: (ok: boolean) => void): Promise<void> {
     const { showPagesDialog } = await import("./omrpages");
-    showPagesDialog(this.lastInputs, (files) => void this.rerunWith(files));
+    showPagesDialog(this.lastInputs, (files) => void this.rerunWith(files).then((ok) => after?.(ok)));
   }
 
   /** 按改过的原图列表重识别（手改过先问）。 */

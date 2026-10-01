@@ -157,6 +157,21 @@ async function boot() {
   const setStartFeedback = (message: string) => {
     startFeedback.textContent = message;
     startFeedback.hidden = !message;
+    // 识别失败了还有原图：给一个「旋转 / 裁剪后重试」（横着拍、带了邻页的照片常见）
+    if (message && app.omr.hasInputs) {
+      const retry = document.createElement("button");
+      retry.type = "button";
+      retry.className = "start-feedback-retry";
+      retry.textContent = "旋转 / 裁剪原图后重试…";
+      retry.addEventListener("click", () => void app.omr.showPages((ok) => {
+        if (ok) {
+          setStartFeedback("");
+          setMobileView("score");
+          revealWorkspace();
+        } else setStartFeedback(app.status || "识别失败，请更换图片后重试");
+      }));
+      startFeedback.append(" ", retry);
+    }
   };
   const mobileCodeBtn = document.getElementById("btn-mobile-code") as HTMLButtonElement;
   const mobileScoreBtn = document.getElementById("btn-mobile-score") as HTMLButtonElement;

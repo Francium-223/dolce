@@ -79,7 +79,7 @@ async function boot() {
     paletteBtn: document.getElementById("btn-palette") as HTMLButtonElement | null,
   });
   app.mountEditor(codePane, SAMPLE);
-  const win = window as unknown as { __app: App; __paint: ReturnType<typeof paintProbe>; __mixedModel: unknown; __omr: unknown; __xmlout: unknown; __pu: unknown; __book: unknown;
+  const win = window as unknown as { __app: App; __paint: ReturnType<typeof paintProbe>; __mixedModel: unknown; __omr: unknown; __raster: unknown; __xmlout: unknown; __pu: unknown; __book: unknown;
     __j123: unknown; __pptx: unknown; __songbook: unknown };
   win.__app = app;
   // 统一排版器暴露（`new __paint.ScorePainter(__paint.resources)` + 请求），供混排 / 原样文档的无头回归脚本用。
@@ -89,6 +89,8 @@ async function boot() {
     .then(([model, smufl, layout, pages]) => ({ ...model, GlyphCodes: smufl.GlyphCodes, MetaData: smufl.MetaData, ...layout, formatMixedScore: pages.formatMixedScore }));
   // OMR 原语暴露（便于脚本化测试/准确率回归，同 __app 约定）。
   win.__omr = import("./omr");
+  // 位图五线谱的浏览器侧入口（在线 OCR）：回归脚本 `staff-measure-all.mjs --live` 拿它与离线缓存那条路比读数
+  win.__raster = import("./rasteromr/browser");
   // 文本谱（番茄 / 有谱）解析与排版暴露，供 pu-*.mjs 回归。
   win.__pu = import("./pu");
   // PPTX 导出（序列化器 + 展开档另排一遍那个 painter）暴露，供 scripts/pptx-export.mjs 批量转出用。
@@ -212,6 +214,10 @@ async function boot() {
     app.omr.setRecognizeBtn(recognizeBtn);
     recognizeBtn.addEventListener("click", () => void app.omr.toggle());
   }
+  app.omr.setKindSelects(
+    document.getElementById("sel-recog-kind-start") as HTMLSelectElement | null,
+    document.getElementById("sel-recog-kind") as HTMLSelectElement | null,
+  );
   const followBtn = document.getElementById("btn-src-follow") as HTMLButtonElement | null;
   if (followBtn) app.omr.setFollowBtn(followBtn, document.getElementById("omr-follow"));
   const recogViewSel = document.getElementById("sel-recog-view") as HTMLSelectElement | null;
@@ -400,14 +406,17 @@ async function pickRecognitionFile(app: App, hooks: RecognitionPickerHooks): Pro
     const { open } = await import("@tauri-apps/plugin-dialog");
     const { readFile } = await import("@tauri-apps/plugin-fs");
     const sel = await open({
-      multiple: false,
-      filters: [{ name: "简谱图片 / PDF", extensions: [...IMAGE_EXT] }],
+      multiple: true,
+      filters: [{ name: "乐谱图片 / PDF", extensions: [...IMAGE_EXT] }],
     });
-    if (typeof sel !== "string") return;
+    const paths = (Array.isArray(sel) ? sel : typeof sel === "string" ? [sel] : []).sort();
+    if (!paths.length) return;
     hooks.onPicked();
     let success = false;
     try {
-      success = await app.omr.recognizeBytes({ bytes: await readFile(sel) });
+      const files = [];
+      for (const p of paths) files.push({ bytes: await readFile(p), name: p });
+      success = await app.omr.recognizeFiles(files);
     } finally {
       hooks.onDone(success);
     }
@@ -417,16 +426,16 @@ async function pickRecognitionFile(app: App, hooks: RecognitionPickerHooks): Pro
   const input = document.createElement("input");
   input.type = "file";
   input.accept = IMAGE_ACCEPT;
+  input.multiple = true;
   input.onchange = async () => {
-    const file = input.files?.[0];
-    if (!file) return;
+    const picked = [...(input.files ?? [])].sort((a, b) => a.name.localeCompare(b.name, "zh"));
+    if (!picked.length) return;
     hooks.onPicked();
     let success = false;
     try {
-      success = await app.omr.recognizeBytes({
-        bytes: new Uint8Array(await file.arrayBuffer()),
-        mime: file.type,
-      });
+      const files = [];
+      for (const f of picked) files.push({ bytes: new Uint8Array(await f.arrayBuffer()), mime: f.type, name: f.name });
+      success = await app.omr.recognizeFiles(files);
     } finally {
       hooks.onDone(success);
     }
@@ -449,12 +458,14 @@ async function wireDragDrop(app: App, dropTarget: HTMLElement, hooks: DropHooks)
         const path = event.payload.paths[0];
         if (!path) return;
         if (isImageFile(path)) {
-          // 拖入图片 → 本地 OMR 识别，完成后默认显示可编辑的排版结果。
-          const bytes = await readFile(path);
+          // 拖入图片 → 本地 OMR 识别，完成后默认显示可编辑的排版结果。一次拖几张（五线谱的多页）按文件名排成一首
+          const imgs = event.payload.paths.filter((p) => isImageFile(p)).sort();
+          const files = [];
+          for (const p of imgs) files.push({ bytes: await readFile(p), name: p });
           hooks.onRecognitionStart();
           let success = false;
           try {
-            success = await app.omr.recognizeBytes({ bytes });
+            success = await app.omr.recognizeFiles(files);
           } finally {
             hooks.onRecognitionDone(success);
           }
@@ -484,10 +495,15 @@ async function wireDragDrop(app: App, dropTarget: HTMLElement, hooks: DropHooks)
       if (!file) return;
       const buf = new Uint8Array(await file.arrayBuffer());
       if (isImageFile(file.name) || file.type.startsWith("image/")) {
+        // 一次拖几张（五线谱的多页）按文件名排成一首
+        const all = [...(e.dataTransfer?.files ?? [])].filter((f) => isImageFile(f.name) || f.type.startsWith("image/"))
+          .sort((a, b) => a.name.localeCompare(b.name, "zh"));
+        const files = [];
+        for (const f of all) files.push({ bytes: f === file ? buf : new Uint8Array(await f.arrayBuffer()), mime: f.type, name: f.name });
         hooks.onRecognitionStart();
         let success = false;
         try {
-          success = await app.omr.recognizeBytes({ bytes: buf, mime: file.type });
+          success = await app.omr.recognizeFiles(files);
         } finally {
           hooks.onRecognitionDone(success);
         }

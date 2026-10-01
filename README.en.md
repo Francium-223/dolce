@@ -62,8 +62,10 @@ The interface is in Chinese.
 - **Source-image review.** Recognized symbols are overlaid on the binarized source image at their original
   positions, so you can check note by note. Clicking a symbol jumps to its source text, and you can play the
   score back in this view.
-- **Staff-notation PDFs.** A staff PDF with an intact text layer can be recognized into MusicXML, which opens in
-  the staff and mixed views.
+- **Staff-notation recognition.** Staff PDFs with an intact text layer, as well as scanned or photographed staff
+  images and PDFs, are recognized into MusicXML, which opens in the staff and mixed views and can be edited on the
+  score. Dropped images are routed to jianpu or staff recognition automatically (by looking for five-line staves),
+  or you can choose explicitly.
 - **Lyrics cross-check.** The command-line recognizer (`omr-cli.mjs image --lyrics lyrics.txt`) can take the
   song's lyric text as a reference. Look-alike characters are corrected from it and dropped characters filled
   back in; anything else that disagrees (edition wording, extra or missing syllables, likely missed slurs, repeat

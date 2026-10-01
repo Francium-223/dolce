@@ -22,13 +22,13 @@ import type { Staff } from "./model";
  * （理由见 docs/实现/五线谱矢量识别.md）。
  */
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export async function openStaffPdf(bytes: Uint8Array): Promise<{ pdf: any; OPS: OpsEnum }> {
+export async function openStaffPdf(bytes: Uint8Array, extra: Record<string, unknown> = {}): Promise<{ pdf: any; OPS: OpsEnum }> {
   const pdfjs = await import("pdfjs-dist");
   const { default: workerUrl } = await import("pdfjs-dist/build/pdf.worker.min.mjs?url");
   pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
   const wasmUrl = `${import.meta.env.BASE_URL}redist/pdfjs/`;
   // getDocument 会 detach 传入的 buffer，复制一份避免污染调用方字节。
-  const pdf = await pdfjs.getDocument({ data: bytes.slice(), wasmUrl, disableFontFace: true }).promise;
+  const pdf = await pdfjs.getDocument({ data: bytes.slice(), wasmUrl, disableFontFace: true, ...extra }).promise;
   return { pdf, OPS: pdfjs.OPS as unknown as OpsEnum };
 }
 

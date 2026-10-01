@@ -212,6 +212,15 @@
           <span class="tool-label">核对</span>
           <button id="btn-recognize" data-context-control title="将识别结果与上传原图进行对照" hidden>原图对照</button>
           <button id="btn-src-follow" data-context-control aria-pressed="false" title="在排版稿里选中音符时，右下角小窗显示原图上对应的那一行并框出这个音" hidden>原图片段</button>
+          <label id="recog-kind-field" class="toolbar-select-field" data-context-control hidden>
+            <span class="sr-only">识别类型</span>
+            <select id="sel-recog-kind" title="识别为：自动判断 / 简谱 / 五线谱。改了就用刚才那份图重新识别" aria-label="识别类型">
+              <option value="auto">自动判断</option>
+              <option value="jianpu">按简谱识别</option>
+              <option value="staff">按五线谱识别</option>
+            </select>
+            <span class="select-chevron" aria-hidden="true">⌄</span>
+          </label>
           <label id="recog-view-field" class="toolbar-select-field" data-context-control hidden>
             <span class="sr-only">原图对照方式</span>
             <select id="sel-recog-view" title="原图对照方式" aria-label="原图对照方式">
@@ -340,6 +349,13 @@
             </div>
             <div class="start-footer">
               <span class="privacy-note"><span aria-hidden="true">●</span> 图片在本地识别，不会上传</span>
+              <label class="start-kind">识别为
+                <select id="sel-recog-kind-start" aria-label="识别类型">
+                  <option value="auto">自动判断</option>
+                  <option value="jianpu">简谱</option>
+                  <option value="staff">五线谱</option>
+                </select>
+              </label>
               <button id="btn-start-sample" class="sample-link">查看示例乐谱</button>
             </div>
             <div id="start-feedback" hidden role="alert"></div>
@@ -351,7 +367,7 @@
             <span class="progress-spinner" aria-hidden="true"></span>
             <div>
               <strong>正在识别并生成排版</strong>
-              <span>完成后将直接显示可编辑的乐谱</span>
+              <span id="recognition-progress-detail">完成后将直接显示可编辑的乐谱</span>
             </div>
           </div>
         </div>

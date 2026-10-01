@@ -28,6 +28,18 @@ function isPdfBytes(bytes: Uint8Array, mime?: string): boolean {
   return bytes.length >= 5 && bytes[0] === 0x25 && bytes[1] === 0x50 && bytes[2] === 0x44 && bytes[3] === 0x46;
 }
 
+/** 一份识别输入（拖进来、选进来的图片或 PDF）。 */
+export interface RecogInput {
+  bytes: Uint8Array;
+  mime?: string;
+  name?: string;
+}
+
+/** 文件名 → 曲名（去掉目录与扩展名）。 */
+function baseTitle(name: string): string {
+  return name.replace(/^.*[\\/]/, "").replace(/\.[^.]+$/, "");
+}
+
 /** OmrController 向编辑器要的全部能力。 */
 export interface OmrHost {
   /** 当前预览模式。识别模式期间为 "recognize"。 */
@@ -38,6 +50,8 @@ export interface OmrHost {
   getText(): string;
   setText(text: string): void;
   setStatus(text: string): void;
+  /** 当前状态栏文本 */
+  readonly status: string;
   saveSettings(): void;
   stopPlayback(): void;
   /** 点中识别框：停止中记为起播点，播放中跳过去。 */
@@ -125,10 +139,132 @@ export class OmrController implements FormatSource {
   }
 
   // ---------------- 持久化 ----------------
-  loadSettings(s: { omrFormat?: unknown; recogView?: unknown; omrFollow?: unknown }): void {
+  loadSettings(s: { omrFormat?: unknown; recogView?: unknown; omrFollow?: unknown; omrKind?: unknown }): void {
     if (isOmrFormat(s.omrFormat)) this.format = s.omrFormat;
     if (typeof s.omrFollow === "boolean") this.follow = s.omrFollow;
+    if (s.omrKind === "auto" || s.omrKind === "jianpu" || s.omrKind === "staff") this.kind = s.omrKind;
     this.syncFollowBtn();
+    this.syncKindSelects();
+  }
+
+  // ---------------- 识别类型（分流） ----------------
+  /** 识别为：自动判断（按有没有五线谱表，`rasteromr/detect.ts`）/ 简谱 / 五线谱。持久化 */
+  kind: "auto" | "jianpu" | "staff" = "auto";
+  private kindSelects: HTMLSelectElement[] = [];
+  /** 上一次识别的输入（改判时拿它重识别，不必再选一次文件） */
+  private lastInputs: RecogInput[] = [];
+  /** 正在识别（Esc 取消只在这期间有效） */
+  private busy = false;
+  private cancelRequested = false;
+
+  /** 起始页与工具条各有一个「识别为」下拉，两个同步。工具条那个改了就用上次的图重新识别。 */
+  setKindSelects(start: HTMLSelectElement | null, toolbar: HTMLSelectElement | null): void {
+    for (const sel of [start, toolbar]) {
+      if (!sel) continue;
+      this.kindSelects.push(sel);
+      sel.addEventListener("change", () => {
+        this.kind = sel.value as typeof this.kind;
+        this.host.saveSettings();
+        this.syncKindSelects();
+        if (sel === toolbar && this.lastInputs.length) void this.rerecognize();
+      });
+    }
+    this.syncKindSelects();
+    document.addEventListener("keydown", (ev) => {
+      if (ev.key === "Escape" && this.busy) this.cancelRequested = true;
+    });
+  }
+
+  private syncKindSelects(): void {
+    for (const sel of this.kindSelects) sel.value = this.kind;
+  }
+
+  /** 用上次的输入按新的识别类型重识别（手改过先问）。 */
+  private async rerecognize(): Promise<void> {
+    if (this.emitted !== null && this.host.getText() !== this.emitted && !(await confirmDiscardEdits())) return;
+    await this.recognizeFiles(this.lastInputs);
+  }
+
+  private progress(text: string): void {
+    this.host.setStatus(text);
+    const el = document.getElementById("recognition-progress-detail");
+    if (el) el.textContent = text;
+  }
+
+  /**
+   * 识别一份或几份输入（拖进来、选进来的图片 / PDF；几份时按文件名排好、合成一首）。分流：
+   * 文字层完整的五线谱 PDF → 矢量路；有五线谱表的位图（`kind` 为自动时按 `detect.ts` 判）→ 位图五线谱路；其余 → 简谱路。
+   * 简谱一次识别一张（几张时只认第一张，状态栏说明）。
+   */
+  async recognizeFiles(files: readonly RecogInput[]): Promise<boolean> {
+    if (!files.length) return false;
+    this.lastInputs = [...files];
+    const first = files[0]!;
+    // 文字层完整的五线谱 PDF（矢量）先试：只要不是指定按简谱识别
+    if (files.length === 1 && this.kind !== "jianpu" && isPdfBytes(first.bytes, first.mime) && (await this.tryStaffPdf(first.bytes, performance.now()))) return true;
+    if (this.kind !== "jianpu") {
+      const t0 = performance.now();
+      try {
+        const rb = await import("../rasteromr/browser");
+        const pdfs: Uint8Array[] = [];
+        for (const f of files) pdfs.push(await rb.asRasterPdf(f.bytes, f.mime));
+        const isStaff = this.kind === "staff" || (await rb.looksLikeStaffBytes(pdfs[0]!));
+        if (isStaff) return await this.recognizeRasterStaff(pdfs, files, t0);
+      } catch (e) {
+        if (this.kind === "staff") {
+          console.error("位图五线谱识别失败", e);
+          this.host.setStatus("五线谱识别失败：" + (e instanceof Error ? e.message : String(e)));
+          return false;
+        }
+        console.warn("五线谱判定失败，按简谱识别", e);
+      }
+    }
+    const ok = await this.recognizeBytes({ bytes: first.bytes, mime: first.mime }, true);
+    if (ok && files.length > 1) this.host.setStatus(`${this.host.status}；简谱一次识别一张，只认了第一张（${files.length} 张）`);
+    return ok;
+  }
+
+  /** 位图五线谱：在线 OCR 跑整曲识别，产物是 MusicXML，落地同打开 `.musicxml`（无代码区、谱面上改模型）。 */
+  private async recognizeRasterStaff(pdfs: Uint8Array[], files: readonly RecogInput[], t0: number): Promise<boolean> {
+    const rb = await import("../rasteromr/browser");
+    this.busy = true;
+    this.cancelRequested = false;
+    this.progress("五线谱识别中…（按 Esc 取消）");
+    let res;
+    try {
+      res = await rb.recognizeRasterPdfs(pdfs, {
+        title: files.length === 1 && files[0]!.name ? baseTitle(files[0]!.name) : undefined,
+        onPage: (done, total) => this.progress(`五线谱识别中… ${done}/${total} 页（按 Esc 取消）`),
+        cancelled: () => this.cancelRequested,
+      });
+    } catch (e) {
+      this.host.setStatus(this.cancelRequested ? "已取消识别" : "五线谱识别失败：" + (e instanceof Error ? e.message : String(e)));
+      return false;
+    } finally {
+      this.busy = false;
+    }
+    if (!res.xml) {
+      this.host.setStatus("没找到五线谱表（可在工具栏把「识别为」改成简谱再试）");
+      return false;
+    }
+    this.clear();
+    this.lastInputs = [...files];
+    this.staffResult = res;
+    this.host.adoptStaffXml(res.xml);
+    this.host.setContextControl(this.kindField(), true);
+    const s = res.stats;
+    this.host.setStatus(
+      `五线谱识别完成（${((performance.now() - t0) / 1000).toFixed(1)}s）：${s.pages} 页 / ${s.parts ?? 1} 个声部 / ${s.notes} 个音符` +
+        (s.bars ? `，满拍小节 ${Math.round((s.full / s.bars) * 100)}%` : "") + "。谱面上可直接校对修改",
+    );
+    return true;
+  }
+
+  /** 位图五线谱的识别结果（各页位图与音符坐标），对照视图用；简谱识别或清掉后为 null */
+  staffResult: import("../rasteromr/song").RasterSongResult | null = null;
+
+  private kindField(): Element | null {
+    return this.kindSelects[1]?.closest(".toolbar-select-field") ?? null;
   }
 
   // ---------------- 原图片段跟随 ----------------
@@ -256,15 +392,15 @@ export class OmrController implements FormatSource {
   // ---------------- 识别 ----------------
   /** 已取得图片字节后的识别核心（供拖拽识别复用）。
    *  保留二值图+识别结果，完成后默认进入叠加核对视图（先核对；「原图对照」可切回排版稿）。 */
-  async recognizeBytes(picked: { bytes: Uint8Array; mime?: string }): Promise<boolean> {
+  async recognizeBytes(picked: { bytes: Uint8Array; mime?: string }, jianpuOnly = false): Promise<boolean> {
+    // 外部直接调（回归脚本、旧入口）走完整分流；`recognizeFiles` 判完了才以 jianpuOnly 进来
+    if (!jianpuOnly) return this.recognizeFiles([picked]);
     this.host.setStatus("识别中…可能需要几十秒");
     try {
       const t0 = performance.now();
-      // **文字层完整的五线谱 PDF** 走另一条路（src/staffomr/）：不栅格化、直接读文字与矢量，
-      // 出 MusicXML。判据见 staffomr/browser.ts::isStaffPdf。
-      if (isPdfBytes(picked.bytes, picked.mime) && (await this.tryStaffPdf(picked.bytes, t0))) return true;
       const { bin, score } = await recognizeMusicppDetailed(picked.bytes, picked.mime);
       this.emit(score, bin);
+      this.host.setContextControl(this.kindField(), true);
       if (this.host.mode !== "recognize") await this.toggle(); // 识别后默认进叠加核对（本仓库「先核对」取向）
       const n = this.beatMarks.length;
       this.host.setStatus(`识别完成（${((performance.now() - t0) / 1000).toFixed(1)}s）`
@@ -303,6 +439,7 @@ export class OmrController implements FormatSource {
     }
     // 五线谱只出 MusicXML，且只进混排视图（理由见 OmrHost.adoptStaffXml）。
     this.clear();
+    this.host.setContextControl(this.kindField(), true);
     const jpOk = this.host.adoptStaffXml(res.musicxml);
     this.host.setStatus(
       `五线谱识别完成（${((performance.now() - t0) / 1000).toFixed(1)}s）：` +
@@ -700,6 +837,8 @@ export class OmrController implements FormatSource {
     if (this.btnEl) this.btnEl.textContent = "原图对照";
     this.host.setContextControl(this.btnEl, false);
     this.host.setContextControl(this.followBtn, false);
+    this.host.setContextControl(this.kindField(), false);
+    this.staffResult = null;
     this.followSelection(null);
     if (this.host.mode === "recognize") {
       this.host.setRecognizeMode(false);

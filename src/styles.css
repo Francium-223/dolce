@@ -553,6 +553,8 @@ button:focus-visible, select:focus-visible {
 .visual-menu-subbox { border-left: 2px solid rgba(21, 101, 255, 0.35); margin-left: 6px; }
 .visual-menu-subbox[hidden] { display: none; }
 .visual-menu-sub.open kbd { transform: rotate(90deg); }
+.start-kind { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; opacity: 0.85; }
+.start-kind select { font-size: 13px; }
 .parts-box { max-width: min(1100px, calc(100vw - 32px)); width: auto; }
 .parts-body { overflow: auto; max-height: calc(100vh - 180px); }
 .parts-table { border-collapse: collapse; font-size: 13px; }

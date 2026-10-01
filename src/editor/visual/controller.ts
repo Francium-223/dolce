@@ -19,17 +19,23 @@ import { midiOf, NotePreview } from "./preview";
 import type { EditDialect, NoteDuration } from "./dialect";
 import {
   addSustain, clearBeams, deleteEntries, double, dropInlineSustain, type EditCtx, type EditOutcome, groupEnd, halve, insertNote, insertToken,
-  insertLetter, isError, noteCtx, noteSpans, notesIn, setAccidental, setDegree, setLetter, shiftOctave, stepDegree, stepSemitone, toggleDeco, toggleDot, toggleSlur, toggleTie,
+  insertLetter, isError, noteCtx, spacedInsert, noteSpans, notesIn, setAccidental, setDegree, setLetter, shiftOctave, stepDegree, stepSemitone, toggleDeco, toggleDot, toggleSlur, toggleTie,
 } from "./ops";
-import { keyHit, type VisualAction, type VisualMode } from "./keys";
+import { keyHit, VISUAL_ACTIONS, type VisualAction, type VisualMode } from "./keys";
+import { type Clip, clipFor, itemsToText, setClip } from "./clipboard";
+import { clipOfChords } from "../../model/edit";
 import { selectionInfo } from "./selinfo";
 import { inlineEditing, openInlineEditor } from "./inline";
 import { measureEdit } from "./measureops";
-import { runModelAction, type ModelActionCtx } from "./modelops";
+import { pasteModel, runModelAction, type ModelActionCtx } from "./modelops";
 import {
   type Box, boxInPage, charIndexAt, inkBoxInPage, clearOverlay, drawBlock, drawBreak, drawCaret, hitThroughOverlay, musicBox, rightEdgeInBand,
   sameRow, setBeatIssues, textCaretInPage,
 } from "./overlay";
+
+/** 键盘上这几样交给浏览器的剪贴板事件（`onClipboardEvent`）：那里拿得到系统剪贴板的字 */
+const CLIPBOARD_ACTIONS = new Set(["edit.copy", "edit.cut", "edit.paste"]);
+const actionById = (id: string): VisualAction => VISUAL_ACTIONS.find((a) => a.id === id)!;
 
 export interface VisualHost {
   readonly view: EditorView;
@@ -164,6 +170,10 @@ export class VisualEditController {
     });
     pane.tabIndex = 0;
     pane.addEventListener("keydown", (ev) => this.onKeyDown(ev));
+    // 复制剪切粘贴走浏览器的剪贴板事件（不用要剪贴板权限，桌面外壳里一样）；键盘那一下在 onKeyDown 里放过去
+    pane.addEventListener("copy", (ev) => this.onClipboardEvent(ev, "copy"));
+    pane.addEventListener("cut", (ev) => this.onClipboardEvent(ev, "cut"));
+    pane.addEventListener("paste", (ev) => this.onClipboardEvent(ev, "paste"));
     pane.addEventListener("focus", () => this.setFocus(true));
     pane.addEventListener("blur", () => this.setFocus(false));
     // 点谱面就把焦点给谱面（SVG 里的点击不会自己聚焦到容器上）
@@ -1055,6 +1065,7 @@ export class VisualEditController {
     if (!this.host.visualEnabled() || inlineEditing()) return;
     const hit = keyHit(ev);
     if (!hit) return;
+    if (CLIPBOARD_ACTIONS.has(hit.action.id)) return; // 交给随后的 copy / cut / paste 事件
     if (this.runChecked(hit.action, hit.key)) {
       ev.preventDefault();
       ev.stopPropagation();
@@ -1229,6 +1240,10 @@ export class VisualEditController {
           if (v !== null && v.trim()) this.gotoMeasure(Number(v.trim()));
         });
         return true;
+      case "edit.copy": this.copy(); return true;
+      case "edit.cut": return this.cut();
+      case "edit.paste": return this.paste(clipFor(null), null);
+      case "edit.repeat": return this.repeat();
       case "nav.home": return this.rowEdge(-1);
       case "nav.end": return this.rowEdge(1);
       case "mark.next": return this.cycleMark(1);
@@ -1341,6 +1356,105 @@ export class VisualEditController {
     const span = this.noteSel(target);
     this.select(span.from, span.to);
     return true;
+  }
+
+  // ---------------- 剪贴板（`clipboard.ts`） ----------------
+
+  private onClipboardEvent(ev: ClipboardEvent, kind: "copy" | "cut" | "paste"): void {
+    if (!this.host.visualEnabled() || inlineEditing()) return;
+    if (!this.host.syncFresh()) this.host.reloadNow();
+    ev.preventDefault();
+    if (kind === "paste") {
+      const text = ev.clipboardData?.getData("text/plain") ?? "";
+      this.paste(clipFor(text), text);
+      return;
+    }
+    const c = kind === "cut" ? this.cutClip() : this.copy(false);
+    if (c) ev.clipboardData?.setData("text/plain", c.text);
+  }
+
+  /** 选区 → 剪贴板内容（不动剪贴板）。只收音、增时线、小节线。 */
+  private buildClip(): Clip | null {
+    const sel = this.host.view.state.selection.main;
+    const es = sel.empty ? [] : this.selectedEntries().filter((e) => e.kind === "note" || e.kind === "sustain" || e.kind === "barline");
+    if (!es.length) {
+      this.host.setStatus("先选中要复制的音符（编辑模式）");
+      return null;
+    }
+    if (this.host.modelEditing()) {
+      const doc = this.host.syncDoc();
+      const ids = [...new Set(es.filter((e) => e.kind === "note").map((e) => e.id))];
+      return doc ? { dialect: null, text: "", items: clipOfChords(doc, ids) } : null;
+    }
+    const c = this.editCtx();
+    if (!c) return null;
+    const items: Clip["items"] = [];
+    for (const e of es) {
+      if (e.kind === "barline") items.push({ kind: "bar" });
+      else if (e.kind === "sustain") items.push({ kind: "sustain" });
+      else {
+        const t = c.dialect.parseNote(c.state.doc.sliceString(e.from, e.to), noteCtx(c, e.from));
+        if (!t) continue;
+        items.push({ kind: "note", degree: t.degree, octave: t.octave, acc: t.acc, halvings: t.halvings, dots: t.dots });
+        for (let k = 0; k < t.inlineSustains; k++) items.push({ kind: "sustain" });
+      }
+    }
+    const from = es[0]!.from;
+    const to = this.groupEnd(es[es.length - 1]!);
+    return { dialect: c.dialect, text: c.state.doc.sliceString(from, to), items };
+  }
+
+  /** 复制：记进剪贴板；`system` 时（菜单、面板点的）顺手写进系统剪贴板（键盘那一下由 copy 事件写）。 */
+  private copy(system = true): Clip | null {
+    const c = this.buildClip();
+    if (!c) return null;
+    setClip(c);
+    if (system && c.text) void navigator.clipboard?.writeText(c.text).catch(() => undefined);
+    this.host.setStatus(`已复制 ${c.items.filter((i) => i.kind === "note").length} 个音`);
+    return c;
+  }
+
+  private cutClip(): Clip | null {
+    const c = this.copy(false);
+    if (c) this.run(actionById("del.forward"));
+    return c;
+  }
+
+  private cut(): boolean {
+    const c = this.cutClip();
+    if (c?.text) void navigator.clipboard?.writeText(c.text).catch(() => undefined);
+    return true;
+  }
+
+  /**
+   * 粘贴：插入模式贴在光标处，编辑模式贴在选区后面（不覆盖），贴完选中贴进来的那段。
+   * 同一种格式原样贴原文；别的格式按 `ClipItem` 重写；外面拷来的字（`raw`，对不上上次复制的）当这种格式的原文贴。
+   */
+  private paste(clip: Clip | null, raw: string | null): boolean {
+    if (this.host.modelEditing()) {
+      if (!clip) {
+        this.host.setStatus(raw ? "MusicXML 里只能贴从谱面上复制的音" : "剪贴板是空的");
+        return true;
+      }
+      return pasteModel(this.modelCtx, clip.items);
+    }
+    const c = this.editCtx();
+    if (!c) return true;
+    const pos = this.insertPos(c);
+    const text = clip ? (clip.dialect === c.dialect && clip.text ? clip.text : itemsToText(clip.items, c.dialect, noteCtx(c, pos))) : raw;
+    if (!text?.trim()) {
+      this.host.setStatus("剪贴板是空的");
+      return true;
+    }
+    const r = spacedInsert(c, pos, text.trim());
+    const sel = c.state.selection.main;
+    return this.apply({ changes: [r.change], anchor: sel.empty ? r.end : r.start, head: r.end });
+  }
+
+  /** `R`：把选区原样再贴一遍在它后面（不动剪贴板），选中新贴的那段——再按接着往后重复。 */
+  private repeat(): boolean {
+    const c = this.buildClip();
+    return c ? this.paste(c, null) : true;
   }
 
   /** 按原文顺序把可停的条目按小节线 / 换行切成一段段（每段一小节，空段不要）。 */

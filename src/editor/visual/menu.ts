@@ -131,7 +131,7 @@ function actionsFor(target: MenuTarget, mode: VisualMode): VisualAction[] {
     case "break":
       return all.filter((a) => a.id === "del.forward" || a.id.startsWith("edit."));
     case "caret":
-      return all.filter((a) => ["note.digit", "note.letter", "voice.set", "sus.add", "bar.insert", "brk.line", "brk.page", "del.forward", "del.back", "mode.edit", "dur.halve", "dur.double"].includes(a.id) || a.group === SUBMENU_GROUP);
+      return all.filter((a) => ["note.digit", "note.letter", "voice.set", "sus.add", "bar.insert", "brk.line", "brk.page", "del.forward", "del.back", "mode.edit", "dur.halve", "dur.double", "edit.paste"].includes(a.id) || a.group === SUBMENU_GROUP);
     case "note":
       return all.filter((a) => !["mode.edit", "del.back", "view.formatMarks", "voice.set"].includes(a.id));
     default:

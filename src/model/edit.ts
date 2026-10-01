@@ -8,7 +8,7 @@
 // 语义对齐文本格式那一路（`ops.ts`）：唱名按调号换算、八度点不变；删音符就是删，不补休止（不满的小节由拍数自检标红）；
 // 增时线 = 多一拍；小节线 = 把这一小节在光标处劈成两节（所有声部一起劈）。
 
-import type { Chord, ElementId, Key, Mark, Measure, Note, NoteType, Part, Pitch, ScoreDoc, Song, Time } from "./doc";
+import type { Accidental, Chord, ElementId, Key, Mark, Measure, Note, NoteType, Part, Pitch, ScoreDoc, Song, Time } from "./doc";
 import { SIMPLE_DIVISIONS } from "./doc";
 import { degreeFromPitch, pitchFromDegree } from "./jianpu";
 
@@ -1137,6 +1137,65 @@ export function anchorFifths(doc: ScoreDoc, anchor: InsertAnchor): number {
   const song = doc.songs[a.si];
   const part = song?.parts[a.pi];
   return song && part ? measureCtx(song, part, a.mi).key.fifths : 0;
+}
+
+// ───────────────────────── 剪贴板 ─────────────────────────
+
+/** 剪贴板里的一样东西：与格式无关（文本格式、MusicXML 之间也能贴）。音按唱名记（相对调号，贴到别的调里按唱名走），
+ *  时值按简谱口径（减时线条数 + 附点，四分以上拆成增时线）。 */
+export type ClipItem =
+  | { kind: "note"; degree: number; octave: number; acc: Accidental | null; halvings: number; dots: number }
+  | { kind: "sustain" }
+  | { kind: "bar" };
+
+const HALVINGS: Partial<Record<NoteType, number>> = { quarter: 0, eighth: 1, "16th": 2, "32nd": 3, "64th": 4 };
+
+/** 选中的和弦 → 剪贴板（和弦取最上面那个音；连音、写不出的时值按最近的四分拍数拆）。 */
+export function clipOfChords(doc: ScoreDoc, ids: readonly ElementId[]): ClipItem[] {
+  const out: ClipItem[] = [];
+  for (const l of chordsOf(doc, ids)) {
+    const { key, dpq } = measureCtx(l.song, l.part, l.mi);
+    const ch = l.chord;
+    const top = topNote(ch);
+    const d = top?.pitch ? degreeFromPitch(top.pitch, key, top.accidental) : null;
+    const t = typeOfDivisions(ch.duration.divisions, dpq);
+    const h = t ? HALVINGS[t.type] : undefined;
+    let halvings = 0, dots = 0, sustains = 0;
+    if (t && h !== undefined) (halvings = h), (dots = t.dots);
+    else sustains = Math.max(0, Math.round(ch.duration.divisions / dpq) - 1);
+    out.push({ kind: "note", degree: d ? d.number : 0, octave: d ? d.octaveShift : 0, acc: d?.accidental ?? null, halvings, dots });
+    for (let k = 0; k < sustains; k++) out.push({ kind: "sustain" });
+  }
+  return out;
+}
+
+/** 剪贴板贴到锚点处（同一声线、接着往后插）；增时线并进前一个音（多一拍），小节线不贴（小节由拍号管）。返回贴进来的那些音。 */
+export function pasteClip(doc: ScoreDoc, anchor: InsertAnchor, items: readonly ClipItem[], hooks: EditHooks = {}): ModelEdit {
+  let at = anchor;
+  let last: Chord | null = null;
+  const added: Chord[] = [];
+  for (const it of items) {
+    if (it.kind === "bar") continue;
+    if (it.kind === "sustain") {
+      if (last) {
+        const r = addBeat(doc, last.id, hooks);
+        if (isEditError(r)) return r;
+      }
+      continue;
+    }
+    const r = insertChord(doc, at, it.degree, { halvings: it.halvings, dots: it.dots }, hooks);
+    if (isEditError(r) || !("caretAfter" in r)) return r;
+    last = r.caretAfter;
+    added.push(last);
+    if (it.degree > 0) {
+      const l = locate(doc, last.id)!;
+      const p = pitchOfDegree(it.degree, it.octave, measureCtx(l.song, l.part, l.mi).key, it.acc ?? undefined);
+      if (p) last.notes = [{ pitch: p }];
+      touched([l], hooks.forgetStem);
+    }
+    at = { after: last.id };
+  }
+  return added.length ? { select: added } : { error: "剪贴板里没有音符" };
 }
 
 export { STEPS as PITCH_STEPS };

@@ -11,7 +11,7 @@ import {
   addBeat, addChordNote, type BarKind, chordAtPos, chordOnset, deleteChords, deleteMeasures, insertChord, insertInVoice, insertMeasure,
   isEditError, type JumpKind, locate, mergeMeasures, midiOf, type ChordPos, type EditHooks, type InsertAnchor, type ModelEdit, posOf,
   removeChordNote, scaleDuration, setBarKind, setBreakBefore, setDegree, setKeyAt, setTempoAt, setTimeAt, shiftOctave, splitMeasure,
-  stepDegree, stepSemitone, setStep, degreeOfStep, anchorFifths, toggleAccidental, toggleDeco, toggleDot, toggleEnding, toggleJump, toggleSlur, toggleTie,
+  pasteClip, type ClipItem, stepDegree, stepSemitone, setStep, degreeOfStep, anchorFifths, toggleAccidental, toggleDeco, toggleDot, toggleEnding, toggleJump, toggleSlur, toggleTie,
 } from "../../model/edit";
 import { parseKeyInput, parseTempoInput, parseTimeInput } from "./measureinput";
 import { dropEmbeddedLayout, forgetNoteLayout } from "../../model/xmlsurface";
@@ -177,6 +177,16 @@ function insertNote(ctx: ModelActionCtx, degreeAt: (doc: ScoreDoc, at: InsertAnc
     }
     return insertChord(doc, at, d, ctx.curDur, HOOKS);
   }, true);
+}
+
+/** 粘贴（`clipboard.ts`）：插入模式贴在光标处、光标落在贴进来的最后一个音后面；编辑模式贴在选区后面、选中贴进来的那段。 */
+export function pasteModel(ctx: ModelActionCtx, items: readonly ClipItem[]): boolean {
+  const insert = ctx.view.state.selection.main.empty;
+  return commit(ctx, (doc) => {
+    const at = insertAnchor(ctx, doc);
+    const r = at ? pasteClip(doc, at, items, HOOKS) : { error: "这里贴不进音符" };
+    return insert && "select" in r ? { caretAfter: r.select[r.select.length - 1]! } : r;
+  });
 }
 
 /** 某个条目对应的音符 id：音符就是它；小节线、换行是它前面那个音。 */

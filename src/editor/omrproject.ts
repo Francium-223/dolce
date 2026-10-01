@@ -17,6 +17,7 @@
 import { strFromU8, strToU8, unzipSync, zipSync, type Zippable } from "fflate";
 import type { Binary, JpwMeta, RecognizedScore } from "../omr";
 import type { DocFormatId } from "./formats";
+import { t } from "../i18n";
 
 export const PROJECT_EXT = "jpomr";
 /** 包格式版本：读到比这新的拒绝（让用户升级），旧的按能读多少读多少 */
@@ -84,10 +85,10 @@ export function unpackProject(bytes: Uint8Array): ProjectSnapshot {
   try {
     files = unzipSync(bytes);
   } catch {
-    throw new Error("这不是一个识别项目文件（读不出 zip）");
+    throw new Error(t("proj.notZip"));
   }
   const mf = files["manifest.json"];
-  if (!mf) throw new Error("识别项目缺 manifest.json");
+  if (!mf) throw new Error(t("proj.noManifest"));
   let manifest: {
     version: number; kind: ProjectKind; docFormat: DocFormatId; omrFormat?: string; recogKind?: string; recogView?: string;
     sources: { file: string; name: string; mime?: string }[]; bin?: { w: number; h: number };
@@ -95,12 +96,12 @@ export function unpackProject(bytes: Uint8Array): ProjectSnapshot {
   try {
     manifest = JSON.parse(strFromU8(mf));
   } catch {
-    throw new Error("识别项目的 manifest.json 坏了");
+    throw new Error(t("proj.badManifest"));
   }
-  if (typeof manifest?.version !== "number") throw new Error("识别项目的 manifest.json 没有版本号");
-  if (manifest.version > PROJECT_VERSION) throw new Error("这个识别项目是新版本存的，请升级悦谱（Dolce）后再打开");
-  if (!(["jianpu", "staff", "vector"] as unknown[]).includes(manifest.kind)) throw new Error("识别项目的识别路认不出：" + String(manifest.kind));
-  if (!(["jpwabc", "pu", "123", "abc", "musicxml"] as unknown[]).includes(manifest.docFormat)) throw new Error("识别项目的谱格式认不出：" + String(manifest.docFormat));
+  if (typeof manifest?.version !== "number") throw new Error(t("proj.noVersion"));
+  if (manifest.version > PROJECT_VERSION) throw new Error(t("proj.tooNew"));
+  if (!(["jianpu", "staff", "vector"] as unknown[]).includes(manifest.kind)) throw new Error(t("proj.badKind", { v: String(manifest.kind) }));
+  if (!(["jpwabc", "pu", "123", "abc", "musicxml"] as unknown[]).includes(manifest.docFormat)) throw new Error(t("proj.badFormat", { v: String(manifest.docFormat) }));
   if (!Array.isArray(manifest.sources)) manifest.sources = [];
   const text = files["doc.txt"] ? strFromU8(files["doc.txt"]) : "";
   const emitted = files["emitted.txt"] ? strFromU8(files["emitted.txt"]) : null;

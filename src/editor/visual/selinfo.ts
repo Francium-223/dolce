@@ -4,10 +4,11 @@
 import type { Chord, ElementId, Key, ScoreDoc, Time } from "../../model/doc";
 import { SIMPLE_DIVISIONS } from "../../model/doc";
 import { degreeFromPitch, pitchFromDegree } from "../../model/jianpu";
+import { type MsgKey, t as tr } from "../../i18n";
 
 const TYPE_NAME: Record<string, string> = {
-  maxima: "八全", long: "四全", breve: "倍全", whole: "全", half: "二分", quarter: "四分",
-  eighth: "八分", "16th": "十六分", "32nd": "三十二分", "64th": "六十四分", "128th": "128 分", "256th": "256 分",
+  maxima: "maxima", long: "long", breve: "breve", whole: "whole", half: "half", quarter: "quarter",
+  eighth: "eighth", "16th": "16th", "32nd": "32nd", "64th": "64th", "128th": "128th", "256th": "256th",
 };
 
 const ACC_MARK: Record<string, string> = { sharp: "♯", flat: "♭", natural: "♮", "double-sharp": "𝄪", "double-flat": "𝄫" };
@@ -25,9 +26,9 @@ function pitchText(step: string, alter: number, octave: number): string {
 }
 
 function durText(c: Chord): string {
-  const t = c.duration.type ? TYPE_NAME[c.duration.type] ?? c.duration.type : "";
-  const dots = c.duration.dots ? "附点".repeat(c.duration.dots) : "";
-  const tup = c.duration.timeMod ? `（${c.duration.timeMod.actual} 连音）` : "";
+  const t = c.duration.type ? (TYPE_NAME[c.duration.type] ? tr(`sel.type.${c.duration.type}` as MsgKey) : c.duration.type) : "";
+  const dots = c.duration.dots ? tr("sel.dot").repeat(c.duration.dots) : "";
+  const tup = c.duration.timeMod ? tr("sel.tuplet", { n: c.duration.timeMod.actual }) : "";
   return t ? `${dots}${t}${tup}` : "";
 }
 
@@ -57,18 +58,18 @@ export function selectionInfo(doc: ScoreDoc | null, id: ElementId): string | nul
           const beatUnit = time ? (divisions * 4) / time.beatType : divisions;
           const beat = Math.round((start / beatUnit + 1) * 100) / 100;
           const parts: string[] = [];
-          if (multi) parts.push(part.name?.trim() || `声部 ${pi + 1}`);
-          parts.push(`第 ${m.number || mi + 1} 小节 · 第 ${beat} 拍`);
-          if (el.rest) parts.push("休止");
+          if (multi) parts.push(part.name?.trim() || tr("parts.defaultName", { n: pi + 1 }));
+          parts.push(tr("sel.pos", { m: m.number || mi + 1, b: beat }));
+          if (el.rest) parts.push(tr("sel.rest"));
           else if (el.notes.length) {
             const n = el.notes[0]!;
             const pitch = n.pitch ?? (n.degree && key ? pitchFromDegree(n.degree, key) : null);
             const deg = n.degree ?? (n.pitch && key ? degreeFromPitch(n.pitch, key, n.accidental) : null);
             const names: string[] = [];
             if (pitch) names.push(pitchText(pitch.step, pitch.alter, pitch.octave));
-            if (deg && deg.number > 0) names.push(`唱名 ${degreeText(deg.number, deg.octaveShift, deg.accidental)}`);
-            if (el.notes.length > 1) names.push(`和弦 ${el.notes.length} 音`);
-            if (names.length) parts.push(names.join("，"));
+            if (deg && deg.number > 0) names.push(tr("sel.degree", { d: degreeText(deg.number, deg.octaveShift, deg.accidental) }));
+            if (el.notes.length > 1) names.push(tr("sel.chord", { n: el.notes.length }));
+            if (names.length) parts.push(names.join(tr("sel.sep")));
           }
           const d = durText(el);
           if (d) parts.push(d);

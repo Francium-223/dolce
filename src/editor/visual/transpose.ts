@@ -5,6 +5,7 @@
 // 选区：音移几个半音、调号不动（`ops.ts::shiftSemitones`）。MusicXML 两样都在模型上改（`model/edit.ts`）。
 
 import { labeled, showFormDialog } from "../dialogs";
+import { type MsgKey, t as tr } from "../../i18n";
 import { transposeFifths } from "../../model/edit";
 import { type EditCtx, type EditOutcome, noteCtx, rewriteToken } from "./ops";
 
@@ -63,7 +64,7 @@ export function transposeText(ctx: EditCtx, n: number): EditOutcome {
     keys++;
     if (nv !== v) changes.push({ from: f.from, to: f.to, insert: nv });
   }
-  if (!keys) return { error: "这份谱里没找到能换的调号" };
+  if (!keys) return { error: tr("tp.noKey") };
   const tonicMidi = ctx.dialect.tonicMidi;
   for (const e of ctx.sync.ordered()) {
     if (e.kind !== "note") continue;
@@ -78,14 +79,14 @@ export function transposeText(ctx: EditCtx, n: number): EditOutcome {
     });
     if (typeof out === "string" && out !== src) changes.push({ from: e.from, to: e.to, insert: out });
   }
-  if (!changes.length) return { error: "移了整八度：简谱唱名不变、调号也不变。要整体移八度，全选后按 ' 或 ," };
+  if (!changes.length) return { error: tr("tp.octave") };
   changes.sort((a, b) => a.from - b.from);
   const cs = ctx.state.changes(changes);
   const sel = ctx.state.selection.main;
   return { changes, anchor: cs.mapPos(sel.anchor, -1), head: cs.mapPos(sel.head, 1) };
 }
 
-const INTERVALS = ["", "小二度", "大二度", "小三度", "大三度", "纯四度", "增四度", "纯五度", "小六度", "大六度", "小七度", "大七度", "纯八度"];
+const INTERVALS = ["", "m2", "M2", "m3", "M3", "P4", "A4", "P5", "m6", "M6", "m7", "M7", "P8"] as const;
 
 /**
  * 移调对话框。`fifths` 是现在的主调号（标出移过去是几调）；`hasSelection` 时可选「只移选中的音」。
@@ -95,10 +96,10 @@ export function showTransposeDialog(fifths: number, hasSelection: boolean, run: 
   const body = document.createElement("div");
   body.className = "settings-form";
   const scope = document.createElement("select");
-  for (const [v, t] of [["all", "全曲（换调号，简谱唱名不变）"], ["sel", "选中的音（调号不动）"]] as const) {
+  for (const [v, label] of [["all", tr("tp.all")], ["sel", tr("tp.sel")]] as const) {
     const o = document.createElement("option");
     o.value = v;
-    o.textContent = t;
+    o.textContent = label;
     if (v === "sel") o.disabled = !hasSelection;
     scope.append(o);
   }
@@ -113,7 +114,7 @@ export function showTransposeDialog(fifths: number, hasSelection: boolean, run: 
         const o = document.createElement("option");
         o.value = String(n);
         const to = scope.value === "all" && k < 12 ? `　→ 1=${tonicName(transposeFifths(fifths, n))}` : "";
-        o.textContent = `${dir > 0 ? "往上" : "往下"} ${INTERVALS[k]}（${k} 个半音）${to}`;
+        o.textContent = tr("tp.option", { dir: tr(dir > 0 ? "tp.up" : "tp.down"), iv: tr(`tp.iv.${INTERVALS[k]!}` as MsgKey), k, to });
         by.append(o);
       }
     }
@@ -123,7 +124,7 @@ export function showTransposeDialog(fifths: number, hasSelection: boolean, run: 
   scope.addEventListener("change", fill);
   const hint = document.createElement("div");
   hint.style.cssText = "margin-top:8px;opacity:0.75;font-size:12px;line-height:1.6";
-  hint.textContent = `现在是 1=${tonicName(fifths)}。简谱是首调唱名：全曲移调只改调号，数字不变；ABC、MusicXML 的音一起移过去。和弦记号不跟着移。可用 Ctrl/⌘+Z 撤销。`;
-  body.append(labeled("移哪些", scope), labeled("移多少", by), hint);
-  showFormDialog("移调", body, () => run(scope.value === "all", Number(by.value)));
+  hint.textContent = tr("tp.hint", { key: tonicName(fifths) });
+  body.append(labeled(tr("tp.scope"), scope), labeled(tr("tp.by"), by), hint);
+  showFormDialog(tr("tp.title"), body, () => run(scope.value === "all", Number(by.value)));
 }

@@ -1107,7 +1107,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     this._syncText = this.getText();
     if (this.docFormat === "musicxml") {
       // 模型不记原文位置：按 DOM 节点的文档序对到隐藏代码区里的 XML 原文（`SyncIndex.buildXml`）
-      if (!this._sync.buildXml(doc, this._syncText)) this.setStatus("这份 MusicXML 的原文与读出来的对不齐，谱面上只能看、不能改");
+      if (!this._sync.buildXml(doc, this._syncText)) this.setStatus(t("status.xmlUnaligned"));
     } else {
       this._sync.build(doc);
       const fields = this.editDialect()?.headerFields?.(this._syncText) ?? [];
@@ -2004,7 +2004,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     try {
       out = this.docFormat === "musicxml" ? scoreDocToMusicXml(doc) : targetSpec(this.docFormat === "abc" ? "abc" : "123").emit(doc);
     } catch (e) {
-      this.setStatus("改声部失败：" + (e instanceof Error ? e.message : String(e)));
+      this.setStatus(t("status.partsFailed", { error: e instanceof Error ? e.message : String(e) }));
       return false;
     }
     return this.replaceText(out, "input.parts");
@@ -3001,8 +3001,8 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
   async offerDraftRestore(d: Draft | null): Promise<boolean> {
     if (!d || d.text === this.getText()) return false;
     const when = new Date(d.time).toLocaleString();
-    const what = d.project ? "识别会话（连原图）" : d.filePath ? d.filePath.replace(/^.*[\\/]/, "") : "未命名的谱";
-    const ok = await showConfirmDialog("恢复未保存的内容", `发现上次没有保存的内容：${what}（${when}）。要恢复吗？不恢复会把它丢掉。`);
+    const what = d.project ? t("draft.session") : d.filePath ? d.filePath.replace(/^.*[\\/]/, "") : t("draft.untitled");
+    const ok = await showConfirmDialog(t("draft.title"), t("draft.body", { what, when }));
     if (!ok) {
       void clearDraft();
       return false;
@@ -3013,7 +3013,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     }
     this._cleanText = null;
     this._scheduleDraft();
-    this.setStatus("已恢复上次未保存的内容（还没存盘）");
+    this.setStatus(t("draft.restored"));
     return true;
   }
 
@@ -3022,7 +3022,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
   async saveProject(asNew: boolean): Promise<boolean> {
     const snap = this.omr.snapshot();
     if (!snap) {
-      this.setStatus("没有识别会话可存（识别项目要有原图）");
+      this.setStatus(t("proj.nothing"));
       return false;
     }
     const bytes = packProject(snap, __APP_VERSION__);
@@ -3030,14 +3030,14 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
       const { writeFile } = await import("@tauri-apps/plugin-fs");
       await writeFile(this.filePath, bytes);
     } else {
-      const dest = await saveBytes(bytes, `${this.documentTitle() || "识别项目"}.${PROJECT_EXT}`, "application/zip");
+      const dest = await saveBytes(bytes, `${this.documentTitle() || t("proj.defaultName")}.${PROJECT_EXT}`, "application/zip");
       if (dest) {
         this.filePath = dest;
         this.rememberLastFile(dest);
       }
     }
     this.markClean();
-    this.setStatus("已存为识别项目（原图、识别结果与在改的谱一起）");
+    this.setStatus(t("proj.saved"));
     return true;
   }
 
@@ -3047,7 +3047,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     try {
       snap = unpackProject(bytes);
     } catch (e) {
-      this.setStatus("打不开识别项目：" + (e instanceof Error ? e.message : String(e)));
+      this.setStatus(t("proj.openFailed", { error: e instanceof Error ? e.message : String(e) }));
       return false;
     }
     this.formats.use(null);
@@ -3056,7 +3056,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     this.filePath = isTauriRuntime() && isProjectFile(name) ? name : null;
     if (opts.draft) return true;
     this.markClean();
-    this.setStatus(`已打开识别项目（${snap.kind === "jianpu" ? "简谱" : "五线谱"}，${snap.sources.length} 份原图）`);
+    this.setStatus(t("proj.opened", { kind: t(snap.kind === "jianpu" ? "recogKind.jianpu" : "recogKind.staff"), n: snap.sources.length }));
     return true;
   }
 

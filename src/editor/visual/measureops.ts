@@ -11,6 +11,7 @@ import type { SyncEntry } from "../sync";
 import type { EditCtx, EditOutcome } from "./ops";
 import { noteCtx } from "./ops";
 import { parseKeyInput, parseTempoInput, parseTimeInput } from "./measureinput";
+import { t as tr } from "../../i18n";
 
 export type TextBarKind = "single" | "double" | "final" | "repeatStart" | "repeatEnd";
 
@@ -136,7 +137,7 @@ function headerValue(text: string, field: string): { from: number; to: number } 
 /** 跑一个小节动作。`value` 是调号 / 拍号 / 速度输入框里的字（别的动作不用）。 */
 export function measureEdit(c: EditCtx, id: string, value: string | null = null): EditOutcome {
   const syn = c.dialect.measure;
-  if (!syn) return { error: "这种格式的小节操作请在源码里改（123 / ABC / MusicXML 可在谱面上改）" };
+  if (!syn) return { error: tr("ve.measSrcOnly") };
   const doc = c.state.doc;
   const text = doc.toString();
   const sep = c.dialect.sep;
@@ -148,12 +149,12 @@ export function measureEdit(c: EditCtx, id: string, value: string | null = null)
       return ok([{ from: lastBar.from, to: lastBar.from, insert: `${syn.bars.single}${sep}${rests}${sep}` }], lastBar.from + syn.bars.single.length + sep.length);
     }
     const tail = list[list.length - 1];
-    if (!tail) return { error: "谱里还没有音符" };
+    if (!tail) return { error: tr("ve.noNotes") };
     const rests = restsFor(c, tail.to);
     return ok([{ from: tail.to, to: tail.to, insert: `${sep}${syn.bars.single}${sep}${rests}${sep}${syn.bars.single}` }], tail.to + 1);
   }
   const m = measureAt(c, id === "meas.delete" || id === "volta.1" || id === "volta.2");
-  if (!m) return { error: "先选中一个小节里的音" };
+  if (!m) return { error: tr("ve.selectInMeasure") };
   switch (id) {
     case "meas.insert": {
       // 插在这一小节开头那串小节线（`|: [1`）之前：新小节在反复、房号之外
@@ -186,17 +187,17 @@ export function measureEdit(c: EditCtx, id: string, value: string | null = null)
       let val: string;
       if (id === "meas.key") {
         const f = parseKeyInput(v);
-        if (f === null) return { error: `读不懂调号「${v}」` };
+        if (f === null) return { error: tr("ve.badKey", { v }) };
         field = "K";
         val = syn.keyValue(f);
       } else if (id === "meas.time") {
         const t = parseTimeInput(v);
-        if (!t) return { error: `读不懂拍号「${v}」` };
+        if (!t) return { error: tr("ve.badTime", { v }) };
         field = "M";
         val = `${t.beats}/${t.beatType}`;
       } else {
         const bpm = parseTempoInput(v);
-        if (bpm === null) return { error: `读不懂速度「${v}」` };
+        if (bpm === null) return { error: tr("ve.badTempo", { v }) };
         field = "Q";
         val = syn.tempoValue(bpm);
         if (bpm === 0) {
@@ -212,7 +213,7 @@ export function measureEdit(c: EditCtx, id: string, value: string | null = null)
             const ls = doc.lineAt(hv.from);
             return ok([{ from: ls.from, to: Math.min(text.length, ls.to + 1), insert: "" }], ls.from);
           }
-          return { error: "这一小节没有速度记号" };
+          return { error: tr("ve.noTempo") };
         }
       }
       // 第一小节：改头部字段（没有这个字段就在 `K:` 前面补一行；ABC 的 `K:` 必须是头部最后一行）
@@ -297,7 +298,7 @@ export function measureEdit(c: EditCtx, id: string, value: string | null = null)
       return ok([{ from: pos, to: pos, insert: `${lead}${tok}${sep}` }], pos);
     }
   }
-  return { error: "这个小节操作这种格式还不支持" };
+  return { error: tr("ve.measUnsupported") };
 }
 
 /** 123 与 ABC 共用的那部分（只差调号的值与休止的写法，休止由各自的 `newNote(0, …)` 给）。 */

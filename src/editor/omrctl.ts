@@ -296,14 +296,14 @@ export class OmrController implements FormatSource {
         if (g !== this.gen) return false;
         if (this.kind === "staff") {
           console.error("位图五线谱识别失败", e);
-          this.host.setStatus("五线谱识别失败：" + (e instanceof Error ? e.message : String(e)));
+          this.host.setStatus(t("omr.staffFailed", { error: e instanceof Error ? e.message : String(e) }));
           return false;
         }
         console.warn("五线谱判定失败，按简谱识别", e);
       }
     }
     const ok = await this.recognizeJianpu({ bytes: first.bytes, mime: first.mime }, g);
-    if (ok && files.length > 1) this.host.setStatus(`${this.host.status}；简谱一次识别一张，只认了第一张（${files.length} 张）`);
+    if (ok && files.length > 1) this.host.setStatus(this.host.status + t("omr.firstOnly", { n: files.length }));
     return ok;
   }
 
@@ -312,24 +312,24 @@ export class OmrController implements FormatSource {
     const rb = await import("../rasteromr/browser");
     this.busy = true;
     this.cancelRequested = false;
-    this.progress("五线谱识别中…（按 Esc 取消）");
+    this.progress(t("omr.staffRunning"));
     let res;
     try {
       res = await rb.recognizeRasterPdfs(pdfs, {
         title: files.length === 1 && files[0]!.name ? baseTitle(files[0]!.name) : undefined,
-        onPage: (done, total) => g === this.gen && this.progress(`五线谱识别中… ${done}/${total} 页（按 Esc 取消）`),
+        onPage: (done, total) => g === this.gen && this.progress(t("omr.staffProgress", { done, total }) + t("omr.escCancel")),
         // 过时的（又开始了一次识别、打开了别的文档）自己停下
         cancelled: () => g !== this.gen || this.cancelRequested,
       });
     } catch (e) {
-      if (g === this.gen) this.host.setStatus(this.cancelRequested ? "已取消识别" : "五线谱识别失败：" + (e instanceof Error ? e.message : String(e)));
+      if (g === this.gen) this.host.setStatus(this.cancelRequested ? t("omr.cancelled") : t("omr.staffFailed", { error: e instanceof Error ? e.message : String(e) }));
       return false;
     } finally {
       if (g === this.gen) this.busy = false;
     }
     if (g !== this.gen) return false;
     if (!res.xml) {
-      this.host.setStatus("没找到五线谱表（可在工具栏把「识别为」改成简谱再试）");
+      this.host.setStatus(t("omr.noStaffFound"));
       return false;
     }
     this.clear();
@@ -340,12 +340,12 @@ export class OmrController implements FormatSource {
     this.staffEmitted = this.host.getText();
     this.host.setContextControl(this.kindField(), true);
     // 位图路有页面位图与音符坐标：「原图对照」可用（矢量 PDF 那一路没有位图，不给）
-    if (this.btnEl) this.btnEl.textContent = "原图对照";
+    if (this.btnEl) this.btnEl.textContent = t("omr.compare");
     this.host.setContextControl(this.btnEl, true);
     const s = res.stats;
     this.host.setStatus(
-      `五线谱识别完成（${((performance.now() - t0) / 1000).toFixed(1)}s）：${s.pages} 页 / ${s.parts ?? 1} 个声部 / ${s.notes} 个音符` +
-        (s.bars ? `，满拍小节 ${Math.round((s.full / s.bars) * 100)}%` : "") + "。谱面上可直接校对修改",
+      t("omr.staffDone", { sec: ((performance.now() - t0) / 1000).toFixed(1), pages: s.pages, parts: s.parts ?? 1, notes: s.notes }) +
+        (s.bars ? t("omr.fullBars", { pct: Math.round((s.full / s.bars) * 100) }) : "") + t("omr.editOnScore"),
     );
     return true;
   }
@@ -398,7 +398,7 @@ export class OmrController implements FormatSource {
     this.host.setContextControl(this.kindField(), true);
     this.syncPagesBtn();
     if ((s.kind === "staff" || s.kind === "vector") && this.lastInputs.length) {
-      if (this.btnEl) this.btnEl.textContent = "原图对照";
+      if (this.btnEl) this.btnEl.textContent = t("omr.compare");
       this.host.setContextControl(this.btnEl, true);
     }
   }
@@ -424,30 +424,30 @@ export class OmrController implements FormatSource {
     };
     if (this.sessionKind === "vector") {
       // 矢量 PDF 项目重开：重跑一遍矢量识别拿框（快，不用 OCR），再渲底图
-      this.progress("正在从原 PDF 载入对照数据…");
+      this.progress(t("omr.loadingPdf"));
       try {
         const sb = await import("../staffomr/browser");
         const bytes = this.lastInputs[0]!.bytes;
         return land(await sb.vectorOverlayResult(bytes, await sb.recognizeStaffPdf(bytes, { noteIds: true })));
       } catch (e) {
-        if (g === this.gen) this.host.setStatus("载入对照数据失败：" + (e instanceof Error ? e.message : String(e)));
+        if (g === this.gen) this.host.setStatus(t("omr.loadFailed", { error: e instanceof Error ? e.message : String(e) }));
         return false;
       }
     }
     if (this.sessionKind !== "staff") return false;
     const rb = await import("../rasteromr/browser");
-    this.progress("正在从原图载入对照数据…");
+    this.progress(t("omr.loadingImg"));
     try {
       const pdfs: Uint8Array[] = [];
       for (const f of this.lastInputs) pdfs.push(await rb.asRasterPdf(f.bytes, f.mime));
       return land(await rb.recognizeRasterPdfs(pdfs, {
         // 与第一次识别同口径（关联表重建出的 MusicXML 要有曲名）
         title: this.lastInputs.length === 1 && this.lastInputs[0]!.name ? baseTitle(this.lastInputs[0]!.name) : undefined,
-        onPage: (done, total) => g === this.gen && this.progress(`正在从原图载入对照数据… ${done}/${total} 页`),
+        onPage: (done, total) => g === this.gen && this.progress(t("omr.loadingImgPages", { done, total })),
         cancelled: () => g !== this.gen,
       }));
     } catch (e) {
-      if (g === this.gen) this.host.setStatus("载入对照数据失败：" + (e instanceof Error ? e.message : String(e)));
+      if (g === this.gen) this.host.setStatus(t("omr.loadFailed", { error: e instanceof Error ? e.message : String(e) }));
       return false;
     }
   }
@@ -797,7 +797,7 @@ export class OmrController implements FormatSource {
       const overlay = await vectorOverlayResult(bytes, res);
       if (g2 !== this.gen) return true;
       this.staffResult = overlay;
-      if (this.btnEl) this.btnEl.textContent = "原图对照";
+      if (this.btnEl) this.btnEl.textContent = t("omr.compare");
       this.host.setContextControl(this.btnEl, true);
     } catch (e) {
       console.warn("矢量 PDF 渲不出对照底图", e);
@@ -943,7 +943,7 @@ export class OmrController implements FormatSource {
     const el = this.doubtEl;
     if (!el) return;
     el.hidden = n === 0 || this.host.mode !== "recognize" || !!this.staffResult;
-    el.textContent = `${n} 处可疑`;
+    el.textContent = t("omr.doubts", { n });
   }
 
   /** 跳到下一处标黄的音 / 字：选中它（同点命中框）并滚到眼前。 */
@@ -962,7 +962,7 @@ export class OmrController implements FormatSource {
     hit.scrollIntoView({ block: "center", inline: "nearest" });
     const r = hit.getBoundingClientRect();
     hit.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
-    this.host.setStatus(`第 ${this.doubtAt + 1} / ${items.length} 处可疑：${hit.closest("svg")?.querySelector(`.omr-doubt-box[data-i="${it.i}"]${it.verse === null ? ":not([data-verse])" : `[data-verse="${it.verse}"]`} title`)?.textContent ?? ""}`);
+    this.host.setStatus(t("omr.doubtAt", { i: this.doubtAt + 1, n: items.length }) + `${hit.closest("svg")?.querySelector(`.omr-doubt-box[data-i="${it.i}"]${it.verse === null ? ":not([data-verse])" : `[data-verse="${it.verse}"]`} title`)?.textContent ?? ""}`);
   }
 
   // ---------------- 五线谱识别的对照（位图路，`rasteromr/overlay.ts`） ----------------
@@ -989,7 +989,7 @@ export class OmrController implements FormatSource {
             if (k === 0) this.staffIdOf.set(el.id, id);
             const orig = res.noteBoxes.get(id)!;
             const p = el.notes[k]?.pitch;
-            const label = el.rest || !p ? "休" : `${p.step}${p.alter > 0 ? "♯".repeat(p.alter) : "♭".repeat(-p.alter)}${p.octave}`;
+            const label = el.rest || !p ? t("omr.restLabel") : `${p.step}${p.alter > 0 ? "♯".repeat(p.alter) : "♭".repeat(-p.alter)}${p.octave}`;
             const changed = el.rest ? !orig.rest : !p || orig.rest || p.step !== orig.step || p.octave !== orig.octave || p.alter !== orig.alter;
             if (!now.has(id)) now.set(id, { label, changed });
           });
@@ -1004,7 +1004,7 @@ export class OmrController implements FormatSource {
         const cur = now.get(id);
         return cur
           ? { id, box: b.box, label: cur.label, ...(cur.changed ? { state: "edited" as const } : {}) }
-          : { id, box: b.box, label: b.rest ? "休" : `${b.step}${b.octave}`, state: "deleted" as const };
+          : { id, box: b.box, label: b.rest ? t("omr.restLabel") : `${b.step}${b.octave}`, state: "deleted" as const };
       });
       return renderStaffRecognitionPage(bin, marks, view);
     }, {
@@ -1068,12 +1068,12 @@ export class OmrController implements FormatSource {
     try {
       xml = res.rebuild(slots).xml;
     } catch (e) {
-      this.host.setStatus("重建失败：" + (e instanceof Error ? e.message : String(e)));
+      this.host.setStatus(t("omr.rebuildFailed", { error: e instanceof Error ? e.message : String(e) }));
       return false;
     }
     this.host.adoptStaffXml(xml);
     this.staffEmitted = this.host.getText();
-    this.host.setStatus("已按新的谱表指派重建（未重新识别）");
+    this.host.setStatus(t("omr.rebuilt"));
     return true;
   }
 

@@ -194,7 +194,7 @@ export function stepDegree(ctx: EditCtx, from: number, to: number, delta: 1 | -1
     t.degree += delta;
     if (t.degree > 7) (t.degree = 1), (t.octave += 1);
     if (t.degree < 1) (t.degree = 7), (t.octave -= 1);
-    return Math.abs(t.octave) > 3 ? "八度点最多三个" : t;
+    return Math.abs(t.octave) > 3 ? tr("ve.octaveMax") : t;
   });
 }
 
@@ -215,7 +215,7 @@ export function shiftSemitones(ctx: EditCtx, from: number, to: number, n: number
     if (dia >= 0) Object.assign(t, { degree: dia + 1, acc: null, octave: oct });
     else if (fifths > 0 || (fifths === 0 && n > 0)) Object.assign(t, { degree: MAJOR.indexOf(r - 1) + 1, acc: "sharp", octave: oct });
     else Object.assign(t, { degree: MAJOR.indexOf(r + 1) + 1, acc: "flat", octave: oct });
-    return Math.abs(t.octave) > 3 ? "八度点最多三个" : t;
+    return Math.abs(t.octave) > 3 ? tr("ve.octaveMax") : t;
   });
 }
 
@@ -411,8 +411,8 @@ export function chordNameOf(ctx: EditCtx, e: SyncEntry): string {
 /** 音 `note` 的和弦名写成 `name`（空串 = 去掉）：有就换，没有就写在这个音的记号最前面。 */
 export function setChordName(ctx: EditCtx, note: SyncEntry, name: string): EditOutcome {
   const write = ctx.dialect.chordText;
-  if (!write) return { error: "这种格式的和弦名请在源码里改" };
-  if (name.includes('"')) return { error: "和弦名里不能有英文双引号" };
+  if (!write) return { error: tr("ve.chordSrcOnly") };
+  if (name.includes('"')) return { error: tr("ve.chordQuote") };
   const sel = ctx.state.selection.main;
   const done = (changes: EditResult["changes"]): EditOutcome => {
     const map = mapper(ctx.state, changes);
@@ -427,7 +427,7 @@ export function setChordName(ctx: EditCtx, note: SyncEntry, name: string): EditO
     if (/\s$/.test(ins) && /\s/.test(text.sliceString(cur.to, cur.to + 1))) ins = ins.trimEnd();
     return done([{ from: cur.from, to: cur.to, insert: ins }]);
   }
-  if (name === "") return { error: "这个音没有和弦名" };
+  if (name === "") return { error: tr("ve.noChord") };
   const marks = ctx.sync.ordered().filter((e) => e.kind === "mark" && e.id === note.id && e.from < note.from);
   const at = Math.min(note.from, ...marks.map((e) => e.from));
   return done([{ from: at, to: at, insert: write(name) }]);
@@ -445,9 +445,9 @@ function attachedEntry(ctx: EditCtx, note: SyncEntry, kind: "annotation" | "dyna
 /** 挂在音符前的文字 / 力度：音 `note` 上那一条（`kind` = `annotation` / `dynamic`）写成 `value`（空串 = 去掉）。 */
 export function setAttachedText(ctx: EditCtx, note: SyncEntry, kind: "annotation" | "dynamic", value: string): EditOutcome {
   const write = kind === "annotation" ? ctx.dialect.annotationText : ctx.dialect.dynamicText;
-  if (!write) return { error: kind === "annotation" ? "这种格式的文字请在源码里改" : "这种格式的力度请在源码里改" };
+  if (!write) return { error: kind === "annotation" ? tr("ve.textSrcOnly") : tr("ve.dynSrcOnly") };
   // 原文里文字写在 `"…"`、力度写在 `!…!` 里：同样的符号会把后面整段读乱
-  if (/["\n]/.test(value) || (kind === "dynamic" && value.includes("!"))) return { error: kind === "annotation" ? "文字里不能有英文双引号（可用中文引号）" : "力度里不能有 ! 或引号" };
+  if (/["\n]/.test(value) || (kind === "dynamic" && value.includes("!"))) return { error: kind === "annotation" ? tr("ve.textQuote") : tr("ve.dynQuote") };
   const sel = ctx.state.selection.main;
   const done = (changes: EditResult["changes"]): EditOutcome => {
     const map = mapper(ctx.state, changes);
@@ -455,7 +455,7 @@ export function setAttachedText(ctx: EditCtx, note: SyncEntry, kind: "annotation
   };
   const cur = attachedEntry(ctx, note, kind);
   if (cur) return done([value === "" ? spaceAround(ctx, cur.from, cur.to) : { from: cur.from, to: cur.to, insert: write(value) }]);
-  if (value === "") return { error: "这个音上没有可去掉的" };
+  if (value === "") return { error: tr("ve.nothingToRemove") };
   const marks = ctx.sync.ordered().filter((e) => e.kind === "mark" && e.id === note.id && e.from < note.from);
   const at = Math.min(note.from, ...marks.map((e) => e.from));
   return done([{ from: at, to: at, insert: write(value) }]);
@@ -471,9 +471,9 @@ export function attachedTextOf(ctx: EditCtx, note: SyncEntry, kind: "annotation"
 /** 选中的几个音做成连音（123 `(3: … )`、ABC `(3`）；组前已经是连音头（123 还要组后紧跟 `)`）就拆回去。 */
 export function toggleTupletText(ctx: EditCtx, from: number, to: number): EditOutcome {
   const tp = ctx.dialect.tuplet;
-  if (!tp) return { error: "这种格式的连音请在源码里改" };
+  if (!tp) return { error: tr("ve.tupletSrcOnly") };
   const notes = notesIn(ctx, from, to);
-  if (notes.length < 2) return { error: "选中两个以上的音再做连音" };
+  if (notes.length < 2) return { error: tr("ve.tupletTwo") };
   const first = notes[0]!;
   const last = notes[notes.length - 1]!;
   const marks = ctx.sync.ordered().filter((e) => e.kind === "mark" && e.id === first.id && e.from < first.from);
@@ -489,7 +489,7 @@ export function toggleTupletText(ctx: EditCtx, from: number, to: number): EditOu
   const grouped = ctx.doc ? notes.filter((e) => locate(ctx.doc!, e.id)?.chord.duration?.timeMod).length : 0;
   const n = head ? Number(/\d+/.exec(head[0])?.[0]) : 0;
   if (head && (tp.close === null || tail) ? n !== notes.length : grouped > 0) {
-    return { error: "选中的音一部分在连音里：选中整组连音再按可拆回" };
+    return { error: tr("ve.tupletPartial") };
   }
   if (head && (tp.close === null || tail)) {
     changes = [{ from: start - head[0].length, to: start, insert: "" }];

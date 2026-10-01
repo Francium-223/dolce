@@ -3,6 +3,7 @@
 // 附点/增时线/小节线/歌词，供用户逐音核对识别准确度。坐标与二值图同空间，直接用。
 
 import type { Binary, RecognizedScore, JpNum, Rect } from "./types";
+import { type MsgKey, t as tr } from "../i18n";
 import type { Reprojected, ShownNum } from "./reproject";
 import { rcx, rcy, rright, RHYTHM_DIGIT } from "./types";
 import { surfaceFromBinary } from "./surface";
@@ -571,13 +572,14 @@ function buildDoubtLayer(score: RecognizedScore, stats: Stats, lyricFixes: reado
     if (it.verse !== null) r.dataset.verse = String(it.verse);
     const t = document.createElementNS(SVG_NS, "title");
     const reasons = it.verse === null ? flat[it.i]!.doubt ?? [] : [];
-    t.textContent = it.verse === null ? `可疑：${reasons.map((x) => DOUBT_TEXT[x] ?? x).join("；")}` : `可疑：第 ${it.verse + 1} 段这个字认得没把握`;
+    t.textContent = it.verse === null ? tr("omr.doubt.reasons", { list: reasons.map((x) => (x in DOUBT_TEXT ? tr(`omr.doubt.${x}` as MsgKey) : x)).join(tr("omr.doubt.sep")) }) : tr("omr.doubt.lyric", { n: it.verse + 1 });
     r.appendChild(t);
     g.appendChild(r);
   }
   return g;
 }
 
+/** 有译文的可疑理由（文字在词典 `omr.doubt.<code>`；中文原文留作对照）。 */
 const DOUBT_TEXT: Record<string, string> = {
   "note.offRow": "比同一行的音高出或低出一截，可能不是音（小字、附注）",
   "oct.inkAbove": "正上方有像高音点的墨（粘在弧上），可能漏了高音点",

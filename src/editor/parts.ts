@@ -11,6 +11,7 @@ import {
   splitByChord, splitByVoice, stavesOf, TRANSPOSE_PRESETS, transposeKeyOf, type PartProps,
 } from "../model/parts";
 import { showConfirmDialog } from "./dialogs";
+import { type MsgKey, t } from "../i18n";
 
 function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls = "", text = ""): HTMLElementTagNameMap[K] {
   const e = document.createElement(tag);
@@ -113,7 +114,7 @@ export function showPartsPanel(app: App): void {
   const box = el("div", "modal-box parts-box");
   box.setAttribute("role", "dialog");
   box.setAttribute("aria-modal", "true");
-  const title = el("div", "modal-title", "声部");
+  const title = el("div", "modal-title", t("parts.title"));
   const body = el("div", "parts-body");
   const footer = el("div", "modal-footer");
   const close = (): void => {
@@ -129,7 +130,7 @@ export function showPartsPanel(app: App): void {
   overlay.addEventListener("click", (e) => {
     if (e.target === overlay) close();
   });
-  const done = el("button", "modal-button-primary", "完成");
+  const done = el("button", "modal-button-primary", t("parts.done"));
   done.type = "button";
   done.addEventListener("click", close);
   footer.append(done);
@@ -144,13 +145,13 @@ export function showPartsPanel(app: App): void {
     what: string, mutate: (doc: ScoreDoc) => boolean | number | void, isStructure = true, remap?: (i: number) => number,
   ): Promise<void> => {
     if (app.docFormat !== "musicxml" && hasComments(app.getText())) {
-      const ok = await showConfirmDialog("改声部", `「${what}」要按模型整份重出源码，源码里的 % 注释会丢掉（可撤销）。继续吗？`);
+      const ok = await showConfirmDialog(t("parts.confirmTitle"), t("parts.confirmComments", { what }));
       if (!ok) return;
     }
-    if (!app.editParts(mutate, isStructure)) app.setStatus(`没能${what}`);
+    if (!app.editParts(mutate, isStructure)) app.setStatus(t("parts.failed", { what: what.toLowerCase() }));
     else {
       if (remap) app.remapParts(remap);
-      app.setStatus(`已${what}（可撤销）`);
+      app.setStatus(t("parts.doneStatus", { what }));
     }
     render();
   };
@@ -167,16 +168,16 @@ export function showPartsPanel(app: App): void {
     const can = mode === "structure";
     if (!can) {
       body.append(el("p", "parts-note", app.docFormat === "jpwabc"
-        ? "JP-Word（.jpwabc）只有一个声部；这里只能调试听。"
-        : "文本谱的声部在源码里改（Q1–Q4 行）；这里只能调试听与简谱旋律。"));
+        ? t("parts.note.jpw")
+        : t("parts.note.pu")));
     }
     if (!doc || parts.length === 0) {
-      body.append(el("p", "parts-note", "当前没有可列的声部。"));
+      body.append(el("p", "parts-note", t("parts.note.none")));
       return;
     }
     const table = el("table", "parts-table");
     const head = el("tr");
-    for (const h of ["", "名称", "简称", "谱号", "移调", "谱表", "可见", "静音", "独奏", "音量", "简谱", "歌词", ""]) head.append(el("th", "", h));
+    for (const h of ["", t("parts.col.name"), t("parts.col.abbr"), t("parts.col.clef"), t("parts.col.transpose"), t("parts.col.staves"), t("parts.col.visible"), t("parts.col.mute"), t("parts.col.solo"), t("parts.col.volume"), t("parts.col.jianpu"), t("parts.col.lyrics"), ""]) head.append(el("th", "", h));
     table.append(head);
     parts.forEach((part, pi) => {
       const tr = el("tr");
@@ -185,17 +186,17 @@ export function showPartsPanel(app: App): void {
       // 名称 / 简称：失焦或回车提交
       const nameIn = el("input", "parts-input");
       nameIn.value = part.name ?? "";
-      nameIn.placeholder = `声部 ${pi + 1}`;
+      nameIn.placeholder = t("parts.defaultName", { n: pi + 1 });
       nameIn.disabled = !can;
       const abbrIn = el("input", "parts-input parts-abbr");
       abbrIn.value = part.abbrev ?? "";
-      abbrIn.placeholder = "如 S、A";
+      abbrIn.placeholder = t("parts.abbrPlaceholder");
       abbrIn.disabled = !can;
       const commitName = (): void => {
         const name = nameIn.value.trim();
         const abbrev = abbrIn.value.trim();
         if (name === (part.name ?? "") && abbrev === (part.abbrev ?? "")) return;
-        props("改名", { name, abbrev });
+        props(t("parts.op.rename"), { name, abbrev });
       };
       for (const inp of [nameIn, abbrIn]) {
         inp.addEventListener("keydown", (ev) => {
@@ -209,21 +210,21 @@ export function showPartsPanel(app: App): void {
       tr.children[2]!.append(abbrIn);
       // 谱号
       const clefSel = el("select", "parts-select");
-      for (const [k, label] of Object.entries(CLEF_LABEL)) {
-        const o = el("option", "", label);
+      for (const k of Object.keys(CLEF_LABEL)) {
+        const o = el("option", "", t(`parts.clef.${k}` as MsgKey));
         o.value = k;
         clefSel.append(o);
       }
       clefSel.value = clefNameOf(part);
       // ABC 的谱号解析不读（音名本就是实际音高），改了也看不出来，不给改
       clefSel.disabled = !can || app.docFormat === "abc";
-      clefSel.addEventListener("change", () => props("改谱号", { clef: clefSel.value as ClefName }));
+      clefSel.addEventListener("change", () => props(t("parts.op.clef"), { clef: clefSel.value as ClefName }));
       /** 改名、简称、谱号：123 / ABC 直接改 `V:` 行（不整份重出），MusicXML 改模型 */
       function props(what: string, p: PartProps): void {
         if (app.docFormat === "123" || app.docFormat === "abc") {
           const next = patchVoiceLine(app.getText(), pi, p);
           if (next !== null && app.replaceText(next, "input.parts")) {
-            app.setStatus(`已${what}（可撤销）`);
+            app.setStatus(t("parts.doneStatus", { what }));
             render();
             return;
           }
@@ -236,34 +237,34 @@ export function showPartsPanel(app: App): void {
       // 移调乐器：只 MusicXML 写得出 `<transpose>`
       const trSel = el("select", "parts-select");
       for (const pr of TRANSPOSE_PRESETS) {
-        const o = el("option", "", pr.label);
+        const o = el("option", "", t(`parts.tr.${pr.key}` as MsgKey));
         o.value = pr.key;
         trSel.append(o);
       }
       const trKey = transposeKeyOf(part);
       if (trKey === "other") {
-        const o = el("option", "", "（原谱另有设定）");
+        const o = el("option", "", t("parts.tr.other"));
         o.value = "other";
         trSel.append(o);
       }
       trSel.value = trKey;
       const xml = app.docFormat === "musicxml";
       trSel.disabled = !can || !xml;
-      trSel.title = xml ? "移调乐器：按记谱写、试听按实际音高发声" : "只有 MusicXML 能记移调乐器";
+      trSel.title = xml ? t("parts.tr.title") : t("parts.tr.onlyXml");
       trSel.addEventListener("change", () => {
         const pr = TRANSPOSE_PRESETS.find((x) => x.key === trSel.value);
-        if (pr) props("改移调", { transpose: pr.t });
+        if (pr) props(t("parts.op.transpose"), { transpose: pr.t });
       });
       const tdTr = el("td");
       tdTr.append(trSel);
       // 谱表数（钢琴等大谱表为 2）：只显示
       const tdStaves = el("td", "parts-idx", String(stavesOf(part)));
-      tdStaves.title = "这个声部用几行谱（大谱表为 2）";
+      tdStaves.title = t("parts.staves.title");
       // 五线谱 / 混排里显示不显示（会话内）
       const vis = el("input");
       vis.type = "checkbox";
       vis.checked = !app.hiddenParts.has(pi);
-      vis.title = "五线谱 / 混排里显示这个声部（只影响显示，试听照样出声；不写进文件）";
+      vis.title = t("parts.visible.title");
       vis.addEventListener("change", () => app.setPartVisible(pi, vis.checked));
       const tdVis = el("td");
       tdVis.append(vis);
@@ -272,12 +273,12 @@ export function showPartsPanel(app: App): void {
       const mute = el("input");
       mute.type = "checkbox";
       mute.checked = !!app.playback.partMuted[pi];
-      mute.title = "试听时不出这个声部";
+      mute.title = t("parts.mute.title");
       mute.addEventListener("change", () => app.playback.setPartMuted(pi, mute.checked));
       const solo = el("input");
       solo.type = "checkbox";
       solo.checked = app.playback.solo === pi;
-      solo.title = "只听这个声部（练声部用）";
+      solo.title = t("parts.solo.title");
       solo.addEventListener("change", () => {
         app.playback.setSolo(solo.checked ? pi : null);
         render();
@@ -287,7 +288,7 @@ export function showPartsPanel(app: App): void {
       vol.min = "0";
       vol.max = "100";
       vol.value = String(Math.round(app.playback.getPartVolume(pi) * 100));
-      vol.title = "试听与导出 MIDI 的音量";
+      vol.title = t("parts.volume.title");
       vol.addEventListener("change", () => app.playback.setPartVolume(pi, Number(vol.value) / 100));
       for (const c of [mute, solo, vol]) {
         const td = el("td");
@@ -299,7 +300,7 @@ export function showPartsPanel(app: App): void {
       mel.type = "radio";
       mel.name = "parts-melody";
       mel.checked = app.melodyPart === pi;
-      mel.title = "混排的简谱层与 MusicXML 的简谱档取这个声部";
+      mel.title = t("parts.melody.title");
       mel.addEventListener("change", () => {
         if (mel.checked) app.setMelodyPart(pi);
       });
@@ -313,7 +314,7 @@ export function showPartsPanel(app: App): void {
       // 缺省（都不勾）= 自动：展开档挑带词的那个声部排在最前
       lyr.checked = app.lyricPart === pi;
       lyr.disabled = app.docFormat !== "musicxml";
-      lyr.title = lyr.disabled ? "文本格式的歌词就是简谱下的词行" : "简谱展开档：旋律仍取「简谱」那个声部，歌词改取这个声部的（按时刻配上去）。都不勾 = 自动，排带词的声部";
+      lyr.title = lyr.disabled ? t("parts.lyric.textFmt") : t("parts.lyric.title");
       lyr.addEventListener("change", () => {
         if (lyr.checked) app.setLyricPart(pi);
       });
@@ -323,17 +324,17 @@ export function showPartsPanel(app: App): void {
       // 操作
       const ops = el("td", "parts-ops");
       ops.append(
-        btn("↑", "上移", () => void structural("上移声部", (d) => movePart(d, 0, pi, pi - 1), true, swapMap(pi, pi - 1)), !can || pi === 0),
-        btn("↓", "下移", () => void structural("下移声部", (d) => movePart(d, 0, pi, pi + 1), true, swapMap(pi, pi + 1)), !can || pi === parts.length - 1),
-        btn("复制", "复制这个声部（插在它后面）", () => void structural("复制声部", (d) => duplicatePart(d, 0, pi), true, insertAfter(pi)), !can),
-        btn("按声线拆", "闭合谱：第二条声线拆成下面一个新声部（如 S/A 一行谱拆成两行）", () => void structural("按声线拆分", (d) => splitByVoice(d, 0, pi), true, insertAfter(pi)), !can || shape.voices < 2),
-        btn("按和弦拆", "闭合谱：和弦里最低的音拆成下面一个新声部（单音两边各一份）", () => void structural("按和弦拆分", (d) => splitByChord(d, 0, pi), true, insertAfter(pi)), !can || !shape.chords),
+        btn("↑", t("parts.up"), () => void structural(t("parts.op.up"), (d) => movePart(d, 0, pi, pi - 1), true, swapMap(pi, pi - 1)), !can || pi === 0),
+        btn("↓", t("parts.down"), () => void structural(t("parts.op.down"), (d) => movePart(d, 0, pi, pi + 1), true, swapMap(pi, pi + 1)), !can || pi === parts.length - 1),
+        btn(t("parts.dup"), t("parts.dup.title"), () => void structural(t("parts.op.dup"), (d) => duplicatePart(d, 0, pi), true, insertAfter(pi)), !can),
+        btn(t("parts.splitVoice"), t("parts.splitVoice.title"), () => void structural(t("parts.op.splitVoice"), (d) => splitByVoice(d, 0, pi), true, insertAfter(pi)), !can || shape.voices < 2),
+        btn(t("parts.splitChord"), t("parts.splitChord.title"), () => void structural(t("parts.op.splitChord"), (d) => splitByChord(d, 0, pi), true, insertAfter(pi)), !can || !shape.chords),
         // 123 / ABC 的写出端不写小节内临时声部（`&`），并成第二声线会丢音：合成闭合谱只对 MusicXML
-        btn("并入上一个", app.docFormat === "musicxml" ? "合成闭合谱：这个声部并进上一个声部当第二声线" : "合成闭合谱只对 MusicXML（123 / ABC 的一个声部只写一路旋律）",
-          () => void structural("合并声部", (d) => mergeInto(d, 0, pi - 1, pi), true, removed(pi)), !can || pi === 0 || app.docFormat !== "musicxml"),
-        btn("删除", "删掉这个声部", () => {
-          void showConfirmDialog("删除声部", `删掉「${part.name || `声部 ${pi + 1}`}」？（可撤销）`).then((ok) => {
-            if (ok) void structural("删除声部", (d) => deletePart(d, 0, pi), true, removed(pi));
+        btn(t("parts.merge"), app.docFormat === "musicxml" ? t("parts.merge.title") : t("parts.merge.onlyXml"),
+          () => void structural(t("parts.op.merge"), (d) => mergeInto(d, 0, pi - 1, pi), true, removed(pi)), !can || pi === 0 || app.docFormat !== "musicxml"),
+        btn(t("parts.delete"), t("parts.delete.title"), () => {
+          void showConfirmDialog(t("parts.op.delete"), t("parts.delete.confirm", { name: part.name || t("parts.defaultName", { n: pi + 1 }) })).then((ok) => {
+            if (ok) void structural(t("parts.op.delete"), (d) => deletePart(d, 0, pi), true, removed(pi));
           });
         }, !can || parts.length < 2),
       );
@@ -345,21 +346,21 @@ export function showPartsPanel(app: App): void {
     // 底部：新建声部 · 歌词复制
     const tools = el("div", "parts-tools");
     const newClef = el("select", "parts-select");
-    for (const [k, label] of Object.entries(CLEF_LABEL)) {
-      const o = el("option", "", label);
+    for (const k of Object.keys(CLEF_LABEL)) {
+      const o = el("option", "", t(`parts.clef.${k}` as MsgKey));
       o.value = k;
       newClef.append(o);
     }
     tools.append(
-      btn("新建声部", "在最后加一个声部（整小节休止，小节结构照第一声部）", () =>
-        void structural("新建声部", (d) => addPart(d, 0, { clef: newClef.value as ClefName })), !can),
+      btn(t("parts.add"), t("parts.add.title"), () =>
+        void structural(t("parts.add"), (d) => addPart(d, 0, { clef: newClef.value as ClefName })), !can),
       newClef,
     );
     if (parts.length > 1) {
       const from = el("select", "parts-select");
       const to = el("select", "parts-select");
       parts.forEach((p, i) => {
-        const label = p.name || `声部 ${i + 1}`;
+        const label = p.name || t("parts.defaultName", { n: i + 1 });
         const a = el("option", "", label);
         a.value = String(i);
         from.append(a);
@@ -370,12 +371,12 @@ export function showPartsPanel(app: App): void {
       to.value = "1";
       tools.append(
         el("span", "parts-sep"),
-        el("span", "parts-label", "歌词从"), from, el("span", "parts-label", "复制到"), to,
-        btn("复制歌词", "按同一时刻把歌词抄给目标声部（目标已有的那一段不覆盖）。SATB 中间一排词供几部共用时用", () => {
+        el("span", "parts-label", t("parts.lyricFrom")), from, el("span", "parts-label", t("parts.lyricTo")), to,
+        btn(t("parts.copyLyrics"), t("parts.copyLyrics.title"), () => {
           const a = Number(from.value);
           const b = Number(to.value);
           if (a === b) return;
-          void structural("复制歌词", (d) => copyLyrics(d, 0, a, b) > 0);
+          void structural(t("parts.copyLyrics"), (d) => copyLyrics(d, 0, a, b) > 0);
         }, !can),
       );
     }
@@ -393,30 +394,30 @@ export function showPartsPanel(app: App): void {
     const k = Math.max(0, ...a.slots.flat()) + 1;
     const draft = a.slots.map((row) => [...row]);
     const sec = el("div", "parts-assign");
-    sec.append(el("div", "parts-assign-title", "谱表 ↔ 声部（识别结果）"));
-    sec.append(el("p", "parts-note", "识别把每个系统里的各行谱对到声部上；对错了（比如某个系统少印了一个声部、钢琴伴奏不要）就在这里改，「应用」后按新的对应重建，不重新识别。"));
+    sec.append(el("div", "parts-assign-title", t("parts.assign.title")));
+    sec.append(el("p", "parts-note", t("parts.assign.note")));
     const table = el("table", "parts-table");
     const cols = Math.max(...a.slots.map((r) => r.length));
     const head = el("tr");
-    head.append(el("th", "", "系统"));
-    for (let c = 0; c < cols; c++) head.append(el("th", "", `第 ${c + 1} 行谱`));
+    head.append(el("th", "", t("parts.assign.system")));
+    for (let c = 0; c < cols; c++) head.append(el("th", "", t("parts.assign.staff", { n: c + 1 })));
     table.append(head);
     a.slots.forEach((row, si) => {
       const tr = el("tr");
-      tr.append(el("td", "parts-idx", `${si + 1}（第 ${a.systems[si]!.page + 1} 页）`));
+      tr.append(el("td", "parts-idx", t("parts.assign.sysPage", { n: si + 1, page: a.systems[si]!.page + 1 })));
       for (let c = 0; c < cols; c++) {
         const td = el("td");
         if (c < row.length) {
           const sel = el("select", "parts-select");
           for (let v = 0; v < k; v++) {
-            const o = el("option", "", `声部行 ${v + 1}`);
+            const o = el("option", "", t("parts.assign.row", { n: v + 1 }));
             o.value = String(v);
             sel.append(o);
           }
-          const nw = el("option", "", "新声部");
+          const nw = el("option", "", t("parts.assign.new"));
           nw.value = String(k);
           sel.append(nw);
-          const ig = el("option", "", "忽略");
+          const ig = el("option", "", t("parts.assign.ignore"));
           ig.value = "-1";
           sel.append(ig);
           sel.value = String(row[c]);
@@ -428,7 +429,7 @@ export function showPartsPanel(app: App): void {
       table.append(tr);
     });
     sec.append(table);
-    sec.append(btn("应用", "按上面的对应重建乐谱（不重新识别；谱面上的改动会丢，事先会问）", () => {
+    sec.append(btn(t("parts.assign.apply"), t("parts.assign.apply.title"), () => {
       void app.omr.rebuildStaff(draft).then((ok) => {
         if (ok) render();
       });

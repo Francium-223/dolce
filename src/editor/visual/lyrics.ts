@@ -11,6 +11,7 @@ import { ZERO_SPAN } from "../../model/helpers";
 import type { SyncEntry } from "../sync";
 import { blockStart, lastMusicLine, lyricBody, lyricLinesAfter, slotsBetween } from "./breaks";
 import type { EditCtx, EditOutcome } from "./ops";
+import { t as tr } from "../../i18n";
 
 const CJK = /[㐀-鿿豈-﫿]/;
 
@@ -53,7 +54,7 @@ export function setLyricText(ctx: EditCtx, note: SyncEntry, verse: number, text:
   const want = text === "" ? skip : text;
   const line = lines[verse - 1];
   if (!line) {
-    if (verse - 1 > lines.length) return { error: `先填第 ${lines.length + 1} 段` };
+    if (verse - 1 > lines.length) return { error: tr("ve.fillVerseFirst", { n: lines.length + 1 }) };
     // 这一段还没有词行：新起一行，前面 k 格补跳格符
     const after = lines.length ? lines[lines.length - 1]! : last;
     const body = [...Array<string>(k).fill(skip), want + (hyphen ? "-" : ""), ...(extend ? ["_"] : [])].join(" ");
@@ -87,7 +88,7 @@ export function setLyricText(ctx: EditCtx, note: SyncEntry, verse: number, text:
 /** 文本谱、`.jpwabc`：只改已经有字的那一格（索引里的歌词条目）。 */
 function setExisting(ctx: EditCtx, note: SyncEntry, verse: number, text: string): EditOutcome {
   const e = lyricEntry(ctx.sync.ordered(), note, verse);
-  if (!e) return { error: "这种格式只能改已有的字；这个音还没配字，请在源码的词行里补" };
+  if (!e) return { error: tr("ve.lyricNoSlot") };
   return { changes: [{ from: e.from, to: e.to, insert: text }], anchor: ctx.state.selection.main.anchor, head: ctx.state.selection.main.head };
 }
 

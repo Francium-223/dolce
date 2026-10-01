@@ -820,7 +820,7 @@ export class VisualEditController {
     const span = this.host.sync.spanOfNote(entry.id) ?? entry;
     this.pickedNote = { id: entry.id, index: k, from: span.from, to: span.to };
     this.select(span.from, span.to);
-    this.host.setStatus(`选中了和弦里从低往高第 ${k + 1} 个音，Delete 只删它`);
+    this.host.setStatus(tr("ve.chordNotePicked", { n: k + 1 }));
     return true;
   }
 
@@ -1232,7 +1232,7 @@ export class VisualEditController {
       case "nav.extendNext": return this.move(1, true);
       case "sel.all": return this.selectAll();
       case "chord.add":
-        this.host.setStatus("简谱一个声部只印一路旋律：和弦音请另起声部（123 的 V:），这里只对 MusicXML 生效");
+        this.host.setStatus(tr("ve.chordOnlyXml"));
         return true;
       case "meas.append": case "meas.insert": case "meas.delete":
       case "bar.single": case "bar.double": case "bar.final": case "bar.repeatStart": case "bar.repeatEnd":
@@ -1240,7 +1240,7 @@ export class VisualEditController {
       case "jump.segno": case "jump.coda": case "jump.dc": case "jump.ds": case "jump.fine":
         return this.measureText(a.id, null);
       case "meas.key": case "meas.time": case "meas.tempo": {
-        const hint = a.id === "meas.key" ? "调号，如 1=G、bB、F#" : a.id === "meas.time" ? "拍号，如 3/4、6/8" : "速度（每分钟拍数），0 去掉";
+        const hint = a.id === "meas.key" ? tr("ve.hint.key") : a.id === "meas.time" ? tr("ve.hint.time") : tr("ve.hint.tempo");
         void this.modelCtx.prompt(hint, "").then((v) => {
           if (v !== null) this.measureText(a.id, v);
         });
@@ -1249,8 +1249,8 @@ export class VisualEditController {
       case "voice.set": {
         this.curVoice = Number(key) || 1;
         this.host.setStatus(this.host.modelEditing()
-          ? `插入模式新插的音落在第 ${this.curVoice} 声部`
-          : "文本格式的多声部在源码里用 V: 分开写（123 / ABC），这里只对 MusicXML 生效");
+          ? tr("ve.voiceNow", { n: this.curVoice })
+          : tr("ve.voiceOnlyXml"));
         this.refresh();
         return true;
       }
@@ -1259,7 +1259,7 @@ export class VisualEditController {
       case "nav.extendMeasPrev": return this.measureJump(-1, true);
       case "nav.extendMeasNext": return this.measureJump(1, true);
       case "nav.gotoMeasure":
-        void this.modelCtx.prompt("跳到第几小节", "").then((v) => {
+        void this.modelCtx.prompt(tr("ve.gotoPrompt"), "").then((v) => {
           this.host.scorePane.focus({ preventScroll: true });
           if (v !== null && v.trim()) this.gotoMeasure(Number(v.trim()));
         });
@@ -1407,7 +1407,7 @@ export class VisualEditController {
     const sel = this.host.view.state.selection.main;
     const es = sel.empty ? [] : this.selectedEntries().filter((e) => e.kind === "note" || e.kind === "sustain" || e.kind === "barline");
     if (!es.length) {
-      this.host.setStatus("先选中要复制的音符（编辑模式）");
+      this.host.setStatus(tr("ve.selectToCopy"));
       return null;
     }
     if (this.host.modelEditing()) {
@@ -1439,7 +1439,7 @@ export class VisualEditController {
     if (!c) return null;
     setClip(c);
     if (system && c.text) void navigator.clipboard?.writeText(c.text).catch(() => undefined);
-    this.host.setStatus(`已复制 ${c.items.filter((i) => i.kind === "note").length} 个音`);
+    this.host.setStatus(tr("ve.copied", { n: c.items.filter((i) => i.kind === "note").length }));
     return c;
   }
 
@@ -1462,7 +1462,7 @@ export class VisualEditController {
   private paste(clip: Clip | null, raw: string | null): boolean {
     if (this.host.modelEditing()) {
       if (!clip) {
-        this.host.setStatus(raw ? "MusicXML 里只能贴从谱面上复制的音" : "剪贴板是空的");
+        this.host.setStatus(raw ? tr("ve.pasteXmlOnly") : tr("ve.clipEmpty"));
         return true;
       }
       return pasteModel(this.modelCtx, clip.items);
@@ -1472,7 +1472,7 @@ export class VisualEditController {
     const pos = this.insertPos(c);
     const text = clip ? (clip.dialect === c.dialect && clip.text ? clip.text : itemsToText(clip.items, c.dialect, noteCtx(c, pos))) : raw;
     if (!text?.trim()) {
-      this.host.setStatus("剪贴板是空的");
+      this.host.setStatus(tr("ve.clipEmpty"));
       return true;
     }
     const r = spacedInsert(c, pos, text.trim());
@@ -1524,7 +1524,7 @@ export class VisualEditController {
     const anchor = this.host.noteEl(note.id) ?? this.elOfEntry(note) ?? this.host.scorePane;
     const raw = lyricTextOf(this.host.view.state, this.host.sync.ordered(), note, verse);
     const cur = this.host.modelEditing() ? unescapeXml(raw) : raw;
-    openInlineEditor(anchor, cur, (d) => this.lyricDone(idx, verse, cur, d), `第 ${verse} 段歌词`, {
+    openInlineEditor(anchor, cur, (d) => this.lyricDone(idx, verse, cur, d), tr("ve.verseN", { n: verse }), {
       keys: { " ": "next", "-": "hyphen", _: "extend", "/": "skip", "Shift+ ": "prev", Enter: "verse" },
     });
   }
@@ -1605,7 +1605,7 @@ export class VisualEditController {
       cur = c && e ? chordNameOf(c, e) : "";
     }
     const anchor = this.host.noteEl(note.id) ?? this.elOfEntry(note) ?? this.host.scorePane;
-    openInlineEditor(anchor, cur, (d) => this.chordDone(idx, cur, d), "和弦名", { keys: { " ": "next", "Shift+ ": "prev", Enter: "stop" } });
+    openInlineEditor(anchor, cur, (d) => this.chordDone(idx, cur, d), tr("ve.chordName"), { keys: { " ": "next", "Shift+ ": "prev", Enter: "stop" } });
   }
 
   private chordDone(idx: number, old: string, d: InlineDone): void {
@@ -1664,7 +1664,7 @@ export class VisualEditController {
       }
       const value = d.value.trim();
       if (kind === "dynamic" && value && !DYNAMICS.test(value)) {
-        this.host.setStatus(`「${value}」不是力度记号（p、mp、mf、f、ff、sfz、fp……）`);
+        this.host.setStatus(tr("ve.notDynamic", { v: value }));
         this.host.scorePane.focus({ preventScroll: true });
         return;
       }
@@ -1683,7 +1683,7 @@ export class VisualEditController {
         return;
       }
       void this.host.whenIdle().then(() => this.openAttachedBox(kind, idx + (tag === "prev" ? -1 : 1)));
-    }, kind === "annotation" ? "文字" : "力度（p mf f…）", { keys });
+    }, kind === "annotation" ? tr("ve.text") : tr("ve.dynamic"), { keys });
   }
 
   /** 选区里的音（按原文顺序；试听的循环段用）。插入模式为空。 */
@@ -1770,7 +1770,7 @@ export class VisualEditController {
   private gotoMeasure(n: number): boolean {
     const doc = this.host.syncDoc();
     if (!doc || !Number.isInteger(n) || n < 0) {
-      this.host.setStatus("小节号要是整数");
+      this.host.setStatus(tr("ve.measureInt"));
       return true;
     }
     const nav = this.navigable();
@@ -1802,7 +1802,7 @@ export class VisualEditController {
       }
       return true;
     }
-    this.host.setStatus(`没有第 ${n} 小节`);
+    this.host.setStatus(tr("ve.noMeasure", { n }));
     return true;
   }
 
@@ -1948,7 +1948,7 @@ export class VisualEditController {
     if (!sel.empty) return this.apply(fn(c, sel.from, sel.to), true);
     const prev = [...this.navigable()].reverse().find((e) => e.to <= sel.head);
     if (prev?.kind !== "note") {
-      this.host.setStatus("先选中一个音符");
+      this.host.setStatus(tr("ve.selectNote"));
       return true;
     }
     const out = fn(c, prev.from, prev.to);

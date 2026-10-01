@@ -18,6 +18,7 @@ import { dropEmbeddedLayout, forgetNoteLayout } from "../../model/xmlsurface";
 import type { SyncEntry, SyncIndex } from "../sync";
 import type { NoteDuration } from "./dialect";
 import type { VisualAction } from "./keys";
+import { t as tr } from "../../i18n";
 
 /** 模型那一路向控制器要的东西。 */
 export interface ModelActionCtx {
@@ -67,7 +68,7 @@ type Target = { select: ChordPos[] } | { caretAfter: ChordPos } | { caretBefore:
 function commit(ctx: ModelActionCtx, fn: (doc: ScoreDoc) => ModelEdit, sound = false): boolean {
   const doc = ctx.freshModel();
   if (!doc) {
-    ctx.setStatus("这份 MusicXML 读不出来，没法在谱面上改");
+    ctx.setStatus(tr("ve.xmlUnreadable"));
     return true;
   }
   const out = fn(doc);
@@ -165,7 +166,7 @@ function insertAnchor(ctx: ModelActionCtx, doc: ScoreDoc): InsertAnchor | null {
 function insertNote(ctx: ModelActionCtx, degreeAt: (doc: ScoreDoc, at: InsertAnchor) => number): boolean {
   return commit(ctx, (doc) => {
     const at = insertAnchor(ctx, doc);
-    if (!at) return { error: "这里插不进音符" };
+    if (!at) return { error: tr("ve.cantInsert") };
     const d = degreeAt(doc, at);
     const ref = "after" in at ? locate(doc, at.after) : null;
     if (ref && ref.chord.voice !== ctx.curVoice) {
@@ -185,7 +186,7 @@ export function pasteModel(ctx: ModelActionCtx, items: readonly ClipItem[]): boo
   const insert = ctx.view.state.selection.main.empty;
   return commit(ctx, (doc) => {
     const at = insertAnchor(ctx, doc);
-    const r = at ? pasteClip(doc, at, items, HOOKS) : { error: "这里贴不进音符" };
+    const r = at ? pasteClip(doc, at, items, HOOKS) : { error: tr("ve.cantPaste") };
     return insert && "select" in r ? { caretAfter: r.select[r.select.length - 1]! } : r;
   });
 }
@@ -195,7 +196,7 @@ export function transposeModel(ctx: ModelActionCtx, whole: boolean, n: number): 
   if (whole) return commit(ctx, (doc) => transposeScore(doc, n, HOOKS));
   const ids = selectedNotes(ctx);
   if (!ids.length) {
-    ctx.setStatus("先选中要移的音");
+    ctx.setStatus(tr("ve.selectToMove"));
     return true;
   }
   return commit(ctx, (doc) => shiftSemitones(doc, ids, n, HOOKS), true);
@@ -258,17 +259,17 @@ function removeEntries(ctx: ModelActionCtx, targets: SyncEntry[]): boolean {
   if (bar) {
     return commit(ctx, (doc) => {
       const l = locate(doc, bar.id);
-      return l ? mergeMeasures(doc, l.si, l.mi, HOOKS) : { error: "找不到这条小节线" };
+      return l ? mergeMeasures(doc, l.si, l.mi, HOOKS) : { error: tr("ve.noBarline") };
     });
   }
   if (brk) {
     return commit(ctx, (doc) => {
       const l = locate(doc, brk.id);
-      return l ? setBreakBefore(doc, l.si, l.mi + 1, null) : { error: "找不到这处换行" };
+      return l ? setBreakBefore(doc, l.si, l.mi + 1, null) : { error: tr("ve.noBreak") };
     });
   }
   if (slur && slur.end !== undefined) return commit(ctx, (doc) => toggleSlur(doc, slur.id, slur.end!));
-  ctx.setStatus("这个在 MusicXML 里暂不能在谱面上删");
+  ctx.setStatus(tr("ve.cantDeleteXml"));
   return true;
 }
 
@@ -282,7 +283,7 @@ export function runModelAction(ctx: ModelActionCtx, a: VisualAction, key: string
   const need = (fn: (doc: ScoreDoc, ids: ElementId[]) => ModelEdit, sound = false): boolean => {
     const list = ids();
     if (list.length === 0) {
-      ctx.setStatus("先选中一个音符");
+      ctx.setStatus(tr("ve.selectNote"));
       return true;
     }
     return commit(ctx, (doc) => fn(doc, list), sound);
@@ -292,7 +293,7 @@ export function runModelAction(ctx: ModelActionCtx, a: VisualAction, key: string
     if (edit) return need(fn, true);
     const prev = entryBeforeCaret(ctx);
     if (prev?.kind !== "note") {
-      ctx.setStatus("先选中一个音符");
+      ctx.setStatus(tr("ve.selectNote"));
       return true;
     }
     return commit(ctx, (doc) => {
@@ -314,7 +315,7 @@ export function runModelAction(ctx: ModelActionCtx, a: VisualAction, key: string
       const d = Number(key);
       const id = ids().pop();
       if (id === undefined) {
-        ctx.setStatus("先选中一个音符");
+        ctx.setStatus(tr("ve.selectNote"));
         return true;
       }
       return commit(ctx, (doc) => addChordNote(doc, id, d, HOOKS), true);
@@ -330,27 +331,27 @@ export function runModelAction(ctx: ModelActionCtx, a: VisualAction, key: string
     case "meas.delete":
       return commit(ctx, (doc) => {
         const r = selectedMeasures(ctx, doc);
-        return r ? deleteMeasures(doc, r.si, r.from, r.to, HOOKS) : { error: "先选中要删的小节" };
+        return r ? deleteMeasures(doc, r.si, r.from, r.to, HOOKS) : { error: tr("ve.selectMeasToDelete") };
       });
     case "meas.key":
     case "meas.time":
     case "meas.tempo": {
-      const hint = a.id === "meas.key" ? "调号，如 1=G、bB、F#" : a.id === "meas.time" ? "拍号，如 3/4、6/8" : "速度（每分钟拍数），0 去掉";
+      const hint = a.id === "meas.key" ? tr("ve.hint.key") : a.id === "meas.time" ? tr("ve.hint.time") : tr("ve.hint.tempo");
       void ctx.prompt(hint, "").then((v) => {
         if (v === null) return;
         commit(ctx, (doc) => {
           const r = selectedMeasures(ctx, doc);
-          if (!r) return { error: "先选中一个小节里的音" };
+          if (!r) return { error: tr("ve.selectInMeasure") };
           if (a.id === "meas.key") {
             const f = parseKeyInput(v);
-            return f === null ? { error: `读不懂调号「${v}」` } : setKeyAt(doc, r.si, r.from, f, HOOKS);
+            return f === null ? { error: tr("ve.badKey", { v }) } : setKeyAt(doc, r.si, r.from, f, HOOKS);
           }
           if (a.id === "meas.time") {
             const t = parseTimeInput(v);
-            return t ? setTimeAt(doc, r.si, r.from, t.beats, t.beatType, HOOKS) : { error: `读不懂拍号「${v}」` };
+            return t ? setTimeAt(doc, r.si, r.from, t.beats, t.beatType, HOOKS) : { error: tr("ve.badTime", { v }) };
           }
           const bpm = parseTempoInput(v);
-          return bpm === null ? { error: `读不懂速度「${v}」` } : setTempoAt(doc, r.si, r.from, bpm);
+          return bpm === null ? { error: tr("ve.badTempo", { v }) } : setTempoAt(doc, r.si, r.from, bpm);
         });
       });
       return true;
@@ -363,7 +364,7 @@ export function runModelAction(ctx: ModelActionCtx, a: VisualAction, key: string
       const kind = a.id.slice(4) as BarKind;
       return commit(ctx, (doc) => {
         const r = selectedMeasures(ctx, doc);
-        if (!r) return { error: "先选中一个小节里的音或小节线" };
+        if (!r) return { error: tr("ve.selectMeasOrBar") };
         return setBarKind(doc, r.si, kind === "repeatStart" ? r.from : r.to, kind);
       });
     }
@@ -371,7 +372,7 @@ export function runModelAction(ctx: ModelActionCtx, a: VisualAction, key: string
     case "volta.2":
       return commit(ctx, (doc) => {
         const r = selectedMeasures(ctx, doc);
-        return r ? toggleEnding(doc, r.si, r.from, r.to, a.id === "volta.1" ? 1 : 2) : { error: "先选中要标房号的小节" };
+        return r ? toggleEnding(doc, r.si, r.from, r.to, a.id === "volta.1" ? 1 : 2) : { error: tr("ve.selectVolta") };
       });
     case "jump.segno":
     case "jump.coda":
@@ -381,7 +382,7 @@ export function runModelAction(ctx: ModelActionCtx, a: VisualAction, key: string
       return commit(ctx, (doc) => {
         const r = selectedMeasures(ctx, doc);
         const kind = a.id.slice(5) as JumpKind;
-        if (!r) return { error: "先选中一个小节里的音" };
+        if (!r) return { error: tr("ve.selectInMeasure") };
         return toggleJump(doc, r.si, kind === "segno" || kind === "coda" ? r.from : r.to, kind);
       });
     case "oct.up": return pitch((doc, l) => shiftOctave(doc, l, 1, HOOKS));
@@ -403,7 +404,7 @@ export function runModelAction(ctx: ModelActionCtx, a: VisualAction, key: string
         return p?.kind === "note" ? p.id : undefined;
       })();
       if (id === undefined) {
-        ctx.setStatus("先选中一个音符");
+        ctx.setStatus(tr("ve.selectNote"));
         return true;
       }
       return commit(ctx, (doc) => addBeat(doc, id, HOOKS));
@@ -411,7 +412,7 @@ export function runModelAction(ctx: ModelActionCtx, a: VisualAction, key: string
     case "slur.toggle": {
       const l = ids();
       if (l.length < 2) {
-        ctx.setStatus("圆滑线要选中两个以上的音");
+        ctx.setStatus(tr("ve.slurTwo"));
         return true;
       }
       return commit(ctx, (doc) => toggleSlur(doc, l[0]!, l[l.length - 1]!));
@@ -432,9 +433,9 @@ export function runModelAction(ctx: ModelActionCtx, a: VisualAction, key: string
       const page = a.id === "brk.page";
       return commit(ctx, (doc) => {
         const l = locate(doc, id);
-        if (!l) return { error: "找不到换行位置" };
+        if (!l) return { error: tr("ve.noBreakPos") };
         const last = [...l.measure.elements].reverse().find((e) => e.kind === "chord" && e.voice === l.chord.voice);
-        if (last !== l.chord) return { error: "五线谱只能在小节线处换行：先在这里加一条小节线（|）" };
+        if (last !== l.chord) return { error: tr("ve.breakAtBar") };
         return setBreakBefore(doc, l.si, l.mi + 1, page ? "page" : "system");
       });
     }

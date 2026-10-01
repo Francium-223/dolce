@@ -7,6 +7,7 @@
 
 import { showFormDialog } from "./dialogs";
 import type { RecogInput } from "./omrctl";
+import { t } from "../i18n";
 
 const isPdf = (f: RecogInput): boolean => f.mime === "application/pdf" || /\.pdf$/i.test(f.name ?? "");
 
@@ -17,7 +18,7 @@ async function bitmapOf(f: RecogInput): Promise<ImageBitmap> {
 
 /** 画布 → PNG（无损：简谱路要二值化，JPEG 的块状噪声会伤细线） */
 async function pngOf(canvas: HTMLCanvasElement, name: string | undefined): Promise<RecogInput> {
-  const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("图片写不出"))), "image/png"));
+  const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((b) => (b ? resolve(b) : reject(new Error(t("pages.encodeFailed")))), "image/png"));
   return { bytes: new Uint8Array(await blob.arrayBuffer()), mime: "image/png", name: (name ?? "page").replace(/\.[^.]+$/, "") + ".png" };
 }
 
@@ -68,13 +69,13 @@ function pickCrop(f: RecogInput): Promise<{ x: number; y: number; w: number; h: 
     const bar = document.createElement("div");
     bar.className = "omr-crop-bar";
     const hint = document.createElement("span");
-    hint.textContent = "按住拖出要留下的部分";
+    hint.textContent = t("pages.crop.hint");
     const ok = document.createElement("button");
     ok.className = "modal-button-primary";
-    ok.textContent = "裁剪";
+    ok.textContent = t("pages.crop");
     ok.disabled = true;
     const cancel = document.createElement("button");
-    cancel.textContent = "取消";
+    cancel.textContent = t("pages.cancel");
     bar.append(hint, cancel, ok);
     overlay.append(wrap, bar);
     document.body.append(overlay);
@@ -142,7 +143,7 @@ export function showPagesDialog(
   const urls: string[] = [];
   const hint = document.createElement("div");
   hint.style.cssText = "margin-top:8px;opacity:0.75;font-size:12px;line-height:1.6";
-  hint.textContent = opts.hint ?? "按列表顺序合成一首（简谱一次只认第一份），行可以拖动换顺序。改完点「按这些页重新识别」整首重跑；谱面上已做的修改会丢，事先会问。";
+  hint.textContent = opts.hint ?? t("pages.hint");
   const render = (): void => {
     for (const u of urls.splice(0)) URL.revokeObjectURL(u);
     if (closed) return;
@@ -197,7 +198,7 @@ export function showPagesDialog(
       } else thumb.textContent = "PDF";
       const name = document.createElement("span");
       name.className = "omr-pages-name";
-      name.textContent = f.name ?? `第 ${i + 1} 份`;
+      name.textContent = f.name ?? t("pages.nth", { n: i + 1 });
       const btn = (label: string, title: string, on: () => void | Promise<void>, disabled = false): HTMLButtonElement => {
         const b = document.createElement("button");
         b.type = "button";
@@ -209,7 +210,7 @@ export function showPagesDialog(
           if (busy() || closed) return;
           table.classList.add("busy");
           pending = Promise.resolve(on()).catch((e) => {
-            hint.textContent = "处理失败：" + (e instanceof Error ? e.message : String(e));
+            hint.textContent = t("pages.failed") + (e instanceof Error ? e.message : String(e));
           }).finally(() => {
             table.classList.remove("busy");
             render();
@@ -222,22 +223,22 @@ export function showPagesDialog(
       };
       row.append(
         idx, thumb, name,
-        btn("↑", "往前挪", () => swap(i, i - 1), i === 0),
-        btn("↓", "往后挪", () => swap(i, i + 1), i === list.length - 1),
+        btn("↑", t("pages.up"), () => swap(i, i - 1), i === 0),
+        btn("↓", t("pages.down"), () => swap(i, i + 1), i === list.length - 1),
         // 编码回来按对象找回它现在的位置（期间加了图，下标可能已变）
-        btn("旋转", "顺时针转 90°（拍歪、横着拍的图）", async () => {
+        btn(t("pages.rotate"), t("pages.rotate.title"), async () => {
           const out = await rotateImage(f);
           const k = list.indexOf(f);
           if (k >= 0) list[k] = out;
         }, isPdf(f)),
-        btn("裁剪", "只留下拖出的那块（裁掉页边、旁边的另一页）", async () => {
+        btn(t("pages.crop"), t("pages.crop.title"), async () => {
           const r = await pickCrop(f);
           if (!r) return;
           const out = await cropImage(f, r);
           const k = list.indexOf(f);
           if (k >= 0) list[k] = out;
         }, isPdf(f)),
-        btn("删除", "这份不要了", () => {
+        btn(t("pages.delete"), t("pages.delete.title"), () => {
           list = list.filter((_, k) => k !== i);
         }, list.length <= 1),
       );
@@ -274,15 +275,15 @@ export function showPagesDialog(
   });
   const addBtn = document.createElement("button");
   addBtn.type = "button";
-  addBtn.textContent = "加图…";
+  addBtn.textContent = t("pages.add");
   addBtn.addEventListener("click", () => add.click());
   body.append(table, addBtn, add, hint);
-  showFormDialog("原图页", body, () => {
+  showFormDialog(t("pages.title"), body, () => {
     closed = true;
     for (const u of urls.splice(0)) URL.revokeObjectURL(u);
     // 旋转 / 裁剪还在编码：等它做完再交（交出去的才是转过的那张）
     void pending.then(() => apply(list));
-  }, opts.okLabel ?? "按这些页重新识别", () => {
+  }, opts.okLabel ?? t("pages.rerun"), () => {
     closed = true;
     for (const u of urls.splice(0)) URL.revokeObjectURL(u);
     opts.onCancel?.();
@@ -297,8 +298,8 @@ export function adjustBeforeRecognize(files: readonly RecogInput[]): Promise<Rec
       done = true;
       resolve(list);
     }, {
-      okLabel: "开始识别",
-      hint: "识别前先把原图摆好：横着拍的转过来，页边、旁边的另一页裁掉，几张图按顺序排好（行可以拖动）。",
+      okLabel: t("pages.start"),
+      hint: t("pages.beforeHint"),
       onCancel: () => {
         if (!done) resolve(null);
       },

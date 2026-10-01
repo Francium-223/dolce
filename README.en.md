@@ -42,13 +42,19 @@ The interface is available in **English and Chinese**: it follows your browser l
 - **Visual editing.** Select, insert and change notes and marks directly on the score: scale degree or note name, step / semitone / octave, accidentals,
   duration, extension dashes, barlines, slurs and ties, fermatas, accents, and line and page breaks. You can use
   the keyboard, a context menu or a symbol palette, in the jianpu, staff and mixed views alike. Every edit is
-  written back to the source text and shares one undo history with the code editor.
+  written back to the source text and shares one undo history with the code editor. Key bindings follow common
+  notation software (↑↓ diatonic step, Alt+↑↓ semitone, Ctrl/⌘+↑↓ octave).
+- **Measure operations.** Insert, append and delete measures, merge or split them, change key, time signature and
+  tempo, and set barline styles, endings (voltas) and jump marks.
 - Lyric entry syllable by syllable (Space moves to the next note; typed Chinese characters are spread one per
   note), chord symbols, text and dynamics; tuplets; copy and paste (rewritten by scale degree across formats) and
   `R` to repeat a selection; jump by measure or to a measure number; transpose the whole piece or a selection.
-- **Parts panel (choral scores).** Add, remove, reorder and rename parts, set clefs, split a closed score into
-  separate parts (by voice or by chord) or merge them back, copy lyrics between parts; mute, solo (for part
-  practice) and per-part volume for playback.
+- **Selection readout.** Shows the part, measure and beat, pitch name and scale degree, and duration of the
+  selected element.
+- **Parts panel (choral scores).** Add, remove, reorder and rename parts, set clefs and transposing instruments,
+  split a closed score into separate parts (by voice or by chord) or merge them back, copy lyrics between parts,
+  hide parts in the staff and mixed views; mute, solo (for part practice) and per-part volume for playback; choose
+  which part supplies the jianpu melody and lyrics.
 - **Two-way navigation.** Clicking a note or lyric jumps to its place in the source, and the reverse. Measures
   whose beats don't add up to the time signature are outlined in red.
 - **Simplified ↔ Traditional Chinese conversion** covers lyrics, titles and credits and leaves the music code
@@ -61,16 +67,21 @@ The interface is available in **English and Chinese**: it follows your browser l
   Four-part scores are split into their voices. Everything runs locally in the browser or desktop app, and
   images are never uploaded.
 - **Edit while reviewing.** Notes can be edited directly on the source-image overlay; changed, deleted and inserted
-  notes are marked in place. Back in the typeset view, an optional "source snippet" window shows the original line
-  of the selected note, or a side-by-side panel shows the whole source page with selection linked both ways.
-  A pages panel lets you reorder, add, remove, rotate and crop the source images and recognize again.
+  notes are marked in place. Notes and syllables the recognizer is unsure about are **highlighted in yellow**, and
+  you can step through them one by one.
+- **Side by side.** Back in the typeset view, an optional "source snippet" window shows the original line of the
+  selected note, or a **side-by-side** panel shows the whole source page with selection linked both ways; the source
+  pane can be hidden so the image and the score split the screen.
+- **Source pages.** Before or after recognition, reorder, add, remove, rotate (90°) and crop the source images,
+  then recognize the whole piece again. If recognition fails, the start page offers "rotate / crop and retry".
 - **Source-image review.** Recognized symbols are overlaid on the binarized source image at their original
   positions, so you can check note by note. Clicking a symbol jumps to its source text, and you can play the
   score back in this view.
 - **Staff-notation recognition.** Staff PDFs with an intact text layer, as well as scanned or photographed staff
   images and PDFs, are recognized into MusicXML, which opens in the staff and mixed views and can be edited on the
   score. Dropped images are routed to jianpu or staff recognition automatically (by looking for five-line staves),
-  or you can choose explicitly.
+  or you can choose explicitly. If staves are assigned to the wrong parts, fix the mapping in the parts panel and
+  the score is rebuilt without re-recognizing.
 - **Lyrics cross-check.** The command-line recognizer (`omr-cli.mjs image --lyrics lyrics.txt`) can take the
   song's lyric text as a reference. Look-alike characters are corrected from it and dropped characters filled
   back in; anything else that disagrees (edition wording, extra or missing syllables, likely missed slurs, repeat

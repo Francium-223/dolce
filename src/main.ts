@@ -165,13 +165,13 @@ async function boot() {
       const retry = document.createElement("button");
       retry.type = "button";
       retry.className = "start-feedback-retry";
-      retry.textContent = "旋转 / 裁剪原图后重试…";
+      retry.textContent = t("start.retryAdjust");
       retry.addEventListener("click", () => void app.omr.showPages((ok) => {
         if (ok) {
           setStartFeedback("");
           setMobileView("score");
           revealWorkspace();
-        } else setStartFeedback(app.status || "识别失败，请更换图片后重试");
+        } else setStartFeedback(app.status || t("start.recogFailed"));
       }));
       startFeedback.append(" ", retry);
     }

@@ -211,12 +211,17 @@ export function completeStaffLines(bin: Binary, lines: StaffLineRun[], groups: S
       if (ds.some((d) => Math.abs(d - avg) > avg * 0.2) || Math.abs(avg - ref) > ref * 0.15) continue;
       if (outGroups.some((g) => five[0].y < g.lines[4].y + avg && five[4].y > g.lines[0].y - avg)) continue;
       const full = five.filter((l) => l.right - l.left >= bin.w * 0.6);
-      // 五条都跨满的不归这里管：那是左缘参差（`LEFT_SPREAD`）没成组，后面另有一路按实测线位接回去，
-      // 这里抢先成组反而用了不准的线位（我灵镇静末行，音符 98.9 → 93.1）
-      if (full.length < 3 || full.length === 5) continue;
-      const left = Math.min(...full.map((l) => l.left));
-      const right = Math.max(...full.map((l) => l.right));
-      for (const l of five) (l.left = left), (l.right = right);
+      if (full.length < 3) continue;
+      if (full.length === 5) {
+        // 五条都跨满、只是左缘参差（`LEFT_SPREAD` 那道闸）：差得不多（6 格以内，行首被连谱号、弧线压着）的原样成组，
+        // 跨度不动（诗篇一五零篇一行五条左缘 179~262）。差得多的不管——后面另有一路按实测线位接回去，
+        // 这里抢先成组反而用了不准的线位（我灵镇静末行左缘 124~320，音符 98.9 → 93.1）
+        if (Math.max(...five.map((l) => l.left)) - Math.min(...five.map((l) => l.left)) > avg * 6) continue;
+      } else {
+        const left = Math.min(...full.map((l) => l.left));
+        const right = Math.max(...full.map((l) => l.right));
+        for (const l of five) (l.left = left), (l.right = right);
+      }
       outGroups.push({ lines: five, space: avg });
       i += 4;
     }

@@ -148,7 +148,12 @@ export class PlaybackController {
     void this.run(() => p.play(src, this.options(), at, paused));
   }
 
-  // ---------------- 音量 ----------------
+  // ---------------- 音量 · 静音 · 独奏（声部面板） ----------------
+  /** 各声部静音（会话内，不写文件） */
+  readonly partMuted: boolean[] = [];
+  /** 独奏的声部（其余静音）；null = 没有独奏。合唱练声部用 */
+  solo: number | null = null;
+
   getPartVolume(i: number): number {
     const v = this.partVolumes[i];
     return v === undefined ? 1 : v;
@@ -156,11 +161,46 @@ export class PlaybackController {
 
   setPartVolume(i: number, v: number): void {
     this.partVolumes[i] = Math.max(0, Math.min(1, v));
+    this.remix();
+  }
+
+  setPartMuted(i: number, on: boolean): void {
+    this.partMuted[i] = on;
+    this.remix();
+  }
+
+  setSolo(i: number | null): void {
+    this.solo = i;
+    this.remix();
+  }
+
+  /** 实际给播放器的各声部音量：独奏 → 其余为 0；静音 → 0；其余照音量。 */
+  private effectiveVolumes(): number[] {
+    const n = Math.max(this.partVolumes.length, this.partMuted.length, this.solo === null ? 0 : this.solo + 1, 8);
+    return Array.from({ length: n }, (_, i) => {
+      if (this.solo !== null) return i === this.solo ? this.getPartVolume(i) : 0;
+      return this.partMuted[i] ? 0 : this.getPartVolume(i);
+    });
+  }
+
+  /** 混音变了：正在播就从当前位置按新混音接着播（暂停中仍停着），同改速度。 */
+  private remix(): void {
+    const p = this.player;
+    if (!p || !this.active) return;
+    const src = this.host.playable();
+    if (!src) return;
+    void this.run(() => p.play(src, this.options(), p.position, p.state === "paused"));
+  }
+
+  /** 换了一份谱：静音、独奏作废（声部数与次序都可能变了）。 */
+  resetMix(): void {
+    this.partMuted.length = 0;
+    this.solo = null;
   }
 
   /** 试听/导出 MIDI 共用的播放参数。 */
   options(): PlayOptions {
-    return { partVolumes: this.partVolumes, speed: this.speed };
+    return { partVolumes: this.effectiveVolumes(), speed: this.speed };
   }
 
   // ---------------- 播放 ----------------

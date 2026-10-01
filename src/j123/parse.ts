@@ -1379,6 +1379,11 @@ function applyField(
       // 八度谱号只在 123 里有简谱语义（男声部高八度记）；ABC 的音名本就是实际音高，照旧不管
       const clef = ctx.d.id === "123" ? parseVoiceClef(f.value) : null;
       if (clef) b.clef = clef;
+      // 声部名：`name="女高"` / `subname="S"`（ABC §3.1.20），只认声明那一处（之后的 `V:n` 只是切声部）
+      const nm = /(?:^|\s)name="([^"]*)"/.exec(f.value);
+      if (nm && b.part.name === undefined) b.part.name = nm[1]!;
+      const sn = /(?:^|\s)subname="([^"]*)"/.exec(f.value);
+      if (sn && b.part.abbrev === undefined) b.part.abbrev = sn[1]!;
       break;
     }
     case "W":

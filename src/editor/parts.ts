@@ -1,0 +1,315 @@
+// 声部面板：合唱谱的声部（part）增删、排序、改名、谱号、拆合、歌词复制，外加试听的静音 / 独奏 / 音量与「简谱旋律取自」。
+//
+// 参照 MuseScore「乐器」面板（增删、上下移、长短名、Explode / Implode）、Sibelius「Arrange / Reduce」、Dorico「演奏者」。
+// 每一步立刻生效（经 `App.editParts` 改模型再写回原文，撤销照常），面板随之重画；试听设置只存会话、不写文件。
+// 能改到哪一步看格式（`App.partsEditable`）：MusicXML、123、ABC 能改结构；文本谱与 `.jpwabc` 只有试听设置。
+
+import type { App } from "./app";
+import type { ScoreDoc } from "../model/doc";
+import {
+  addPart, CLEF_LABEL, clefNameOf, type ClefName, copyLyrics, deletePart, duplicatePart, mergeInto, movePart, setPartProps,
+  splitByChord, splitByVoice,
+} from "../model/parts";
+import { showConfirmDialog } from "./dialogs";
+
+function el<K extends keyof HTMLElementTagNameMap>(tag: K, cls = "", text = ""): HTMLElementTagNameMap[K] {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text) e.textContent = text;
+  return e;
+}
+
+function btn(label: string, title: string, onClick: () => void, disabled = false): HTMLButtonElement {
+  const b = el("button", "parts-btn", label);
+  b.type = "button";
+  b.title = title;
+  b.disabled = disabled;
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+/** 一个声部的概况：几条声线、有没有和弦（闭合谱）、有没有词。 */
+function partShape(doc: ScoreDoc, pi: number): { voices: number; chords: boolean; lyrics: boolean; measures: number } {
+  const part = doc.songs[0]?.parts[pi];
+  let voices = 1;
+  let chords = false;
+  let lyrics = false;
+  for (const m of part?.measures ?? []) {
+    for (const e of m.elements) {
+      voices = Math.max(voices, e.voice);
+      if (e.kind === "chord" && e.notes.length > 1) chords = true;
+      if (e.kind === "chord" && e.lyrics?.length) lyrics = true;
+    }
+  }
+  return { voices, chords, lyrics, measures: part?.measures.length ?? 0 };
+}
+
+/** 原文里有没有会被整份重出丢掉的注释（`%` 开头的行；版本声明 `%abc` / `%123` 与 `%%` 指令不算）。 */
+function hasComments(text: string): boolean {
+  return text.split("\n").some((l) => /^\s*%(?!%|abc|123)/i.test(l));
+}
+
+/**
+ * 123 / ABC：改第 `pi` 个声部的名字、简称、谱号——直接改它的 `V:` 声明行的属性（局部补丁，不整份重出）。
+ * 声部按 `V:` 号第一次出现的先后排（与解析同口径）。单声部没有 `V:` 行时在 `K:` 行后面补一行 `V:1`。
+ * 改不了（找不到这个声部的声明）返回 null，调用方再走整份重出。
+ */
+export function patchVoiceLine(text: string, pi: number, props: { name?: string; abbrev?: string; clef?: ClefName }): string | null {
+  const lines = text.split("\n");
+  const seen: string[] = [];
+  let at = -1;
+  for (const [i, l] of lines.entries()) {
+    const m = /^\s*V:\s*(\S+)/.exec(l);
+    if (!m || seen.includes(m[1]!)) continue;
+    seen.push(m[1]!);
+    if (seen.length - 1 === pi) {
+      at = i;
+      break;
+    }
+  }
+  const setAttr = (line: string, key: string, value: string | undefined, quoted: boolean): string => {
+    const re = new RegExp(`\\s${key}=(?:"[^"]*"|\\S+)`);
+    const stripped = line.replace(re, "");
+    if (!value) return stripped;
+    return `${stripped} ${key}=${quoted ? `"${value.replace(/"/g, "'")}"` : value}`;
+  };
+  const apply = (line: string): string => {
+    let out = line.replace(/\s+$/, "");
+    if (props.name !== undefined) out = setAttr(out, "name", props.name, true);
+    if (props.abbrev !== undefined) out = setAttr(out, "subname", props.abbrev, true);
+    if (props.clef !== undefined) out = setAttr(out, "clef", props.clef === "treble" ? undefined : props.clef, false);
+    return out;
+  };
+  if (at >= 0) {
+    lines[at] = apply(lines[at]!);
+    return lines.join("\n");
+  }
+  if (seen.length === 0 && pi === 0) {
+    const k = lines.findIndex((l) => /^\s*K:/.test(l));
+    if (k < 0) return null;
+    lines.splice(k + 1, 0, apply("V:1"));
+    return lines.join("\n");
+  }
+  return null;
+}
+
+let openPanel: HTMLElement | null = null;
+
+/** 打开声部面板（已开着就重画）。 */
+export function showPartsPanel(app: App): void {
+  openPanel?.remove();
+  const overlay = el("div", "modal-overlay");
+  const box = el("div", "modal-box parts-box");
+  box.setAttribute("role", "dialog");
+  box.setAttribute("aria-modal", "true");
+  const title = el("div", "modal-title", "声部");
+  const body = el("div", "parts-body");
+  const footer = el("div", "modal-footer");
+  const close = (): void => {
+    overlay.remove();
+    openPanel = null;
+    document.removeEventListener("keydown", onKey);
+    app.scorePane.focus({ preventScroll: true });
+  };
+  const onKey = (ev: KeyboardEvent): void => {
+    if (ev.key === "Escape") close();
+  };
+  document.addEventListener("keydown", onKey);
+  overlay.addEventListener("click", (e) => {
+    if (e.target === overlay) close();
+  });
+  const done = el("button", "modal-button-primary", "完成");
+  done.type = "button";
+  done.addEventListener("click", close);
+  footer.append(done);
+  box.append(title, body, footer);
+  overlay.append(box);
+  document.body.append(overlay);
+  openPanel = overlay;
+
+  /** 改结构的一步：先问一声会不会丢注释（123 / ABC 整份重出），做完重画。 */
+  const structural = async (what: string, mutate: (doc: ScoreDoc) => boolean | number | void, isStructure = true): Promise<void> => {
+    if (app.docFormat !== "musicxml" && hasComments(app.getText())) {
+      const ok = await showConfirmDialog("改声部", `「${what}」要按模型整份重出源码，源码里的 % 注释会丢掉（可撤销）。继续吗？`);
+      if (!ok) return;
+    }
+    if (!app.editParts(mutate, isStructure)) app.setStatus(`没能${what}`);
+    else app.setStatus(`已${what}（可撤销）`);
+    render();
+  };
+
+  function render(): void {
+    body.replaceChildren();
+    const doc = app.partsDoc();
+    const parts = doc?.songs[0]?.parts ?? [];
+    const mode = app.partsEditable();
+    const can = mode === "structure";
+    if (!can) {
+      body.append(el("p", "parts-note", app.docFormat === "jpwabc"
+        ? "JP-Word（.jpwabc）只有一个声部；这里只能调试听。"
+        : "文本谱的声部在源码里改（Q1–Q4 行）；这里只能调试听与简谱旋律。"));
+    }
+    if (!doc || parts.length === 0) {
+      body.append(el("p", "parts-note", "当前没有可列的声部。"));
+      return;
+    }
+    const table = el("table", "parts-table");
+    const head = el("tr");
+    for (const h of ["", "名称", "简称", "谱号", "静音", "独奏", "音量", "简谱", ""]) head.append(el("th", "", h));
+    table.append(head);
+    parts.forEach((part, pi) => {
+      const tr = el("tr");
+      const shape = partShape(doc, pi);
+      tr.append(el("td", "parts-idx", String(pi + 1)));
+      // 名称 / 简称：失焦或回车提交
+      const nameIn = el("input", "parts-input");
+      nameIn.value = part.name ?? "";
+      nameIn.placeholder = `声部 ${pi + 1}`;
+      nameIn.disabled = !can;
+      const abbrIn = el("input", "parts-input parts-abbr");
+      abbrIn.value = part.abbrev ?? "";
+      abbrIn.placeholder = "如 S、A";
+      abbrIn.disabled = !can;
+      const commitName = (): void => {
+        const name = nameIn.value.trim();
+        const abbrev = abbrIn.value.trim();
+        if (name === (part.name ?? "") && abbrev === (part.abbrev ?? "")) return;
+        props("改名", { name, abbrev });
+      };
+      for (const inp of [nameIn, abbrIn]) {
+        inp.addEventListener("keydown", (ev) => {
+          ev.stopPropagation();
+          if (ev.key === "Enter") inp.blur();
+        });
+        inp.addEventListener("change", commitName);
+      }
+      tr.append(el("td"), el("td"));
+      tr.children[1]!.append(nameIn);
+      tr.children[2]!.append(abbrIn);
+      // 谱号
+      const clefSel = el("select", "parts-select");
+      for (const [k, label] of Object.entries(CLEF_LABEL)) {
+        const o = el("option", "", label);
+        o.value = k;
+        clefSel.append(o);
+      }
+      clefSel.value = clefNameOf(part);
+      // ABC 的谱号解析不读（音名本就是实际音高），改了也看不出来，不给改
+      clefSel.disabled = !can || app.docFormat === "abc";
+      clefSel.addEventListener("change", () => props("改谱号", { clef: clefSel.value as ClefName }));
+      /** 改名、简称、谱号：123 / ABC 直接改 `V:` 行（不整份重出），MusicXML 改模型 */
+      function props(what: string, p: { name?: string; abbrev?: string; clef?: ClefName }): void {
+        if (app.docFormat === "123" || app.docFormat === "abc") {
+          const next = patchVoiceLine(app.getText(), pi, p);
+          if (next !== null && app.replaceText(next, "input.parts")) {
+            app.setStatus(`已${what}（可撤销）`);
+            render();
+            return;
+          }
+        }
+        void structural(what, (d) => setPartProps(d.songs[0]!, pi, p), false);
+      }
+      const tdClef = el("td");
+      tdClef.append(clefSel);
+      tr.append(tdClef);
+      // 试听：静音 / 独奏 / 音量
+      const mute = el("input");
+      mute.type = "checkbox";
+      mute.checked = !!app.playback.partMuted[pi];
+      mute.title = "试听时不出这个声部";
+      mute.addEventListener("change", () => app.playback.setPartMuted(pi, mute.checked));
+      const solo = el("input");
+      solo.type = "checkbox";
+      solo.checked = app.playback.solo === pi;
+      solo.title = "只听这个声部（练声部用）";
+      solo.addEventListener("change", () => {
+        app.playback.setSolo(solo.checked ? pi : null);
+        render();
+      });
+      const vol = el("input", "parts-vol");
+      vol.type = "range";
+      vol.min = "0";
+      vol.max = "100";
+      vol.value = String(Math.round(app.playback.getPartVolume(pi) * 100));
+      vol.title = "试听与导出 MIDI 的音量";
+      vol.addEventListener("change", () => app.playback.setPartVolume(pi, Number(vol.value) / 100));
+      for (const c of [mute, solo, vol]) {
+        const td = el("td");
+        td.append(c);
+        tr.append(td);
+      }
+      // 简谱旋律取自
+      const mel = el("input");
+      mel.type = "radio";
+      mel.name = "parts-melody";
+      mel.checked = app.melodyPart === pi;
+      mel.title = "混排的简谱层与 MusicXML 的简谱档取这个声部";
+      mel.addEventListener("change", () => {
+        if (mel.checked) app.setMelodyPart(pi);
+      });
+      const tdMel = el("td");
+      tdMel.append(mel);
+      tr.append(tdMel);
+      // 操作
+      const ops = el("td", "parts-ops");
+      ops.append(
+        btn("↑", "上移", () => void structural("上移声部", (d) => movePart(d, 0, pi, pi - 1)), !can || pi === 0),
+        btn("↓", "下移", () => void structural("下移声部", (d) => movePart(d, 0, pi, pi + 1)), !can || pi === parts.length - 1),
+        btn("复制", "复制这个声部（插在它后面）", () => void structural("复制声部", (d) => duplicatePart(d, 0, pi)), !can),
+        btn("按声线拆", "闭合谱：第二条声线拆成下面一个新声部（如 S/A 一行谱拆成两行）", () => void structural("按声线拆分", (d) => splitByVoice(d, 0, pi)), !can || shape.voices < 2),
+        btn("按和弦拆", "闭合谱：和弦里最低的音拆成下面一个新声部（单音两边各一份）", () => void structural("按和弦拆分", (d) => splitByChord(d, 0, pi)), !can || !shape.chords),
+        // 123 / ABC 的写出端不写小节内临时声部（`&`），并成第二声线会丢音：合成闭合谱只对 MusicXML
+        btn("并入上一个", app.docFormat === "musicxml" ? "合成闭合谱：这个声部并进上一个声部当第二声线" : "合成闭合谱只对 MusicXML（123 / ABC 的一个声部只写一路旋律）",
+          () => void structural("合并声部", (d) => mergeInto(d, 0, pi - 1, pi)), !can || pi === 0 || app.docFormat !== "musicxml"),
+        btn("删除", "删掉这个声部", () => {
+          void showConfirmDialog("删除声部", `删掉「${part.name || `声部 ${pi + 1}`}」？（可撤销）`).then((ok) => {
+            if (ok) void structural("删除声部", (d) => deletePart(d, 0, pi));
+          });
+        }, !can || parts.length < 2),
+      );
+      tr.append(ops);
+      table.append(tr);
+    });
+    body.append(table);
+
+    // 底部：新建声部 · 歌词复制
+    const tools = el("div", "parts-tools");
+    const newClef = el("select", "parts-select");
+    for (const [k, label] of Object.entries(CLEF_LABEL)) {
+      const o = el("option", "", label);
+      o.value = k;
+      newClef.append(o);
+    }
+    tools.append(
+      btn("新建声部", "在最后加一个声部（整小节休止，小节结构照第一声部）", () =>
+        void structural("新建声部", (d) => addPart(d, 0, { clef: newClef.value as ClefName })), !can),
+      newClef,
+    );
+    if (parts.length > 1) {
+      const from = el("select", "parts-select");
+      const to = el("select", "parts-select");
+      parts.forEach((p, i) => {
+        const label = p.name || `声部 ${i + 1}`;
+        const a = el("option", "", label);
+        a.value = String(i);
+        from.append(a);
+        const b = el("option", "", label);
+        b.value = String(i);
+        to.append(b);
+      });
+      to.value = "1";
+      tools.append(
+        el("span", "parts-sep"),
+        el("span", "parts-label", "歌词从"), from, el("span", "parts-label", "复制到"), to,
+        btn("复制歌词", "按同一时刻把歌词抄给目标声部（目标已有的那一段不覆盖）。SATB 中间一排词供几部共用时用", () => {
+          const a = Number(from.value);
+          const b = Number(to.value);
+          if (a === b) return;
+          void structural("复制歌词", (d) => copyLyrics(d, 0, a, b) > 0);
+        }, !can),
+      );
+    }
+    body.append(tools);
+  }
+  render();
+}

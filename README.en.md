@@ -43,6 +43,9 @@ The interface is in Chinese.
   duration, extension dashes, barlines, slurs and ties, fermatas, accents, and line and page breaks. You can use
   the keyboard, a context menu or a symbol palette, in the jianpu, staff and mixed views alike. Every edit is
   written back to the source text and shares one undo history with the code editor.
+- **Parts panel (choral scores).** Add, remove, reorder and rename parts, set clefs, split a closed score into
+  separate parts (by voice or by chord) or merge them back, copy lyrics between parts; mute, solo (for part
+  practice) and per-part volume for playback.
 - **Two-way navigation.** Clicking a note or lyric jumps to its place in the source, and the reverse. Measures
   whose beats don't add up to the time signature are outlined in red.
 - **Simplified ↔ Traditional Chinese conversion** covers lyrics, titles and credits and leaves the music code

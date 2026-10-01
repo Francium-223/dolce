@@ -538,6 +538,23 @@ button:focus-visible, select:focus-visible {
 .visual-menu-subbox { border-left: 2px solid rgba(21, 101, 255, 0.35); margin-left: 6px; }
 .visual-menu-subbox[hidden] { display: none; }
 .visual-menu-sub.open kbd { transform: rotate(90deg); }
+.parts-box { max-width: min(1100px, calc(100vw - 32px)); width: auto; }
+.parts-body { overflow: auto; max-height: calc(100vh - 180px); }
+.parts-table { border-collapse: collapse; font-size: 13px; }
+.parts-table th { font-weight: 600; text-align: left; padding: 4px 6px; opacity: 0.75; white-space: nowrap; }
+.parts-table td { padding: 3px 6px; vertical-align: middle; }
+.parts-idx { opacity: 0.6; }
+.parts-input { width: 9em; }
+.parts-abbr { width: 4em; }
+.parts-vol { width: 80px; }
+.parts-ops { white-space: nowrap; }
+.parts-btn { font-size: 12px; padding: 2px 6px; margin-right: 2px; }
+.parts-btn:disabled { opacity: 0.35; }
+.parts-select { font-size: 13px; }
+.parts-tools { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-top: 12px; }
+.parts-sep { width: 12px; }
+.parts-label { opacity: 0.75; font-size: 13px; }
+.parts-note { opacity: 0.75; font-size: 13px; margin: 0 0 8px; }
 .vis-marquee { position: fixed; z-index: 30; pointer-events: none; border: 1px dashed #1565ff; background: rgba(21, 101, 255, 0.08); }
 .format-marks-button { min-width: 26px; font-weight: 600; }
 .vis-overlay .vis-beat { fill: rgba(224, 49, 49, 0.12); stroke: rgba(224, 49, 49, 0.55); stroke-dasharray: 3 2; pointer-events: all; }

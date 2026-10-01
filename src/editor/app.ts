@@ -44,6 +44,8 @@ import { visualCursorExtension } from "./visual/cursor";
 import { hitThroughOverlay } from "./visual/overlay";
 import type { EditDialect } from "./visual/dialect";
 import { describeLosses, planSave } from "../model/capability";
+import { withMelodyFirst } from "../model/parts";
+import { dropEmbeddedLayout } from "../model/xmlsurface";
 import { CONVERT_TARGETS, isConvertTarget, targetSpec, type ConvertTarget } from "../model/convert";
 import { showChoiceDialog, showConfirmDialog } from "./dialogs";
 import { buildMusicXml, sourceMusicXmlBare } from "./export";
@@ -101,6 +103,8 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     doc: ScoreDoc;
     /** 展开档那一份调过声部顺序与段号（`JianpuInputOptions.forExpanded`），与原样档那份不通用 */
     forExpanded: boolean;
+    /** 「简谱旋律取自」第几个声部（MusicXML 投影前挪到最前的那个） */
+    melody: number;
     score: JScore | null;
   } | null = null;
   private _highlightCompartment = new Compartment();
@@ -1531,15 +1535,17 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     const doc = this.currentScoreDoc();
     if (!doc) return null;
     const c = this._puScoreCache;
-    if (c && c.text === text && c.doc === doc && c.forExpanded === forExpanded) return c.score;
+    if (c && c.text === text && c.doc === doc && c.forExpanded === forExpanded && c.melody === this.melodyPart) return c.score;
     let score: JScore | null;
     try {
-      score = jianpuInputOfDoc(doc, { forExpanded });
+      // MusicXML 的简谱只排第一声部：声部面板选了别的声部当简谱旋律，就把它挪到最前再投影（元素 id 不变）
+      const src = this.docFormat === "musicxml" ? withMelodyFirst(doc, this.melodyPart) : doc;
+      score = jianpuInputOfDoc(src, { forExpanded });
     } catch (e) {
       console.error("投影引擎输入失败", e);
       return null;
     }
-    this._puScoreCache = { text, doc, score, forExpanded };
+    this._puScoreCache = { text, doc, score, forExpanded, melody: this.melodyPart };
     return score;
   }
 
@@ -1851,6 +1857,78 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     return this.playable()?.parts.length ?? 1;
   }
 
+  /** 换了一份文档（打开、导入、识别落地、转格式）：弱起重新认、简谱旋律回到第一声部、静音独奏作废。 */
+  private _documentLoaded(): void {
+    this.visual.documentLoaded();
+    this.melodyPart = 0;
+    this.playback.resetMix();
+  }
+
+  // ---------------- 声部（声部面板 `editor/parts.ts`） ----------------
+  /** 简谱旋律取自第几个声部：混排的简谱叠层、MusicXML 的简谱档用它（会话内，不写文件） */
+  melodyPart = 0;
+
+  /** 声部面板要显示的那份模型（文本格式就是代码区原文读的那份，`.jpwabc` 是排版器那份）。 */
+  partsDoc(): ScoreDoc | null {
+    return this.adapter.caps.layout === "jpwabc" ? this._jpwDoc : this.currentScoreDoc();
+  }
+
+  /** 这种格式在声部面板里能改到哪一步：`structure` = 增删排拆合与改名谱号；`playback` = 只有试听与简谱旋律。 */
+  partsEditable(): "structure" | "playback" {
+    return this.docFormat === "musicxml" || this.docFormat === "123" || this.docFormat === "abc" ? "structure" : "playback";
+  }
+
+  /**
+   * 改声部：在按当前原文新读的一份模型上改，`.musicxml` 经唯一写出端整份重写，123 / ABC 经各自的写出器整份重出
+   * （声部的增删排拆合在原文里牵涉每个 `V:` 段，局部补丁做不干净；原文里的 `%` 注释会丢，调用方先问过）。
+   * 只把前后不同的一段放进代码区，撤销照常。返回 false = 没改或改不了。
+   */
+  editParts(mutate: (doc: ScoreDoc) => boolean | number | void, structural = true): boolean {
+    if (this.partsEditable() !== "structure") return false;
+    const text = this.getText();
+    let doc: ScoreDoc | null;
+    try {
+      doc = this.adapter.toScoreDoc ? this.adapter.toScoreDoc(text) : null;
+    } catch {
+      doc = null;
+    }
+    if (!doc) return false;
+    const r = mutate(doc);
+    if (r === false || r === -1) return false;
+    // MusicXML 增删排拆合了声部：原谱写死的版面坐标对不上了，整曲改由五线谱引擎自动铺排（同谱面上改结构）
+    if (structural && this.docFormat === "musicxml") for (const s of doc.songs) dropEmbeddedLayout(s);
+    let out: string;
+    try {
+      out = this.docFormat === "musicxml" ? scoreDocToMusicXml(doc) : targetSpec(this.docFormat === "abc" ? "abc" : "123").emit(doc);
+    } catch (e) {
+      this.setStatus("改声部失败：" + (e instanceof Error ? e.message : String(e)));
+      return false;
+    }
+    return this.replaceText(out, "input.parts");
+  }
+
+  /** 整份原文换成 `next`（只放前后不同的那一段进代码区，撤销照常），马上重排。没变返回 false。 */
+  replaceText(next: string, userEvent = "input"): boolean {
+    const text = this.getText();
+    if (next === text) return false;
+    let p = 0;
+    while (p < text.length && p < next.length && text[p] === next[p]) p++;
+    let q = 0;
+    while (q < text.length - p && q < next.length - p && text[text.length - 1 - q] === next[next.length - 1 - q]) q++;
+    this.view.dispatch({ changes: { from: p, to: text.length - q, insert: next.slice(p, next.length - q) }, userEvent });
+    this.reloadNow();
+    return true;
+  }
+
+  /** 改「简谱旋律取自」：混排与 MusicXML 的简谱档跟着重排。 */
+  setMelodyPart(i: number): void {
+    if (this.melodyPart === i) return;
+    this.melodyPart = i;
+    this._puScoreCache = null;
+    this.reloadNow();
+    if (this.mode === "mixed") void this._renderMixedPages();
+  }
+
   /** 停止试听。四处铺页前都要调，故留一个短名字在 App 上。 */
   stopPlayback(): void {
     this.playback.stop();
@@ -1868,7 +1946,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
   importBytes(bytes: Uint8Array, name: string): void {
     // 任何新导入都使上一次的识别叠加产物失效（识别结果由 OmrController 在本调用之后重设）。
     this.omr.clear();
-    this.visual.documentLoaded();
+    this._documentLoaded();
     this.formats.use(null);
     this._importBytes(bytes, name);
     // 原文是真身：代码区标题栏的格式下拉可以换成别的格式看、切回来逐字还原（`FileFormatSource`）
@@ -1976,7 +2054,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
    */
   importOmrDoc(doc: ScoreDoc, text: string): void {
     this.omr.clear();
-    this.visual.documentLoaded();
+    this._documentLoaded();
     const losses = planSave(doc, "123");
     this._dropMixedDoc();
     this._setMode("jp"); // 识别之后先核对（omrctl 接着进叠加视图）；五线谱/混排从工具条切
@@ -2408,7 +2486,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
    * 切回 `.musicxml` 原文时照打开 `.musicxml` 那样落地（无代码区）；从 `.musicxml` 转出来的回简谱档看代码区对应的谱面。
    */
   adoptText(format: DocFormatId, text: string, filePath: string | null): void {
-    this.visual.documentLoaded();
+    this._documentLoaded();
     if (format === "musicxml") {
       this._setDocFormat("musicxml");
       this.filePath = filePath;
@@ -2532,6 +2610,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
       style: this.staffStyle(),
       page: this.staffPage,
       hideBarNumber: this.mixedHideBarNumber,
+      jianpuPart: this.melodyPart,
     });
     // 排的时候又来了新请求（快速切档、改设置）：这份作废，由新的那份铺页
     if (outcome === "superseded" || this.mode !== "mixed") return;
@@ -2747,7 +2826,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
 
   /** Load dropped file content (already decoded). */
   loadText(text: string, path: string | null): void {
-    this.visual.documentLoaded();
+    this._documentLoaded();
     this.formats.use(null);
     this.filePath = path;
     this.setText(text);

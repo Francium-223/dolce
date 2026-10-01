@@ -27,10 +27,11 @@ const MIXED_TEXT_CLEAR = 16;
 /** 五线谱档：谱表内容上沿到和弦符号墨迹底的净空（tenths） */
 const HARMONY_STAFF_GAP = 6;
 
-export function formatMixedScore(score: StaffLayout): void {
+export function formatMixedScore(score: StaffLayout, jianpuPart = 0): void {
   if (score.parts.length === 0) return;
 
-  const p = score.parts[0];
+  // 简谱层叠在哪个声部上（声部面板「简谱旋律取自」，缺省第一声部）
+  const p = score.parts[jianpuPart] ?? score.parts[0]!;
   if (p.staves.length === 0) return;
 
   // Set Mixed notation for first staff from tick 0
@@ -246,8 +247,8 @@ export interface StaffPages {
 }
 
 /** 一份已读入的 `StaffLayout` 排成页（`showJianpuLayer` = 混排叠简谱层）。长图会改写 `score.defaults.pageHeight`。 */
-export function layoutStaffPages(score: StaffLayout, showJianpuLayer: boolean): StaffPages {
-  if (showJianpuLayer) formatMixedScore(score);
+export function layoutStaffPages(score: StaffLayout, showJianpuLayer: boolean, jianpuPart = 0): StaffPages {
+  if (showJianpuLayer) formatMixedScore(score, jianpuPart);
   else if (score.autoLayout) placeAboveStaff(score, false);
 
   // M5: flow layout

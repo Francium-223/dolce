@@ -218,10 +218,15 @@ export abstract class AbcFamilyEmitter {
     return song.time ? `${song.time.beats}/${song.time.beatType}` : null;
   }
 
-  /** `V:n` 首次出现时跟在声部号后面的属性（123 的 `clef=treble-8`）。默认没有。 */
-  protected voiceAttrs(part: Part): string {
-    void part;
-    return "";
+  /** `V:n` 首次出现时跟在声部号后面的属性：多声部时的声部名 `name="女高"` / `subname="S"`（ABC §3.1.20；
+   *  单声部不写，免得转来的谱都多出一行 `V:1`）。方言另加谱号（123 的 `clef=…`）。 */
+  protected voiceAttrs(part: Part, multi: boolean): string {
+    if (!multi) return "";
+    const q = (s: string): string => s.replace(/"/g, "'");
+    const a: string[] = [];
+    if (part.name) a.push(`name="${q(part.name)}"`);
+    if (part.abbrev) a.push(`subname="${q(part.abbrev)}"`);
+    return a.join(" ");
   }
 
   /** 头部里方言特有的行（ABC 的 `L:`）。默认没有。 */
@@ -647,7 +652,7 @@ export abstract class AbcFamilyEmitter {
         const text = bodies[i]![r]!;
         if (text === "") continue;
         // 声部属性只在首次出现时写（ABC：带属性的 `V:` 是声明，之后的只切声部）；单声部有属性也得写 `V:1`
-        const attrs = declared.has(i) ? "" : this.voiceAttrs(song.parts[i]!);
+        const attrs = declared.has(i) ? "" : this.voiceAttrs(song.parts[i]!, song.parts.length > 1);
         declared.add(i);
         if (song.parts.length > 1 || attrs) L.push(`V:${i + 1}${attrs ? " " + attrs : ""}`);
         L.push(text);

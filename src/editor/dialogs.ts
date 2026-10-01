@@ -586,22 +586,12 @@ export function showOptionsDialog(app: App): void {
   }
   pOther.append(labeled("打开 MusicXML", xmlImport));
 
-  // 播放混音：各声部音量（0–100%，播放/导出 MIDI 时按此写入 CC7；改后需重新播放）。
-  const volSliders: HTMLInputElement[] = [];
-  if (app.mode === "jp" && app.partCount > 1) {
+  // 各声部音量、静音、独奏挪到工具条「声部」面板（`editor/parts.ts`），这里留一句指引
+  if (app.partCount > 1) {
     const hint = document.createElement("div");
-    hint.style.cssText = "margin-top:8px;font-weight:600;opacity:0.8";
-    hint.textContent = "声部音量（播放/导出 MIDI）";
+    hint.style.cssText = "margin-top:8px;opacity:0.8";
+    hint.textContent = "各声部的试听音量、静音、独奏在工具条「声部」面板里调。";
     pOther.append(hint);
-    for (let i = 0; i < app.partCount; i++) {
-      const sl = document.createElement("input");
-      sl.type = "range";
-      sl.min = "0";
-      sl.max = "100";
-      sl.value = String(Math.round(app.playback.getPartVolume(i) * 100));
-      volSliders.push(sl);
-      pOther.append(labeled(`声部 ${i + 1}`, sl));
-    }
   }
 
   // 「长图」一勾一取消，「每页行数」要跟着出现/消失——现开现关，不必确定后才知道。
@@ -612,7 +602,6 @@ export function showOptionsDialog(app: App): void {
   ]);
 
   modal("设置", body, () => {
-    volSliders.forEach((sl, i) => app.playback.setPartVolume(i, (parseInt(sl.value, 10) || 0) / 100));
     // 没摆出来的项一律不回灌：把它们的初值当用户输入送回去，等于替用户做了没做过的决定。
     const [w, h] = isPpt ? PAGE_RATIOS[ratio.value] ?? [app.pageW, app.pageH] : [undefined, undefined];
     const fontSize = isJp ? parseInt(fs.value, 10) || app.fontSize : undefined;

@@ -63,6 +63,8 @@ export interface StaffPaintRequest {
   /** 谱里没写纸时用的那张（pt；`heightPt` null = 长图），见 `MixedOptions.page`。 */
   readonly page: MixedOptions["page"];
   readonly hideBarNumber: boolean;
+  /** 混排：简谱层叠在第几个声部上（缺省 0） */
+  readonly jianpuPart?: number;
 }
 
 /** 原样文档这一路（文本谱与多声部 123/ABC、MusicXML 的原样档）：整份 `ScoreDoc` 按源行排，印刷原版观感。 */
@@ -350,7 +352,7 @@ export class ScorePainter {
     options.hideBarNumber = req.hideBarNumber;
     options.page = req.page;
     const score = layoutStaff(req.doc, options);
-    const { pages, placed } = layoutStaffPages(score, req.view === "mixed");
+    const { pages, placed } = layoutStaffPages(score, req.view === "mixed", req.jianpuPart ?? 0);
     const d = score.defaults;
     const wT = d.pageWidth ?? 1200;
     const hT = d.pageHeight ?? PAGE_HEIGHT_FALLBACK;

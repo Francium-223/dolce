@@ -42,11 +42,13 @@ export class Emitter123 extends AbcFamilyEmitter {
     return BARE_CHORD_RE.test(text) ? `${text} ` : `"${text}"`;
   }
 
-  /** 八度谱号写成 `clef=treble-8`（简谱按高八度记的男声部，`writtenOctaveOf`）；别的谱号对简谱没有意义，不写。 */
-  protected override voiceAttrs(part: Part): string {
+  /** 声部名（多声部时）之外再写谱号：八度谱号 `clef=treble-8`（简谱按高八度记的男声部，`writtenOctaveOf`）；
+   *  多声部里低音、中音谱号也写（简谱上不印，五线谱档要它，声部面板改了谱号要能存回）。单声部的普通谱号不写。 */
+  protected override voiceAttrs(part: Part, multi: boolean): string {
     const c = part.measures[0]?.attrs?.clefs?.find((x) => (x.staff ?? 1) === 1);
-    const name = c?.octaveChange ? clefName(c) : null;
-    return name ? `clef=${name}` : "";
+    const treble = !c || (c.sign === "G" && (c.line ?? 2) === 2);
+    const name = c && (c.octaveChange || (multi && !treble)) ? clefName(c) : null;
+    return [super.voiceAttrs(part, multi), name ? `clef=${name}` : ""].filter(Boolean).join(" ");
   }
 
   /** `$` 后换行：一行曲一行源码，方便与源图逐行对照。123 的代码换行不是谱面换行，读回不变。 */

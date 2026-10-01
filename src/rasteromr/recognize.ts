@@ -4489,6 +4489,14 @@ function extendKeyByStrokes(pg: SPage, ctx: Map<Staff, StaffContext>, bin: Binar
   const k = useSharp ? sh.k : f.k;
   const code: SmuflName = useSharp ? "accidentalSharp" : "accidentalFlat";
   const other: SmuflName = useSharp ? "accidentalFlat" : "accidentalSharp";
+  // **按块多认的也收回来**：只有一行比 k 多、而竖笔没有哪一行数过 k——多出来的是调号后面头一个音的临时记号
+  //（三博士歌一个升号，有一行按块读成三个，`shareKeySignature` 见别的行都是它的前缀就全页照它补）
+  const maxStroke = Math.max(...rows.map((r) => (useSharp ? r.sharps : r.flats).length));
+  const longer = rows.filter((r) => r.c.key.filter((q) => q.code === code).length > k);
+  if (maxStroke <= k && longer.length === 1) {
+    const c = longer[0].c;
+    c.key = c.key.filter((q) => q.code === code).slice(0, k);
+  }
   for (const r of rows) {
     const got = useSharp ? r.sharps : r.flats;
     const c = r.c;
@@ -4575,7 +4583,9 @@ function sharpsByStrokesLoose(bin: Binary, lineYs: number[], clef: Rect, bass: b
     const fits =
       w >= sp * 0.2 &&
       w <= sp * 1.0 &&
-      Math.abs((cy - fY) / sp - STEP[out.length]) <= 0.5 &&
+      // 头一个卡 0.5 格；后面的放到 1 格——伸出谱表的那半截（G、A 的上端）没有谱线托着、印得淡，
+      // 量出来的中心往谱表里偏（道路真理生命歌第三个升号偏下 0.9 格）
+      Math.abs((cy - fY) / sp - STEP[out.length]) <= (out.length ? 1 : 0.5) &&
       (g.n === 2 || (thickRun(g.x0 - Math.round(sp * 0.15), cy) && thickRun(g.x1 + Math.round(sp * 0.15), cy)));
     if (!fits) {
       // 头一个之前的杂笔（谱号的边角）跳过；串起来之后不合就停

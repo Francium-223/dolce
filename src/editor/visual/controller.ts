@@ -1134,6 +1134,9 @@ export class VisualEditController {
       get mode(): VisualMode {
         return ctl.mode;
       },
+      get surface() {
+        return ctl.host.surfaceKind();
+      },
       run: (a, key) => ctl.runChecked(a, key),
       available: (a) => ctl.available(a),
       refocus: () => ctl.host.scorePane.focus({ preventScroll: true }),

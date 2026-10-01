@@ -22,6 +22,8 @@ const SUBMENU_GROUP = "小节";
 
 export interface MenuRunner {
   readonly mode: VisualMode;
+  /** 现在在哪种谱面上：五线谱 / 混排档的时值按钮画音符（`STAFF_SHORT`） */
+  readonly surface?: "jianpu" | "staff" | "recognize";
   /** 当前格式能不能做这个动作（和弦音、声部只对 MusicXML；小节操作要格式有写法表）。缺省都能 */
   available?(a: VisualAction): boolean;
   run(a: VisualAction, key?: string): boolean;
@@ -85,6 +87,15 @@ const SHORT: Record<string, string> = {
   "edit.redo": "\u21B7", // ↷
 };
 
+/** 五线谱 / 混排档换成音符的那几个（简谱那套「1̲」「1·」在五线谱上对不上号）。 */
+const STAFF_SHORT: Record<string, string> = {
+  "dur.halve": "\u266A", // ♪ 减半
+  "dur.double": "\u{1D15E}", // 𝅗𝅥 加倍
+  "dur.dot": "\u2669.", // ♩.
+  "sus.add": "\u2669+", // ♩+ 多一拍
+  "oct.up": "8\u2191", "oct.down": "8\u2193",
+};
+
 /** 把面板建进 `root`；返回刷新函数（模式一变，按钮可用与否跟着变）。 */
 export function buildPalette(root: HTMLElement, r: MenuRunner): () => void {
   root.replaceChildren();
@@ -119,7 +130,12 @@ export function buildPalette(root: HTMLElement, r: MenuRunner): () => void {
     entries.push({ a, el });
   }
   return () => {
-    for (const { a, el } of entries) el.disabled = !usable(a, r.mode) || r.available?.(a) === false;
+    const staff = r.surface === "staff";
+    for (const { a, el } of entries) {
+      el.disabled = !usable(a, r.mode) || r.available?.(a) === false;
+      const alt = STAFF_SHORT[a.id];
+      if (alt && !ROWS[a.id]) el.textContent = staff ? alt : SHORT[a.id] ?? a.label;
+    }
   };
 }
 

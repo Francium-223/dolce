@@ -107,9 +107,12 @@ function timelinePartOf(part: Part, lead: boolean): TimelinePart {
   const div = part.measures[0]?.attrs?.divisions ?? 1;
   let time = { beats: 4, beatType: 4 };
   let velocity = DEFAULT_VELOCITY;
+  /** 移调乐器（`<transpose>`）：记谱音高加这么多半音才是实际发声 */
+  let shift = 0;
   const measures: TimelineMeasure[] = [];
   for (const m of part.measures) {
     if (m.attrs?.time) time = { beats: m.attrs.time.beats, beatType: m.attrs.time.beatType };
+    if (m.attrs?.transpose) shift = m.attrs.transpose.chromatic + 12 * (m.attrs.transpose.octaveChange ?? 0);
     const dyn = (m.directions ?? [])
       .filter((d) => d.type === "dynamics" && d.text !== undefined && VELOCITY[d.text] !== undefined)
       .map((d) => ({ at: cursorAt(m, d).toFloat() + (d.offset ?? 0), v: VELOCITY[d.text!]! }))
@@ -124,7 +127,7 @@ function timelinePartOf(part: Part, lead: boolean): TimelinePart {
       if (el.cue) continue;
       let v = velocity;
       for (const e of dyn) if (e.at <= onset) v = e.v;
-      entries.push(chordEntry(el, onset, div, v, lead && el.voice <= 1));
+      entries.push(chordEntry(el, onset, div, v, lead && el.voice <= 1, shift));
     }
     if (dyn.length) velocity = dyn[dyn.length - 1]!.v;
     const t = time;
@@ -145,8 +148,8 @@ function timelinePartOf(part: Part, lead: boolean): TimelinePart {
   return { measures };
 }
 
-function chordEntry(el: Chord, onset: number, div: number, velocity: number, cursor: boolean): ChordEntry {
-  const notes = el.rest ? [] : el.notes.filter((n) => n.pitch).map((n) => (n.tie?.stop ? { pitch: midiPitch(n.pitch!), tieStop: true } : { pitch: midiPitch(n.pitch!) }));
+function chordEntry(el: Chord, onset: number, div: number, velocity: number, cursor: boolean, shift = 0): ChordEntry {
+  const notes = el.rest ? [] : el.notes.filter((n) => n.pitch).map((n) => (n.tie?.stop ? { pitch: midiPitch(n.pitch!) + shift, tieStop: true } : { pitch: midiPitch(n.pitch!) + shift }));
   return {
     notes,
     rest: notes.length === 0,

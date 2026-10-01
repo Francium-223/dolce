@@ -6,7 +6,7 @@
 //
 // 改的都是传进来的那份模型（调用方先读一份新的，`.musicxml` 改完整份重写，123/ABC 改完整份重出）。
 
-import type { Chord, Clef, Element, ElementId, Lyric, Mark, Measure, Part, ScoreDoc, Song } from "./doc";
+import type { Chord, Clef, Element, ElementId, Lyric, Mark, Measure, Part, ScoreDoc, Song, Transpose } from "./doc";
 import { SIMPLE_DIVISIONS } from "./doc";
 
 // ───────────────────────── 小工具 ─────────────────────────
@@ -94,6 +94,64 @@ export interface PartProps {
   abbrev?: string;
   /** `treble` / `treble-8`（男高音）/ `bass` / `alto` / `tenor` */
   clef?: ClefName;
+  /** 移调乐器（`<transpose>`，记谱比实际高多少）；null = 去掉。只 MusicXML 写得出 */
+  transpose?: Transpose | null;
+}
+
+/** 声部面板「移调」一栏的选项：记谱 → 实际发声（MusicXML `<transpose>` 的 diatonic / chromatic / octave-change）。 */
+export const TRANSPOSE_PRESETS: readonly { key: string; label: string; t: Transpose | null }[] = [
+  { key: "none", label: "不移调", t: null },
+  { key: "Bb", label: "B♭ 调（单簧管、小号：实际低大二度）", t: { diatonic: -1, chromatic: -2 } },
+  { key: "A", label: "A 调（实际低小三度）", t: { diatonic: -2, chromatic: -3 } },
+  { key: "F", label: "F 调（圆号：实际低纯五度）", t: { diatonic: -4, chromatic: -7 } },
+  { key: "Eb", label: "E♭ 调（中音萨克斯：实际低大六度）", t: { diatonic: -5, chromatic: -9 } },
+  { key: "8vb", label: "低八度发声（记谱高八度）", t: { diatonic: 0, chromatic: 0, octaveChange: -1 } },
+  { key: "8va", label: "高八度发声（短笛、钢片琴）", t: { diatonic: 0, chromatic: 0, octaveChange: 1 } },
+];
+
+/** 声部现在的移调对应哪个选项（对不上任何一个为 `other`）。 */
+export function transposeKeyOf(part: Part): string {
+  const t = part.measures[0]?.attrs?.transpose;
+  if (!t) return "none";
+  const hit = TRANSPOSE_PRESETS.find((p) => p.t && p.t.chromatic === t.chromatic && (p.t.octaveChange ?? 0) === (t.octaveChange ?? 0));
+  return hit?.key ?? "other";
+}
+
+/** 这个声部用几行谱（`<staves>`，钢琴等大谱表为 2）。 */
+export function stavesOf(part: Part): number {
+  let n = 1;
+  for (const m of part.measures) if (m.attrs?.staves) n = Math.max(n, m.attrs.staves);
+  return n;
+}
+
+/** 视图用：五线谱 / 混排里藏起来的声部去掉（浅拷贝，元素 id 不变；起止落在藏起来的声部里的记号一起去掉）。 */
+export function withVisibleParts(doc: ScoreDoc, hidden: ReadonlySet<number>): ScoreDoc {
+  if (!hidden.size) return doc;
+  return {
+    ...doc,
+    songs: doc.songs.map((s) => {
+      const parts = s.parts.filter((_, i) => !hidden.has(i));
+      if (!parts.length || parts.length === s.parts.length) return s;
+      const ids = new Set<number>();
+      for (const p of parts) for (const m of p.measures) for (const e of m.elements) ids.add(e.id);
+      return { ...s, parts, marks: s.marks.filter((mk) => ids.has(mk.start) && ids.has(mk.end)) };
+    }),
+  };
+}
+
+/** 视图用：简谱档的歌词改取第 `from` 声部的（合唱谱词常印在女低音下面）。深拷贝第 `to` 声部、清掉它的词再按时刻抄过来。 */
+export function withLyricsFrom(doc: ScoreDoc, from: number, to: number): ScoreDoc {
+  if (from === to) return doc;
+  const out: ScoreDoc = { ...doc, songs: doc.songs.map((s) => ({ ...s, parts: [...s.parts] })) };
+  out.songs.forEach((s, si) => {
+    const target = s.parts[to];
+    if (!target || !s.parts[from]) return;
+    const copy = structuredClone(target);
+    for (const m of copy.measures) for (const e of m.elements) if (e.kind === "chord") delete e.lyrics;
+    s.parts[to] = copy;
+    copyLyrics(out, si, from, to);
+  });
+  return out;
 }
 
 export type ClefName = "treble" | "treble-8" | "bass" | "alto" | "tenor";
@@ -126,6 +184,15 @@ export function setPartProps(song: Song, pi: number, p: PartProps): void {
   if (!part) return;
   if (p.name !== undefined) part.name = p.name;
   if (p.abbrev !== undefined) part.abbrev = p.abbrev || undefined;
+  if (p.transpose !== undefined) {
+    const m0 = part.measures[0];
+    if (m0) {
+      const a = { ...(m0.attrs ?? {}) };
+      if (p.transpose) a.transpose = p.transpose;
+      else delete a.transpose;
+      m0.attrs = a;
+    }
+  }
   if (p.clef !== undefined && p.clef !== clefNameOf(part)) {
     const m0 = part.measures[0];
     if (m0) {

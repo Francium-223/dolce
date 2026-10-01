@@ -45,7 +45,7 @@ import { visualCursorExtension } from "./visual/cursor";
 import { hitThroughOverlay } from "./visual/overlay";
 import type { EditDialect } from "./visual/dialect";
 import { describeLosses, planSave } from "../model/capability";
-import { withMelodyFirst } from "../model/parts";
+import { withLyricsFrom, withMelodyFirst, withVisibleParts } from "../model/parts";
 import { packProject, PROJECT_EXT, unpackProject } from "./omrproject";
 import { dropEmbeddedLayout } from "../model/xmlsurface";
 import { CONVERT_TARGETS, isConvertTarget, targetSpec, type ConvertTarget } from "../model/convert";
@@ -107,6 +107,8 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     forExpanded: boolean;
     /** 「简谱旋律取自」第几个声部（MusicXML 投影前挪到最前的那个） */
     melody: number;
+    /** 「歌词来源」（null = 跟旋律） */
+    lyric: number | null;
     score: JScore | null;
   } | null = null;
   private _highlightCompartment = new Compartment();
@@ -1602,17 +1604,19 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     const doc = this.currentScoreDoc();
     if (!doc) return null;
     const c = this._puScoreCache;
-    if (c && c.text === text && c.doc === doc && c.forExpanded === forExpanded && c.melody === this.melodyPart) return c.score;
+    if (c && c.text === text && c.doc === doc && c.forExpanded === forExpanded && c.melody === this.melodyPart && c.lyric === this.lyricPart) return c.score;
     let score: JScore | null;
     try {
-      // MusicXML 的简谱只排第一声部：声部面板选了别的声部当简谱旋律，就把它挪到最前再投影（元素 id 不变）
-      const src = this.docFormat === "musicxml" ? withMelodyFirst(doc, this.melodyPart) : doc;
+      // MusicXML 的简谱只排第一声部：声部面板选了别的声部当简谱旋律，就把它挪到最前再投影（元素 id 不变）；
+      // 歌词来源选了别的声部，先把那个声部的词按时刻换到旋律声部上
+      const lyr = this.docFormat === "musicxml" && this.lyricPart !== null ? withLyricsFrom(doc, this.lyricPart, this.melodyPart) : doc;
+      const src = this.docFormat === "musicxml" ? withMelodyFirst(lyr, this.melodyPart) : doc;
       score = jianpuInputOfDoc(src, { forExpanded });
     } catch (e) {
       console.error("投影引擎输入失败", e);
       return null;
     }
-    this._puScoreCache = { text, doc, score, forExpanded, melody: this.melodyPart };
+    this._puScoreCache = { text, doc, score, forExpanded, melody: this.melodyPart, lyric: this.lyricPart };
     return score;
   }
 
@@ -1902,14 +1906,21 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
   loopPoints(): { first: PlayPoint; last: PlayPoint } | null {
     const ids = this.visual.selectedNoteIds();
     if (!ids.length) return null;
-    const map = (id: ElementId): ElementId => (this.mode === "mixed" ? this._srcToMixed.get(id)?.[0] ?? id : id);
-    return { first: { id: map(ids[0]!), pass: 1 }, last: { id: map(ids[ids.length - 1]!), pass: 1 } };
+    return { first: { id: this._playIdOf(ids[0]!), pass: 1 }, last: { id: this._playIdOf(ids[ids.length - 1]!), pass: 1 } };
   }
 
-  /** PlaybackHost：用户在谱面上选中了某个音就从那儿起播。 */
+  /** 索引里的音 id → 试听那份谱里的 id（五线谱 / 混排播的是画出来那份 `mixedDoc`）。 */
+  private _playIdOf(id: ElementId): ElementId {
+    return this.mode === "mixed" ? this._srcToMixed.get(id)?.[0] ?? id : id;
+  }
+
+  /** PlaybackHost：用户在谱面上点了某个音就从那儿起播；没点过就从可视化编辑选区的第一个音起播
+   *  （键盘选的、切档后留下的选区也算——选区在代码区，跨档本来就在）。 */
   startPoint(): PlayPoint | undefined {
     const id = this._selectedId;
-    return id === null ? undefined : { id, pass: this._selectedVerse };
+    if (id !== null) return { id, pass: this._selectedVerse };
+    const sel = this.visual.selectedNoteIds()[0];
+    return sel === undefined ? undefined : { id: this._playIdOf(sel), pass: 1 };
   }
 
   /** PlaybackHost：播到某个元素 → 谱面高亮 + 保证可见。
@@ -1936,6 +1947,8 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
   private _documentLoaded(): void {
     this.visual.documentLoaded();
     this.melodyPart = 0;
+    this.lyricPart = null;
+    this.hiddenParts.clear();
     this.playback.resetMix();
   }
 
@@ -1993,6 +2006,24 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     this.view.dispatch({ changes: { from: p, to: text.length - q, insert: next.slice(p, next.length - q) }, userEvent });
     this.reloadNow();
     return true;
+  }
+
+  /** 五线谱 / 混排里藏起来的声部（会话内，不写文件；试听照样出声，要不出声用静音） */
+  readonly hiddenParts = new Set<number>();
+  /** 简谱档的歌词取自哪个声部（MusicXML；null = 跟简谱旋律同一个声部）。会话内 */
+  lyricPart: number | null = null;
+
+  setPartVisible(i: number, on: boolean): void {
+    if (on) this.hiddenParts.delete(i);
+    else this.hiddenParts.add(i);
+    if (this.mode === "mixed") void this._renderMixedPages();
+  }
+
+  setLyricPart(i: number | null): void {
+    if (this.lyricPart === i) return;
+    this.lyricPart = i;
+    this._puScoreCache = null;
+    this.reloadNow();
   }
 
   /** 改「简谱旋律取自」：混排与 MusicXML 的简谱档跟着重排。 */
@@ -2681,7 +2712,9 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
   }
 
   private async _layoutStaff(): Promise<void> {
-    const doc = this.mixedDoc;
+    const full = this.mixedDoc;
+    // 声部面板里藏起来的声部不排（会话内）；简谱层取的声部下标跟着往前挪
+    const doc = full && withVisibleParts(full, this.hiddenParts);
     if (!doc) {
       this._renderPagesWith(0, () => { throw new Error("没有五线谱页"); }, { resetPageIndex: true });
       return;
@@ -2692,7 +2725,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
       style: this.staffStyle(),
       page: this.staffPage,
       hideBarNumber: this.mixedHideBarNumber,
-      jianpuPart: this.melodyPart,
+      jianpuPart: this.hiddenParts.has(this.melodyPart) ? 0 : this.melodyPart - [...this.hiddenParts].filter((i) => i < this.melodyPart).length,
     });
     // 排的时候又来了新请求（快速切档、改设置）：这份作废，由新的那份铺页
     if (outcome === "superseded" || this.mode !== "mixed") return;

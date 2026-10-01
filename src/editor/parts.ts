@@ -8,7 +8,7 @@ import type { App } from "./app";
 import type { ScoreDoc } from "../model/doc";
 import {
   addPart, CLEF_LABEL, clefNameOf, type ClefName, copyLyrics, deletePart, duplicatePart, mergeInto, movePart, setPartProps,
-  splitByChord, splitByVoice,
+  splitByChord, splitByVoice, stavesOf, TRANSPOSE_PRESETS, transposeKeyOf, type PartProps,
 } from "../model/parts";
 import { showConfirmDialog } from "./dialogs";
 
@@ -155,7 +155,7 @@ export function showPartsPanel(app: App): void {
     }
     const table = el("table", "parts-table");
     const head = el("tr");
-    for (const h of ["", "名称", "简称", "谱号", "静音", "独奏", "音量", "简谱", ""]) head.append(el("th", "", h));
+    for (const h of ["", "名称", "简称", "谱号", "移调", "谱表", "可见", "静音", "独奏", "音量", "简谱", "歌词", ""]) head.append(el("th", "", h));
     table.append(head);
     parts.forEach((part, pi) => {
       const tr = el("tr");
@@ -198,7 +198,7 @@ export function showPartsPanel(app: App): void {
       clefSel.disabled = !can || app.docFormat === "abc";
       clefSel.addEventListener("change", () => props("改谱号", { clef: clefSel.value as ClefName }));
       /** 改名、简称、谱号：123 / ABC 直接改 `V:` 行（不整份重出），MusicXML 改模型 */
-      function props(what: string, p: { name?: string; abbrev?: string; clef?: ClefName }): void {
+      function props(what: string, p: PartProps): void {
         if (app.docFormat === "123" || app.docFormat === "abc") {
           const next = patchVoiceLine(app.getText(), pi, p);
           if (next !== null && app.replaceText(next, "input.parts")) {
@@ -212,6 +212,41 @@ export function showPartsPanel(app: App): void {
       const tdClef = el("td");
       tdClef.append(clefSel);
       tr.append(tdClef);
+      // 移调乐器：只 MusicXML 写得出 `<transpose>`
+      const trSel = el("select", "parts-select");
+      for (const pr of TRANSPOSE_PRESETS) {
+        const o = el("option", "", pr.label);
+        o.value = pr.key;
+        trSel.append(o);
+      }
+      const trKey = transposeKeyOf(part);
+      if (trKey === "other") {
+        const o = el("option", "", "（原谱另有设定）");
+        o.value = "other";
+        trSel.append(o);
+      }
+      trSel.value = trKey;
+      const xml = app.docFormat === "musicxml";
+      trSel.disabled = !can || !xml;
+      trSel.title = xml ? "移调乐器：按记谱写、试听按实际音高发声" : "只有 MusicXML 能记移调乐器";
+      trSel.addEventListener("change", () => {
+        const pr = TRANSPOSE_PRESETS.find((x) => x.key === trSel.value);
+        if (pr) props("改移调", { transpose: pr.t });
+      });
+      const tdTr = el("td");
+      tdTr.append(trSel);
+      // 谱表数（钢琴等大谱表为 2）：只显示
+      const tdStaves = el("td", "parts-idx", String(stavesOf(part)));
+      tdStaves.title = "这个声部用几行谱（大谱表为 2）";
+      // 五线谱 / 混排里显示不显示（会话内）
+      const vis = el("input");
+      vis.type = "checkbox";
+      vis.checked = !app.hiddenParts.has(pi);
+      vis.title = "五线谱 / 混排里显示这个声部（只影响显示，试听照样出声；不写进文件）";
+      vis.addEventListener("change", () => app.setPartVisible(pi, vis.checked));
+      const tdVis = el("td");
+      tdVis.append(vis);
+      tr.append(tdTr, tdStaves, tdVis);
       // 试听：静音 / 独奏 / 音量
       const mute = el("input");
       mute.type = "checkbox";
@@ -250,6 +285,20 @@ export function showPartsPanel(app: App): void {
       const tdMel = el("td");
       tdMel.append(mel);
       tr.append(tdMel);
+      // 简谱档的歌词取自（MusicXML；合唱谱词常印在女低音下）
+      const lyr = el("input");
+      lyr.type = "radio";
+      lyr.name = "parts-lyric";
+      // 缺省（都不勾）= 自动：展开档挑带词的那个声部排在最前
+      lyr.checked = app.lyricPart === pi;
+      lyr.disabled = app.docFormat !== "musicxml";
+      lyr.title = lyr.disabled ? "文本格式的歌词就是简谱下的词行" : "简谱展开档：旋律仍取「简谱」那个声部，歌词改取这个声部的（按时刻配上去）。都不勾 = 自动，排带词的声部";
+      lyr.addEventListener("change", () => {
+        if (lyr.checked) app.setLyricPart(pi);
+      });
+      const tdLyr = el("td");
+      tdLyr.append(lyr);
+      tr.append(tdLyr);
       // 操作
       const ops = el("td", "parts-ops");
       ops.append(

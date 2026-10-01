@@ -3,7 +3,7 @@
 > 开源的简谱编辑与排版器。左侧源码、右侧实时简谱，也能直接在谱面上改音符。
 > 支持 123 简谱格式（本项目的简谱主格式，简谱的 ABC 方言）、JP-Word `.jpwabc`、
 > 「文本谱」（番茄简谱脚本 / 诗歌本文本谱，《诗歌本》app 里称「动态谱」）、ABC 与 MusicXML。
-> 本地离线识别简谱照片与 PDF（含四声部）以及五线谱 PDF；展开 / 原样 / 五线谱 / 混排四档排版，
+> 本地离线识别简谱照片与 PDF（含四声部）以及五线谱（PDF、扫描或拍照），原图对照 / 并排原图校对；展开 / 原样 / 五线谱 / 混排四档排版，
 > 按乐句重排，在线试听，另存为互转，导出 PPTX / MIDI / MusicXML / PDF / PNG。
 > 既有浏览器在线版（即开即用），也有 Windows / macOS 桌面版；界面中英双语。
 >
@@ -11,7 +11,7 @@
 > left, live SVG score on the right, plus visual editing directly on the score. Formats: 123 (the project's
 > plain-text jianpu format, an ABC dialect), JP-Word `.jpwabc`, plain-text jianpu scripts (Fanqie / Shigeben,
 > a.k.a. "dynamic score"), ABC and MusicXML. Offline optical music recognition of jianpu photos and PDFs
-> (including four-part scores) and of staff-notation PDFs; expanded / original / staff / mixed staff+jianpu
+> (including four-part scores) and of staff notation (PDFs, scans, photos), proofread over or beside the source; expanded / original / staff / mixed staff+jianpu
 > layouts; phrase-aware re-layout; playback; format conversion; export to PPTX / MIDI / MusicXML / PDF / PNG.
 > Runs in the browser and as a Windows/macOS desktop app, with an English or Chinese interface.
 
@@ -20,17 +20,22 @@
 - **源码编辑 + 实时排版**：123、`.jpwabc`、文本谱、ABC 四种文本格式，编辑即重排，语法高亮与诊断。
 - **谱面可视化编辑**：直接在谱面上选中、插入、修改唱名、八度、升降号、时值、增时线、小节线、圆滑线 / 延音线、
   延长号、重音与换行换页；键盘、右键菜单、记号面板三种入口，改动落回源码、共用撤销。
+- **录入与编辑**：歌词逐字录入、和弦名、文字与力度、连音；复制粘贴与 R 重复；全曲移调或选区移半音；
+  小节操作（插入 / 追加 / 删除小节，换调号拍号速度，小节线样式、房号与跳转记号）。
+- **声部面板**（合唱谱）：增删、排序、改名、谱号、移调乐器、拆分 / 合并闭合谱、歌词复制、隐藏声部；试听静音、独奏、音量。
 - **简谱图片识别（OMR）**：拖入照片、截图或扫描 PDF 即识别成 123 简谱再排版；歌词逐字对位、页眉标题 / 词曲 / 调号识别、
   四声部分声部。完全本地离线运行，图片不上传。
-- **原图对照**：识别结果按源图坐标叠加在二值图上逐音核对，点选定位源码，可直接试听。
-- **五线谱 PDF 识别**：文字层完整的五线谱 PDF 转 MusicXML，进五线谱 / 混排视图。
+- **原图对照**：识别结果按源图坐标叠加在二值图上逐音核对，没把握处标黄，点选定位源码，可直接改谱与试听；
+  「并排原图」左边铺整页原图、选中互通，可收起源码区；「原图页」可旋转、裁剪、排序原图后重新识别。
+- **识别项目 `.jpomr`**：原图、识别结果与在改的谱一起存，重开不重新识别；自动保存草稿，可恢复。
+- **五线谱识别**：文字层完整的五线谱 PDF 与扫描 / 拍照的五线谱转 MusicXML，进五线谱 / 混排视图，谱表与声部对应可改。
 - **文本谱（番茄简谱 / 诗歌本动态谱）**：第一等源格式，打开即编原文（自动识别方言），「原样」与「展开」两种版面，
   支持四声部并排、和弦与力度。
 - **ABC 记谱**：原生解析，可直接编辑存回，多声部、反复 / 房号、和弦、装饰音、歌词。
 - **MusicXML**：单声部可转成 123 等格式编辑，或保持 MusicXML 看五线谱 / 混排；导出 MusicXML 给 MuseScore 等软件。
 - **四档排版**：展开（反复与多段歌词逐遍展开，投影用）、原样（印刷用）、五线谱、简谱与五线谱混排。
 - **按乐句重排**：综合歌词标点与音乐信号在小节边界重新断行，可一键还原。
-- **乐谱播放**：光标跟随，暂停 / 拖进度 / 点音符定位，×0.5～×2 调速，各声部音量。
+- **乐谱播放**：光标跟随，暂停 / 拖进度 / 点音符定位，×0.5～×2 调速，循环选段、节拍器，各声部静音 / 独奏 / 音量。
 - **另存为**：123 / JPWABC / ABC / 文本谱互转，转换前列出目标格式装不下的内容。
 - **导出**：矢量 PPTX、MIDI、MusicXML；五线谱 / 混排导出 PDF、PNG。
 - 简繁转换、纸张与页眉字体设置、诗集样式表 `.ss`。

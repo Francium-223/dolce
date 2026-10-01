@@ -18,11 +18,11 @@
     <title>悦谱 Dolce — 123 简谱 / .jpwabc / 文本谱在线编辑排版 · 谱面可视化编辑 · 简谱与五线谱识别(OMR) · ABC · 简谱五线谱混排 | Dolce</title>
     <meta
       name="description"
-      content="悦谱 Dolce：开源的简谱与五线谱编辑、识谱与排版工具。左侧源码、右侧实时简谱，也能直接在谱面上改音符；支持 123 简谱格式（简谱的 ABC 方言）、JP-Word .jpwabc、文本谱（番茄简谱 / 诗歌本「动态谱」）、ABC 与 MusicXML。本地离线识别简谱照片与 PDF（含四声部）及五线谱（PDF、扫描或拍照），展开 / 原样 / 五线谱 / 混排四档排版，按乐句重排，在线试听，另存为互转，导出 PPTX / MIDI / MusicXML / PDF / PNG。浏览器即开即用，亦有 Windows/macOS 桌面版。An open-source jianpu (numbered musical notation) editor with visual editing, the 123 plain-text format, offline OMR, staff/jianpu mixed layout and playback."
+      content="悦谱 Dolce：开源的简谱与五线谱编辑、识谱与排版工具。左侧源码、右侧实时简谱，也能直接在谱面上改音符、录歌词与和弦、移调、按小节增删，合唱谱有声部面板；支持 123 简谱格式（简谱的 ABC 方言）、JP-Word .jpwabc、文本谱（番茄简谱 / 诗歌本「动态谱」）、ABC 与 MusicXML。本地离线识别简谱照片与 PDF（含四声部）及五线谱（PDF、扫描或拍照），原图对照 / 并排原图逐音校对、可疑处标黄，识别项目连原图一起存，展开 / 原样 / 五线谱 / 混排四档排版，按乐句重排，在线试听（循环、节拍器、静音独奏声部），自动保存草稿，另存为互转，导出 PPTX / MIDI / MusicXML / PDF / PNG。浏览器即开即用，亦有 Windows/macOS 桌面版。An open-source jianpu (numbered musical notation) editor with visual editing, the 123 plain-text format, offline OMR, staff/jianpu mixed layout and playback."
     />
     <meta
       name="keywords"
-      content="悦谱,Dolce,简谱,简谱编辑器,五线谱编辑,简谱排版,简谱软件,123格式,123简谱,简谱文本格式,简谱ABC,可视化编辑简谱,简谱识别,简谱图片转谱,四声部简谱识别,五线谱识别,简谱转五线谱,OMR,乐谱识别,ABC记谱,简谱五线谱混排,混排,数字谱,JP-Word,jpwabc,MusicXML,五线谱,乐谱播放,文本谱,番茄简谱,番茄简谱脚本,动态谱,诗歌本,诗歌本动态谱,简谱PPT,投影简谱,四声部简谱,简谱转MIDI,简繁转换,jianpu,jianpu editor,numbered notation,123 notation,optical music recognition,ABC notation,music notation editor,sheet music,fanqie jianpu,Tauri"
+      content="悦谱,Dolce,简谱,简谱编辑器,五线谱编辑,简谱排版,简谱软件,123格式,123简谱,简谱文本格式,简谱ABC,可视化编辑简谱,简谱识别,简谱图片转谱,四声部简谱识别,五线谱识别,简谱转五线谱,OMR,乐谱识别,ABC记谱,简谱五线谱混排,混排,数字谱,JP-Word,jpwabc,MusicXML,五线谱,乐谱播放,文本谱,番茄简谱,番茄简谱脚本,动态谱,诗歌本,诗歌本动态谱,简谱PPT,投影简谱,四声部简谱,简谱转MIDI,简繁转换,简谱移调,合唱谱,声部面板,歌词录入,原图对照,并排对照,识别项目,节拍器,循环播放,jianpu,jianpu editor,numbered notation,123 notation,optical music recognition,ABC notation,music notation editor,sheet music,fanqie jianpu,transpose,choir score,Tauri"
     />
     <meta name="author" content="lodebar2026" />
     <meta name="theme-color" content="#f5f5f5" />
@@ -37,7 +37,7 @@
     <meta property="og:title" content="悦谱 Dolce — 123 简谱 · 谱面可视化编辑 · 简谱/五线谱识别(OMR) · 文本谱 · 简谱五线谱混排" />
     <meta
       property="og:description"
-      content="开源简谱编辑与排版器：源码与谱面双向编辑，支持 123 简谱格式、.jpwabc、文本谱（番茄简谱 / 诗歌本动态谱）、ABC、MusicXML；本地离线识别简谱照片 / PDF（含四声部）与五线谱（PDF / 扫描）；四档排版、按乐句重排、在线试听，导出 PPTX/MIDI/MusicXML/PDF/PNG。即开即用，跨平台。"
+      content="开源的简谱与五线谱编辑、识谱与排版工具：源码与谱面双向编辑，歌词和弦录入、移调、合唱声部面板，支持 123 简谱格式、.jpwabc、文本谱（番茄简谱 / 诗歌本动态谱）、ABC、MusicXML；本地离线识别简谱照片 / PDF（含四声部）与五线谱（PDF / 扫描），原图对照与并排原图逐音校对；四档排版、按乐句重排、在线试听，导出 PPTX/MIDI/MusicXML/PDF/PNG。即开即用，跨平台。"
     />
     <meta property="og:url" content="https://lodebar2026.github.io/dolce/" />
     <meta property="og:image" content="https://lodebar2026.github.io/dolce/og-image.png" />
@@ -72,17 +72,23 @@
           "url": "https://lodebar2026.github.io/dolce/",
           "downloadUrl": "https://github.com/lodebar2026/dolce/releases",
           "screenshot": "https://lodebar2026.github.io/dolce/og-image.png",
-          "description": "开源的简谱编辑与排版器：源码与谱面双向编辑（谱面可视化编辑）、123 简谱格式（简谱的 ABC 方言）、JP-Word .jpwabc、文本谱（番茄简谱脚本 / 诗歌本动态谱）、ABC 与 MusicXML；本地离线识别简谱照片与 PDF（含四声部）以及五线谱 PDF、扫描或拍照的五线谱；展开 / 原样 / 五线谱 / 混排四档排版、按乐句重排、在线试听、另存为互转，导出 PPTX / MIDI / MusicXML / PDF / PNG。An open-source jianpu (numbered musical notation) editor and typesetter with visual editing, the 123 plain-text jianpu format (an ABC dialect), native Fanqie / Shigeben text scores, offline optical music recognition, mixed staff + jianpu layout and playback.",
+          "description": "开源的简谱与五线谱编辑、识谱与排版工具：源码与谱面双向编辑（谱面可视化编辑，含歌词 / 和弦 / 力度录入、移调、小节操作与合唱声部面板）、123 简谱格式（简谱的 ABC 方言）、JP-Word .jpwabc、文本谱（番茄简谱脚本 / 诗歌本动态谱）、ABC 与 MusicXML；本地离线识别简谱照片与 PDF（含四声部）以及五线谱 PDF、扫描或拍照的五线谱，原图对照 / 并排原图校对，识别项目 .jpomr 连原图保存；展开 / 原样 / 五线谱 / 混排四档排版、按乐句重排、在线试听、另存为互转，导出 PPTX / MIDI / MusicXML / PDF / PNG。An open-source jianpu (numbered musical notation) editor and typesetter with visual editing, the 123 plain-text jianpu format (an ABC dialect), native Fanqie / Shigeben text scores, offline optical music recognition, mixed staff + jianpu layout and playback.",
           "featureList": [
             "源码编辑 + 实时排版预览：123、.jpwabc、文本谱（番茄简谱 / 诗歌本动态谱）、ABC 四种文本格式，语法高亮与诊断",
             "123 简谱格式：简谱的 ABC 方言，字段头与反复、房号、多声部、演唱顺序沿用 ABC，音乐体用简谱数字，纯文本 UTF-8，适合手写",
-            "谱面可视化编辑：直接在谱面上改唱名、八度、升降号、时值、小节线、圆滑线 / 延音线、延长号、重音与换行换页，改动落回源码",
+            "谱面可视化编辑：直接在谱面上改唱名、八度、升降号、时值、小节线、圆滑线 / 延音线、延长号、重音与换行换页，改动落回源码；键位对齐常见打谱软件",
+            "录入与编辑：歌词逐字录入、和弦名、文字与力度、连音；复制粘贴（跨格式按唱名重写）与 R 重复；全曲移调或选区移半音；按小节跳、跳到第几小节",
+            "小节操作：插入 / 追加 / 删除小节，换调号、拍号、速度，小节线样式、房号与跳转记号",
+            "声部面板（合唱谱）：增删、排序、改名、谱号、移调乐器、拆分 / 合并闭合谱、歌词复制、隐藏声部；试听静音、独奏、各声部音量",
             "简谱图片识别（OMR）：照片、截图、扫描 PDF 转 123 简谱，含歌词逐字对位、页眉识别、四声部分声部；本地离线运行",
-            "原图对照核对：识别结果叠加在源图上逐音校对，点选定位源码，可直接试听",
-            "五线谱识别：文字层完整的五线谱 PDF 与扫描 / 拍照的五线谱转 MusicXML，进五线谱 / 混排视图，原图对照上可直接改",
+            "原图对照核对：识别结果叠加在源图上逐音校对，没把握的音与字标黄、逐处跳转，点选定位源码，可直接试听、直接改谱",
+            "并排原图：排版稿左边铺整页原图、两边选中互通，可收起源码区；原图片段浮窗显示选中音所在的原图行",
+            "原图页：识别前后调整原图顺序、增删、旋转、裁剪，再整首重新识别",
+            "识别项目 .jpomr：原图、识别结果与在改的谱一起存，重开不重新识别；自动保存草稿，意外关闭可恢复",
+            "五线谱识别：文字层完整的五线谱 PDF 与扫描 / 拍照的五线谱转 MusicXML，进五线谱 / 混排视图，原图对照上可直接改；谱表与声部的对应可在声部面板改",
             "四档排版：展开（逐遍展开投影）、原样（印刷）、五线谱、简谱与五线谱混排",
             "按乐句重排：综合歌词标点与音乐信号重新断行，可一键还原",
-            "乐谱播放：光标跟随，暂停 / 拖进度 / 点音符定位，×0.5～×2 调速，各声部音量",
+            "乐谱播放：光标跟随，暂停 / 拖进度 / 点音符定位，×0.5～×2 调速，循环选段、节拍器，各声部静音 / 独奏 / 音量",
             "另存为：123 / JPWABC / ABC / 文本谱互转，转换前列出装不下的内容",
             "导出：矢量 PPTX、MIDI、MusicXML；五线谱 / 混排导出 PDF、PNG",
             "简繁转换、纸张与页眉字体设置、诗集样式表 .ss",
@@ -133,7 +139,7 @@
               "name": "悦谱能识别简谱图片吗？（OMR）",
               "acceptedAnswer": {
                 "@type": "Answer",
-                "text": "可以。把简谱照片、截图或扫描 PDF 拖进页面即可识别成 123 简谱并排版：数字与歌词用 PaddleOCR 模型识别，歌词逐字与音符对位，还能识别标题、词曲与调号，四声部简谱会按声部分开。识别完全在浏览器 / 桌面本地运行、可离线，图片不上传。识别后可在「原图对照」里把结果叠在源图上逐音核对，并直接试听。"
+                "text": "可以。把简谱照片、截图或扫描 PDF 拖进页面即可识别成 123 简谱并排版：数字与歌词用 PaddleOCR 模型识别，歌词逐字与音符对位，还能识别标题、词曲与调号，四声部简谱会按声部分开。识别完全在浏览器 / 桌面本地运行、可离线，图片不上传。识别后可在「原图对照」里把结果叠在源图上逐音核对（没把握的地方标黄）、直接改谱和试听，也可打开「并排原图」边看原图边校对；识别前后都能在「原图页」里旋转、裁剪、排序原图再重新识别。"
               }
             },
             {
@@ -142,6 +148,30 @@
               "acceptedAnswer": {
                 "@type": "Answer",
                 "text": "文字层完整的五线谱 PDF（由制谱软件导出的那种）可以识别成 MusicXML；扫描或拍照的五线谱图片 / PDF 也能识别（独唱谱较可靠，合唱谱扫描件需要较多校对）。识别结果进入五线谱或混排视图，可在原图对照上逐音核对、直接在谱面上改，可试听、导出 MusicXML / MIDI / PDF / PNG。"
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "识别到一半能保存、下次接着校对吗？",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "能。识别过的谱可以保存为识别项目（.jpomr）：原图、识别结果与正在修改的谱存在一起，重新打开后直接回到原图对照接着校对，不必重新识别。另外编辑器会自动保存草稿，意外关闭或刷新后重开时可恢复。"
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "悦谱能编辑合唱谱（多声部）吗？",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "能。「声部」面板可以增删、排序、改名声部，设谱号和移调乐器，把一行谱上的两个声部（闭合谱）按声线或按和弦拆开、或合并回去，在声部之间复制歌词，在五线谱 / 混排里隐藏某个声部；试听时可静音、独奏（练声部）、调各声部音量，还能选简谱旋律和歌词取自哪个声部。"
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "怎么给简谱移调？",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "在谱面上用「移调」（编辑菜单或快捷键）：可以全曲换调——简谱是首调唱名，只改调号、数字不变，ABC 和 MusicXML 的音一起移过去；也可以只把选中的音上下移几个半音。移调可撤销。"
               }
             },
             {

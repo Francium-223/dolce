@@ -1,11 +1,11 @@
     <title>Dolce — Free Jianpu &amp; Staff Notation Editor · Image-to-Score Recognition · Playback &amp; Export</title>
     <meta
       name="description"
-      content="Free, open-source editor for jianpu (Chinese numbered musical notation). Type on the left and see the score update live, or edit notes right on the score. Turn photos, screenshots and PDFs — even four-part scores — into editable jianpu on your own device (nothing is uploaded). Supports 123, JP-Word (.jpwabc), Fanqie and Shigeben text jianpu, ABC and MusicXML; switch between jianpu and staff notation, play it back, and export PPTX, PDF, PNG, MIDI and MusicXML. Runs in the browser, with Windows and macOS desktop apps, in English and Chinese."
+      content="Free, open-source editor for jianpu (Chinese numbered musical notation). Type on the left and see the score update live, or edit notes, lyrics and chords right on the score, transpose, and manage choir parts. Turn photos, screenshots and PDFs — even four-part scores — into editable jianpu or staff notation on your own device (nothing is uploaded), then proofread side by side with the original. Supports 123, JP-Word (.jpwabc), Fanqie and Shigeben text jianpu, ABC and MusicXML; switch between jianpu and staff notation, play it back with loop and metronome, and export PPTX, PDF, PNG, MIDI and MusicXML. Runs in the browser, with Windows and macOS desktop apps, in English and Chinese."
     />
     <meta
       name="keywords"
-      content="Dolce,jianpu,jianpu editor,numbered musical notation,numbered notation editor,cipher notation,Chinese music notation,sheet music editor,music notation software,jianpu to staff,staff to jianpu,MusicXML to jianpu,optical music recognition,OMR,image to sheet music,ABC notation,JP-Word,jpwabc,Fanqie jianpu,hymn jianpu,jianpu PowerPoint,jianpu MIDI,free music notation editor,open source"
+      content="Dolce,jianpu,jianpu editor,numbered musical notation,numbered notation editor,cipher notation,Chinese music notation,sheet music editor,music notation software,jianpu to staff,staff to jianpu,MusicXML to jianpu,optical music recognition,OMR,image to sheet music,ABC notation,JP-Word,jpwabc,Fanqie jianpu,hymn jianpu,jianpu PowerPoint,jianpu MIDI,transpose jianpu,choir score editor,staff notation recognition,free music notation editor,open source"
     />
     <meta name="author" content="lodebar2026" />
     <meta name="theme-color" content="#f5f5f5" />
@@ -55,18 +55,24 @@
           "url": "https://lodebar2026.github.io/dolce/en/",
           "downloadUrl": "https://github.com/lodebar2026/dolce/releases",
           "screenshot": "https://lodebar2026.github.io/dolce/og-image.png",
-          "description": "Free, open-source editor for jianpu (Chinese numbered musical notation): live typesetting as you type and direct editing on the score; on-device recognition of photos, screenshots and PDFs into editable jianpu; 123, JP-Word (.jpwabc), Fanqie and Shigeben text jianpu, ABC and MusicXML with conversion between them; jianpu, staff and mixed views; playback; export to PPTX, PDF, PNG, MIDI and MusicXML. Runs in the browser and on Windows / macOS, with English and Chinese interfaces.",
+          "description": "Free, open-source editor for jianpu (Chinese numbered musical notation): live typesetting as you type and direct editing on the score (lyrics, chords, dynamics, transposition, measure operations, a parts panel for choir scores); on-device recognition of jianpu and staff-notation photos, screenshots and PDFs, proofread over or beside the original image and saved as recognition projects; 123, JP-Word (.jpwabc), Fanqie and Shigeben text jianpu, ABC and MusicXML with conversion between them; jianpu, staff and mixed views; playback; export to PPTX, PDF, PNG, MIDI and MusicXML. Runs in the browser and on Windows / macOS, with English and Chinese interfaces.",
           "featureList": [
             "Live layout: type on the left, see the score on the right; click the score to jump to the code",
-            "Visual editing: change degrees, octaves, accidentals, durations, slurs and line breaks right on the score, via shortcuts, a context menu or a symbol palette",
+            "Visual editing: change degrees, octaves, accidentals, durations, slurs and line breaks right on the score, via shortcuts (matching common notation software), a context menu or a symbol palette",
+            "Entry and editing: lyrics syllable by syllable, chord names, text and dynamics, tuplets; copy, paste and repeat; transpose the whole piece or a selection; jump to a measure",
+            "Measure operations: insert, append and delete measures; change key, time signature and tempo; barline styles, endings and jump marks",
+            "Parts panel for choir scores: add, reorder, rename, clefs, transposing instruments, split or merge closed scores, copy lyrics, hide parts; mute, solo and per-part volume",
             "Image recognition: turn photos, screenshots and PDFs into editable jianpu on your device (nothing is uploaded), with lyrics aligned syllable by syllable and four-part scores split into voices",
-            "Compare view: proofread the result overlaid on the original image, click to jump to the code, and play it back",
-            "Staff PDF recognition: staff-notation PDFs from notation software open in the Staff / Mixed views",
+            "Compare view: proofread the result overlaid on the original image, with doubtful notes and syllables highlighted; click to jump to the code, edit in place and play it back",
+            "Side by side: the whole source page next to the typeset score with linked selection; the source pane can be hidden",
+            "Source pages: reorder, add, remove, rotate and crop the source images, then recognize again",
+            "Recognition projects (.jpomr) keep the source images, result and edited score together; drafts are autosaved and can be restored",
+            "Staff recognition: staff PDFs with a text layer and scanned or photographed staff notation become MusicXML in the Staff / Mixed views; the staff-to-part mapping can be fixed without re-recognizing",
             "The 123 format: plain-text jianpu that borrows ABC notation's header fields, repeats, endings and voices — easy to write by hand",
             "Formats: 123, JP-Word (.jpwabc), Fanqie and Shigeben text jianpu, ABC and MusicXML, with Save As conversion that warns about anything lost",
             "Four views: Expanded (one verse per page, for projection), As printed, Staff, and Mixed jianpu + staff",
             "Beat check: measures that don't match the time signature are highlighted",
-            "Playback with pause, seeking and click-a-note-to-play, in jianpu and staff views",
+            "Playback with pause, seeking, click-a-note-to-play, speed control, loop and metronome, in jianpu and staff views",
             "Export to vector PPTX, PDF, PNG, MIDI and MusicXML",
             "Re-break lines by phrase, paper and header font settings, songbook style sheets, Simplified/Traditional Chinese conversion",
             "English and Chinese interface; browser version plus Windows / macOS desktop apps"
@@ -99,7 +105,7 @@
               "name": "Can I turn a photo or screenshot of jianpu into an editable score?",
               "acceptedAnswer": {
                 "@type": "Answer",
-                "text": "Yes. Click “Recognize image” on the start page or drag an image or PDF onto the window. Notes, lyrics, title, key and time signature are recognized into an editable score in seconds to a few dozen seconds. Recognition runs entirely on your device, so nothing is uploaded, and you can proofread the result overlaid on the original image; measures with wrong beat counts are circled."
+                "text": "Yes. Click “Recognize image” on the start page or drag an image or PDF onto the window. Notes, lyrics, title, key and time signature are recognized into an editable score in seconds to a few dozen seconds. Recognition runs entirely on your device, so nothing is uploaded. You can proofread the result overlaid on the original image (doubtful spots are highlighted in yellow, measures with wrong beat counts are circled) or beside it in the side-by-side view, and rotate, crop or reorder the source images and recognize again. Staff notation (PDFs, scans and photos) is recognized into MusicXML."
               }
             },
             {
@@ -116,6 +122,30 @@
               "acceptedAnswer": {
                 "@type": "Answer",
                 "text": "123 (.123) is Dolce's main jianpu format, a plain-text jianpu dialect of ABC notation: header fields such as X:, T:, K:, M: and w:, plus repeats, endings, multiple voices and singing order, work as in ABC, while the notes are jianpu digits — 1–7 for the scale degrees, 0 for a rest, ' and , for octaves, _ to halve a note and - to add a beat. It's easy to write by hand, and scores converted from MusicXML, ABC, text jianpu or image recognition fit into it without loss."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "Can I save a recognition and keep proofreading later?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "Yes. Save it as a recognition project (.jpomr): the source images, the recognition result and the score you are editing are stored together, and reopening it takes you straight back to the compare view without recognizing again. Drafts are also autosaved, so unsaved work can be restored after an unexpected close or reload."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "Can Dolce edit choir scores with several parts?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "Yes. The Parts panel adds, removes, reorders and renames parts, sets clefs and transposing instruments, splits a closed score (two voices on one staff) by voice or by chord or merges parts back, copies lyrics between parts and hides parts in the staff and mixed views. For playback you can mute or solo parts (handy for part practice) and set each part's volume."
+              }
+            },
+            {
+              "@type": "Question",
+              "name": "How do I transpose a jianpu score?",
+              "acceptedAnswer": {
+                "@type": "Answer",
+                "text": "Use Transpose on the score. Transposing the whole piece changes the key while jianpu digits stay the same (jianpu uses movable do); ABC and MusicXML notes move with it. You can also move just the selected notes up or down by semitones. It can be undone."
               }
             },
             {

@@ -19,15 +19,16 @@ import { midiOf, NotePreview } from "./preview";
 import type { EditDialect, NoteDuration } from "./dialect";
 import {
   addSustain, clearBeams, deleteEntries, double, dropInlineSustain, type EditCtx, type EditOutcome, groupEnd, halve, insertNote, insertToken,
-  insertLetter, isError, noteCtx, spacedInsert, noteSpans, notesIn, setAccidental, setDegree, setLetter, shiftOctave, stepDegree, stepSemitone, toggleDeco, toggleDot, toggleSlur, toggleTie,
+  insertLetter, isError, noteCtx, shiftSemitones, spacedInsert, noteSpans, notesIn, setAccidental, setDegree, setLetter, shiftOctave, stepDegree, stepSemitone, toggleDeco, toggleDot, toggleSlur, toggleTie,
 } from "./ops";
 import { keyHit, VISUAL_ACTIONS, type VisualAction, type VisualMode } from "./keys";
 import { type Clip, clipFor, itemsToText, setClip } from "./clipboard";
 import { clipOfChords } from "../../model/edit";
+import { showTransposeDialog, transposeText } from "./transpose";
 import { selectionInfo } from "./selinfo";
 import { inlineEditing, openInlineEditor } from "./inline";
 import { measureEdit } from "./measureops";
-import { pasteModel, runModelAction, type ModelActionCtx } from "./modelops";
+import { pasteModel, runModelAction, transposeModel, type ModelActionCtx } from "./modelops";
 import {
   type Box, boxInPage, charIndexAt, inkBoxInPage, clearOverlay, drawBlock, drawBreak, drawCaret, hitThroughOverlay, musicBox, rightEdgeInBand,
   sameRow, setBeatIssues, textCaretInPage,
@@ -1244,6 +1245,7 @@ export class VisualEditController {
       case "edit.cut": return this.cut();
       case "edit.paste": return this.paste(clipFor(null), null);
       case "edit.repeat": return this.repeat();
+      case "edit.transpose": return this.transpose();
       case "nav.home": return this.rowEdge(-1);
       case "nav.end": return this.rowEdge(1);
       case "mark.next": return this.cycleMark(1);
@@ -1449,6 +1451,28 @@ export class VisualEditController {
     const r = spacedInsert(c, pos, text.trim());
     const sel = c.state.selection.main;
     return this.apply({ changes: [r.change], anchor: sel.empty ? r.end : r.start, head: r.end });
+  }
+
+  /** 移调对话框：全曲换调或选中的音移几个半音（`transpose.ts`）。 */
+  private transpose(): boolean {
+    const doc = this.host.syncDoc();
+    const song = doc?.songs[0];
+    const fifths = song?.key?.fifths ?? song?.parts[0]?.measures[0]?.attrs?.key?.fifths ?? 0;
+    const sel = this.host.view.state.selection.main;
+    const hasSel = !sel.empty && this.selectedEntries().some((e) => e.kind === "note");
+    showTransposeDialog(fifths, hasSel, (whole, n) => {
+      this.host.scorePane.focus({ preventScroll: true });
+      if (!this.host.syncFresh()) this.host.reloadNow();
+      if (this.host.modelEditing()) {
+        transposeModel(this.modelCtx, whole, n);
+        return;
+      }
+      const c = this.editCtx();
+      if (!c) return;
+      if (whole) this.apply(transposeText(c, n));
+      else this.editNotes((cc, f, t) => shiftSemitones(cc, f, t, n), true);
+    });
+    return true;
   }
 
   /** `R`：把选区原样再贴一遍在它后面（不动剪贴板），选中新贴的那段——再按接着往后重复。 */

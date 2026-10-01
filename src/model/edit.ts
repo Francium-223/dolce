@@ -1065,15 +1065,59 @@ export function stepDegree(doc: ScoreDoc, ids: readonly ElementId[], delta: 1 | 
 
 /** 半音走一步（`Alt+↑`/`Alt+↓`）：落在调内音上写本音，否则升号调写升号、降号调写降号，C 调按走的方向。 */
 export function stepSemitone(doc: ScoreDoc, ids: readonly ElementId[], delta: 1 | -1, hooks: EditHooks = {}): ModelEdit {
-  const locs = chordsOf(doc, ids).filter((l) => l.chord.notes.some((n) => n.pitch));
+  return shiftSemitones(doc, ids, delta, hooks);
+}
+
+/** 选中的音移 `n` 个半音（移调对话框的「选区」），拼写同 `stepSemitone`。 */
+export function shiftSemitones(doc: ScoreDoc, ids: readonly ElementId[], n: number, hooks: EditHooks = {}): ModelEdit {
+  const locs = chordsOf(doc, ids).filter((l) => l.chord.notes.some((x) => x.pitch));
   if (locs.length === 0) return { error: "先选中一个音符" };
   for (const l of locs) {
     const { key } = measureCtx(l.song, l.part, l.mi);
-    const sign = key.fifths > 0 ? 1 : key.fifths < 0 ? -1 : delta;
-    for (const n of l.chord.notes) if (n.pitch) n.pitch = spellMidi(midiOfPitch(n.pitch) + delta, key.fifths, sign);
+    const sign = key.fifths > 0 ? 1 : key.fifths < 0 ? -1 : Math.sign(n) || 1;
+    for (const x of l.chord.notes) if (x.pitch) x.pitch = spellMidi(midiOfPitch(x.pitch) + n, key.fifths, sign);
   }
   touched(locs, hooks.forgetStem);
   return { select: locs.map((l) => l.chord) };
+}
+
+/** 调号（升号个数）移 `n` 个半音后的调号：新主音按常用写法取（升 / 降不超过 6 个，F♯ 与 G♭ 取 F♯）。 */
+export function transposeFifths(fifths: number, n: number): number {
+  const pc = (((fifths * 7 + n) % 12) + 12) % 12;
+  return [0, -5, 2, -3, 4, -1, 6, 1, -4, 3, -2, 5][pc]!;
+}
+
+/** 全曲移 `n` 个半音：每个音移过去、每处调号跟着换（`transposeFifths`），按新调号拼写；和弦记号不动。 */
+export function transposeScore(doc: ScoreDoc, n: number, hooks: EditHooks = {}): ModelEdit {
+  if (n === 0) return { error: "没有要移的" };
+  const all: Chord[] = [];
+  for (const song of doc.songs) {
+    if (song.key) song.key = { ...song.key, fifths: transposeFifths(song.key.fifths, n) };
+    for (const part of song.parts) {
+      // 一处调号都没写（C 调）：在第一小节补上新调号，否则移过去的音没有调号可依
+      const first = part.measures[0];
+      if (!song.key && first && !first.attrs?.key) first.attrs = { ...first.attrs, key: { fifths: 0 } };
+      let fifths = song.key?.fifths ?? 0;
+      for (const m of part.measures) {
+        if (m.attrs?.key) {
+          m.attrs.key = { ...m.attrs.key, fifths: transposeFifths(m.attrs.key.fifths, n) };
+          fifths = m.attrs.key.fifths;
+        }
+        const sign = fifths > 0 ? 1 : fifths < 0 ? -1 : Math.sign(n);
+        for (const el of m.elements) {
+          if (el.kind !== "chord") continue;
+          for (const x of el.notes) if (x.pitch) x.pitch = spellMidi(midiOfPitch(x.pitch) + n, fifths, sign);
+          if (el.notes.some((x) => x.pitch)) all.push(el);
+        }
+      }
+    }
+    hooks.forgetLayout?.(song);
+  }
+  for (const id of all.map((c) => c.id)) {
+    const l = locate(doc, id);
+    if (l) touched([l], hooks.forgetStem);
+  }
+  return { select: [] };
 }
 
 /** MIDI 音高拼成音名：调内音优先，其次本位，再按 `sign` 取升或降。 */

@@ -79,6 +79,11 @@ function modal(
   (body.querySelector("input,select") as HTMLElement | null)?.focus();
 }
 
+/** 一张表单对话框：确定时调 `onOk`（取消什么也不做）。 */
+export function showFormDialog(title: string, body: HTMLElement, onOk: () => void): void {
+  modal(title, body, onOk);
+}
+
 /** 是/否确认框。用同一套 modal 样式，别退回 window.confirm——桌面版观感对不上。 */
 export function showConfirmDialog(title: string, message: string): Promise<boolean> {
   return new Promise((resolve) => {
@@ -139,7 +144,7 @@ export function showChoiceDialog<T extends string>(
   });
 }
 
-function labeled(label: string, el: HTMLElement): HTMLElement {
+export function labeled(label: string, el: HTMLElement): HTMLElement {
   const row = document.createElement("label");
   row.className = "modal-row";
   const span = document.createElement("span");

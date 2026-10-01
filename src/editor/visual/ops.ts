@@ -169,15 +169,20 @@ export function stepDegree(ctx: EditCtx, from: number, to: number, delta: 1 | -1
 
 /** 半音走一步（`Alt+↑`/`Alt+↓`）：落在调内音上就写成本音，否则升调（`1=G` 等）写升号、降调写降号，C 调按走的方向。 */
 export function stepSemitone(ctx: EditCtx, from: number, to: number, delta: 1 | -1): EditOutcome {
+  return shiftSemitones(ctx, from, to, delta);
+}
+
+/** 选中的音移 `n` 个半音（拼写同 `stepSemitone`）。 */
+export function shiftSemitones(ctx: EditCtx, from: number, to: number, n: number): EditOutcome {
   return rewriteNotes(ctx, from, to, (t, e) => {
     if (t.degree === 0) return null;
     const fifths = noteCtx(ctx, e.from).fifths;
-    const semi = t.octave * 12 + MAJOR[t.degree - 1]! + (t.acc ? ACC_SEMI[t.acc] ?? 0 : 0) + delta;
+    const semi = t.octave * 12 + MAJOR[t.degree - 1]! + (t.acc ? ACC_SEMI[t.acc] ?? 0 : 0) + n;
     const oct = Math.floor(semi / 12);
     const r = semi - oct * 12;
     const dia = MAJOR.indexOf(r);
     if (dia >= 0) Object.assign(t, { degree: dia + 1, acc: null, octave: oct });
-    else if (fifths > 0 || (fifths === 0 && delta > 0)) Object.assign(t, { degree: MAJOR.indexOf(r - 1) + 1, acc: "sharp", octave: oct });
+    else if (fifths > 0 || (fifths === 0 && n > 0)) Object.assign(t, { degree: MAJOR.indexOf(r - 1) + 1, acc: "sharp", octave: oct });
     else Object.assign(t, { degree: MAJOR.indexOf(r + 1) + 1, acc: "flat", octave: oct });
     return Math.abs(t.octave) > 3 ? "八度点最多三个" : t;
   });

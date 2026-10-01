@@ -11,7 +11,7 @@ import {
   addBeat, addChordNote, type BarKind, chordAtPos, chordOnset, deleteChords, deleteMeasures, insertChord, insertInVoice, insertMeasure,
   isEditError, type JumpKind, locate, mergeMeasures, midiOf, type ChordPos, type EditHooks, type InsertAnchor, type ModelEdit, posOf,
   removeChordNote, scaleDuration, setBarKind, setBreakBefore, setDegree, setKeyAt, setTempoAt, setTimeAt, shiftOctave, splitMeasure,
-  pasteClip, type ClipItem, stepDegree, stepSemitone, setStep, degreeOfStep, anchorFifths, toggleAccidental, toggleDeco, toggleDot, toggleEnding, toggleJump, toggleSlur, toggleTie,
+  pasteClip, type ClipItem, shiftSemitones, transposeScore, stepDegree, stepSemitone, setStep, degreeOfStep, anchorFifths, toggleAccidental, toggleDeco, toggleDot, toggleEnding, toggleJump, toggleSlur, toggleTie,
 } from "../../model/edit";
 import { parseKeyInput, parseTempoInput, parseTimeInput } from "./measureinput";
 import { dropEmbeddedLayout, forgetNoteLayout } from "../../model/xmlsurface";
@@ -187,6 +187,17 @@ export function pasteModel(ctx: ModelActionCtx, items: readonly ClipItem[]): boo
     const r = at ? pasteClip(doc, at, items, HOOKS) : { error: "这里贴不进音符" };
     return insert && "select" in r ? { caretAfter: r.select[r.select.length - 1]! } : r;
   });
+}
+
+/** 移调（`transpose.ts` 的对话框）：全曲换调（音、调号一起移），或选中的音移几个半音。 */
+export function transposeModel(ctx: ModelActionCtx, whole: boolean, n: number): boolean {
+  if (whole) return commit(ctx, (doc) => transposeScore(doc, n, HOOKS));
+  const ids = selectedNotes(ctx);
+  if (!ids.length) {
+    ctx.setStatus("先选中要移的音");
+    return true;
+  }
+  return commit(ctx, (doc) => shiftSemitones(doc, ids, n, HOOKS), true);
 }
 
 /** 某个条目对应的音符 id：音符就是它；小节线、换行是它前面那个音。 */

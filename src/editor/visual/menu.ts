@@ -79,6 +79,7 @@ const SHORT: Record<string, string> = {
   "jump.segno": "\u{1D10B}", "jump.coda": "\u{1D10C}", "jump.dc": "D.C.", "jump.ds": "D.S.", "jump.fine": "Fine",
   "view.formatMarks": "\u00B6", // ¶
   "nav.gotoMeasure": "\u2192\u2116", // →№
+  "edit.transpose": "\u21C5", // ⇅
   "edit.undo": "\u21B6", // ↶
   "edit.redo": "\u21B7", // ↷
 };

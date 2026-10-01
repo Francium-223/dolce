@@ -174,6 +174,8 @@ export const VISUAL_ACTIONS: readonly VisualAction[] = [
     help: "插入模式贴在光标处，编辑模式贴在选区后面（不覆盖），贴完选中贴进来的那段。同一种格式原样贴；贴到别的格式只带音、增时线、小节线，按唱名走（换了调的照唱名）" },
   { id: "edit.repeat", label: "重复", group: "编辑", keys: [{ key: "r" }], keyText: "R",
     modes: ["edit"], help: "把选中的那段原样再贴一遍在后面，并选中新贴的——接着按 R 一直往后重复（不动剪贴板）" },
+  { id: "edit.transpose", label: "移调…", group: "编辑", keys: [], keyText: "",
+    help: "全曲换调（简谱唱名不变、只改调号；ABC、MusicXML 的音一起移），或选中的音移几个半音" },
   { id: "edit.undo", label: "撤销", group: "编辑", keys: [{ key: "z", mod: true }], keyText: "Ctrl/⌘+Z",
     help: "与代码区共用同一份撤销记录" },
   { id: "edit.redo", label: "重做", group: "编辑", keys: [{ key: "z", mod: true, shift: true }, { key: "y", mod: true }], keyText: "Ctrl/⌘+Shift+Z",

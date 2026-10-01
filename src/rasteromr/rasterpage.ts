@@ -101,11 +101,33 @@ export async function rasterizePage(page: any, OPS: any): Promise<RasterPage | n
   //（齐来谢主歌音符 21% → 72%）。只放细线的（`UPSCALE_THIN`）；1-bit 的底本没有灰度可插，不放。
   let up = 1;
   if (kind === "rgb") {
-    const u0 = estimateUnit(prepared(bin));
-    if (u0 && u0.space < UPSCALE_SPACE && u0.lineThick / u0.space < UPSCALE_THIN) {
-      const big = decodeImage(best, w, h, SAUVOLA_K, 2);
-      if (big) (bin = big), (up = 2);
-    }
+    /** 按阈值档 k 取图（线距小、线又细的先放大一倍，见上） */
+    const build = (k: number, first: Binary | null): { bin: Binary; up: number } | null => {
+      const b = first ?? decodeImage(best, w, h, k);
+      if (!b) return null;
+      const u0 = estimateUnit(prepared(b));
+      if (u0 && u0.space < UPSCALE_SPACE && u0.lineThick / u0.space < UPSCALE_THIN) {
+        const big = decodeImage(best, w, h, k, 2);
+        if (big) return { bin: big, up: 2 };
+      }
+      return { bin: b, up: 1 };
+    };
+    let got = build(SAUVOLA_K, bin);
+    // **一行谱都找不出来的彩色底本，换松一档阈值重来**：谱线印得淡的页（新编赞美诗 123 我爱教会歌，
+    // 谱线那几行平均灰度 140，别的页 100）`SAUVOLA_K` 那一档把谱线抹成断续的几截，凑不成一行谱。
+    // 看的是**放大之后**成不成行——没放大时量得出线距、放大再二值反倒抹掉的也算。
+    // 逐档放松（`SAUVOLA_K_RETRY`），到找得出谱行为止；都找不出的照旧（封面、歌词页）。
+    // **只在一行都找不出时才换**。「松一档能多找出谱行就换」试过：松阈值下歌词带、淡底纹里会多出假谱行，
+    // 一大批本来好好的页被换成糊的那一档（全量 127 首下降，荣归天父歌 97.6 → 17.4），已撤。
+    if (got && !staffScore(prepared(got.bin)))
+      for (const k2 of SAUVOLA_K_RETRY) {
+        const g2 = build(k2, null);
+        if (g2 && staffScore(prepared(g2.bin))) {
+          got = g2;
+          break;
+        }
+      }
+    if (got) (bin = got.bin), (up = got.up);
   }
   // **细线扫描件补竖向断口**：高分辨率彩色扫描（320dpi 的敬拜万世之王）小节线、符干只有
   // 一两像素、灰度 150~210，`SAUVOLA_K` 那一档阈值约 144，切成虚线——小节线认不出，
@@ -432,6 +454,8 @@ function upsample(gray: Uint8Array, w: number, h: number, up: number): Uint8Arra
 const SAUVOLA_WIN = 1 / 40;
 const SAUVOLA_K = 0.5;
 const SAUVOLA_R = 128;
+/** 标准阈值量不出谱行时依次再试的几档（见 `rasterizePage`）。 */
+const SAUVOLA_K_RETRY = [0.35, 0.2, 0.1];
 /** 细线扫描件的松阈值：页白 250 时阈值约 208（`SAUVOLA_K` 那档约 144）。 */
 const SAUVOLA_K_FAINT = 0.2;
 /** 从松阈值图里取回的竖笔，纵向游程至少几格（小节线 4 格、符干 3 格；谱线与字的竖笔短得多）。 */

@@ -3268,6 +3268,7 @@ export async function recognizeRasterPage(
   findTails(pg);
   findBarlines(pg);
   const ctx = findClefKeyTime(pg);
+  shareSystemClefs(pg, ctx, unit);
   demoteMidKeys(pg, ctx);
   extendKeyChains(pg, ctx);
   dropHeadsInKey(pg, ctx);
@@ -4451,6 +4452,48 @@ function inkSystemBarlines(pg: SPage, bin: Binary, sp: number): void {
           pushSeg(pg, pg.objs.length + pg.segs.length + 1, { x0: x, y0: b.box.top, x1: x, y1: b.box.bottom, lw: l.lw, maxLw: l.lw });
         });
       }
+  }
+}
+
+/**
+ * **多行系统各行的行首谱号按全页的多数定**。闭合谱每个系统都是「高音谱表 + 低音谱表」，
+ * 可第一系统的低音谱号挨着拍号、常被读成高音谱号（或干脆没认出来），那一行的音全按高音谱表读，
+ * 整首只剩三成（新编赞美诗 149 每日新恩歌、213 曾否就主歌、121 将见我王歌）。
+ * 行数相同的系统至少两个、某个位置上过半的系统认出同一种谱号，其余系统那个位置就照它改；没认出谱号的补一个。
+ * 只动行首那一个（行中换谱号的不管）。
+ */
+function shareSystemClefs(pg: SPage, ctx: Map<Staff, StaffContext>, unit: { space: number; height: number }): void {
+  const byLen = new Map<number, Staff[][]>();
+  // 只管两行的系统（大谱表）：合唱谱三行以上的系统行数相同、声部却不同（女声加钢琴 / 男声加钢琴），
+  // 同一位置的谱号本来就不一样（合唱谱干净档按谱行 98.17 → 97.94）
+  for (const g of systemGroups(pg)) if (g.length === 2) (byLen.get(g.length) ?? byLen.set(g.length, []).get(g.length)!).push(g);
+  for (const [len, gs] of byLen) {
+    if (gs.length < 2) continue;
+    for (let i = 0; i < len; i++) {
+      const tally = new Map<SmuflName, number>();
+      for (const g of gs) {
+        const code = ctx.get(g[i])?.clef?.code;
+        if (code) tally.set(code, (tally.get(code) ?? 0) + 1);
+      }
+      let [code, n] = [...tally].sort((a, b) => b[1] - a[1])[0] ?? [];
+      // 只有两个系统、最下一行一个读成高音一个读成低音：平手时取低音（上面那行是高音谱号的大谱表，下面那行不会也是高音）
+      const tieBass = i === len - 1 && i > 0 && gs.length === 2 && tally.get("fClef") === 1 && gs.every((g) => ctx.get(g[0])?.clef?.code === "gClef");
+      if (tieBass) (code = "fClef"), (n = 2);
+      if (!code || n === undefined || n < 2 || n * 2 <= gs.length) continue;
+      for (const g of gs) {
+        const c = ctx.get(g[i]);
+        if (!c || c.clef?.code === code) continue;
+        if (c.clef) c.clef.code = code;
+        else {
+          const st = g[i];
+          const box = { x: st.box.left + unit.space * 0.5, y: st.box.top, w: unit.space * 2.5, h: st.box.bottom - st.box.top };
+          const sym = makeSymObj(pg.objs.length + pg.segs.length + 1, { box, code }, unit.height).sym;
+          sym.addTag("Clef");
+          c.clef = sym;
+          c.clefs = [sym, ...(c.clefs ?? [])];
+        }
+      }
+    }
   }
 }
 

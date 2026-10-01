@@ -716,8 +716,11 @@ export class VisualEditController {
     if (!el) return;
     const raw = this.host.view.state.doc.sliceString(e.from, e.to);
     const sameVerse = (x: SyncEntry): boolean => x.kind === "lyric" && x.verseNo === e.verseNo;
-    const ord = this.host.sync.ordered().filter(sameVerse).findIndex((x) => x.from === e.from);
+    const before = this.host.sync.ordered().filter(sameVerse);
+    const ord = before.findIndex((x) => x.from === e.from);
     openInlineEditor(el, unescapeXml(raw), ({ value, nav }) => {
+      // 下一个 / 当前这个字按音认（改成空串时这个字的条目没了，按序号数会跳过一个）
+      const nextId = e.kind === "lyric" && nav !== 0 ? before[ord + nav]?.id : undefined;
       if (value !== null && value !== unescapeXml(raw)) {
         const targets = e.kind === "header"
           ? this.host.sync.ordered().filter((x) => x.kind === "header" && this.host.view.state.doc.sliceString(x.from, x.to) === raw)
@@ -729,8 +732,8 @@ export class VisualEditController {
         this.host.reloadNow();
       }
       const list = this.host.sync.ordered().filter(sameVerse);
-      const next = e.kind === "lyric" && nav !== 0 ? list[ord + nav] : undefined;
-      const cur = list[ord];
+      const next = nextId !== undefined ? list.find((x) => x.id === nextId) : undefined;
+      const cur = list.find((x) => x.id === e.id);
       if (next) {
         this.select(next.from, next.to);
         // 谱面是异步重排的（五线谱档），等排完、元素绑好再开下一个框

@@ -121,18 +121,19 @@ function nearestOctave(p: Pitch, near: number): Pitch {
 /** 同一声部里 `loc` 之前最近的一个有音高的音（没有就往后找），给新音定八度。 */
 function neighbourMidi(part: Part, mi: number, index: number, voice: number): number {
   const flat: Chord[] = [];
-  let at = -1;
+  // 插入点前面有几个本声线的和弦（插在小节末尾、后面紧跟别的声线时 `index` 处不是本声线的音，照样数得出）
+  let at = 0;
   part.measures.forEach((m, i) => m.elements.forEach((e, j) => {
     if (e.kind !== "chord" || e.voice !== voice) return;
-    if (i === mi && j === index) at = flat.length;
+    if (i < mi || (i === mi && j < index)) at = flat.length + 1;
     flat.push(e);
   }));
   const hit = (c: Chord | undefined): number | null => (c?.notes[0]?.pitch ? midiOfPitch(c.notes[0].pitch) : null);
-  for (let k = (at < 0 ? flat.length : at) - 1; k >= 0; k--) {
+  for (let k = at - 1; k >= 0; k--) {
     const v = hit(flat[k]);
     if (v !== null) return v;
   }
-  for (let k = Math.max(0, at + 1); k < flat.length; k++) {
+  for (let k = at; k < flat.length; k++) {
     const v = hit(flat[k]);
     if (v !== null) return v;
   }
@@ -426,6 +427,15 @@ function nextId(doc: ScoreDoc): ElementId {
   return max + 1;
 }
 
+/** 元素增删之后，按「排在第几个元素之后」记位置的东西（文字力度、小节中间的属性与小节线）跟着挪。 */
+function remapAfter(m: Measure, map: (a: number) => number): void {
+  for (const d of m.directions ?? []) if (d.afterElements !== undefined) d.afterElements = map(d.afterElements);
+  for (const a of m.laterAttrs ?? []) a.afterElements = map(a.afterElements);
+  for (const b of m.barlines ?? []) if (b.afterElements !== undefined) b.afterElements = map(b.afterElements);
+}
+/** 在第 `index` 个元素前插了一个：挂在它及以后的往后挪（小节开头的速度、记号不动） */
+const shiftForInsert = (m: Measure, index: number): void => remapAfter(m, (a) => (a > index || (a === index && index > 0) ? a + 1 : a));
+
 /** 在锚点处插入一个音（`degree` 0 = 休止）。 */
 export function insertChord(doc: ScoreDoc, anchor: InsertAnchor, degree: number, dur: NewDuration, hooks: EditHooks = {}): ModelEdit {
   let song: Song, part: Part, measure: Measure, mi: number, index: number, voice: number, staff: number;
@@ -469,6 +479,7 @@ export function insertChord(doc: ScoreDoc, anchor: InsertAnchor, degree: number,
     delete follower.onset;
   }
   measure.elements.splice(index, 0, ch);
+  shiftForInsert(measure, index);
   delete measure.duration;
   rebeam(measure, voice, time, dpq);
   respellMeasure(measure, key);
@@ -507,7 +518,9 @@ export function deleteChords(doc: ScoreDoc, ids: readonly ElementId[], hooks: Ed
       const nxt = m.elements.slice(i + 1).find((x) => x.voice === e.voice && !gone.has(x.id));
       if (nxt && nxt.kind === "chord" && nxt.onset === undefined) nxt.onset = e.onset;
     });
+    const removed = m.elements.flatMap((e, i) => (gone.has(e.id) ? [i] : []));
     m.elements = m.elements.filter((e) => !gone.has(e.id));
+    remapAfter(m, (a) => a - removed.filter((i) => i < a).length);
     delete m.duration;
     const { key, time, dpq } = measureCtx(l.song, l.part, l.mi);
     for (const v of new Set(locs.filter((x) => x.measure === m).map((x) => x.chord.voice))) rebeam(m, v, time, dpq);
@@ -561,11 +574,15 @@ function renumber(part: Part, from: number): void {
 export function splitMeasure(doc: ScoreDoc, afterId: ElementId, hooks: EditHooks = {}): ModelEdit {
   const l = locate(doc, afterId);
   if (!l) return { error: "找不到插入位置" };
-  const cut = (onsets(l.measure).get(l.chord) ?? 0) + l.chord.duration.divisions;
-  if (cut >= measureLength(l.measure)) return { error: "这里已经是小节末尾" };
+  const cut0 = (onsets(l.measure).get(l.chord) ?? 0) + l.chord.duration.divisions;
+  if (cut0 >= measureLength(l.measure)) return { error: "这里已经是小节末尾" };
+  // 各声部的 divisions 可以不同（改过附点、十六分会单独放大单位）：劈开处按四分音符换算到每个声部自己的单位
+  const cutQ = cut0 / measureCtx(l.song, l.part, l.mi).dpq;
+  const cutOf = (part: Part): number => cutQ * measureCtx(l.song, part, l.mi).dpq;
   for (const part of l.song.parts) {
     const m = part.measures[l.mi];
     if (!m) continue;
+    const cut = cutOf(part);
     const on = onsets(m);
     for (const [ch, at] of on) {
       if (at < cut && at + (ch.grace ? 0 : ch.duration.divisions) > cut) {
@@ -576,6 +593,7 @@ export function splitMeasure(doc: ScoreDoc, afterId: ElementId, hooks: EditHooks
   for (const part of l.song.parts) {
     const m = part.measures[l.mi];
     if (!m) continue;
+    const cut = cutOf(part);
     const on = onsets(m);
     const keep = m.elements.filter((e) => e.kind !== "chord" || (on.get(e) ?? 0) < cut);
     const moved = m.elements.filter((e) => !keep.includes(e));
@@ -593,15 +611,31 @@ export function splitMeasure(doc: ScoreDoc, afterId: ElementId, hooks: EditHooks
       nm.barlines = right;
       m.barlines = (m.barlines ?? []).filter((b) => b.location !== "right");
     }
-    // 文字记号按「排在第几个元素之后」挂：落在劈开处之后的跟着挪到新小节
-    const keepN = keep.length;
-    const goes = (d: { afterElements?: number }): boolean => (d.afterElements ?? 0) >= keepN && (d.afterElements ?? 0) > 0 && keepN < m.elements.length;
+    // 文字记号、小节中间的属性按「排在第几个元素之后」挂：跟着它前面挨着的那个元素走（多声线时留下的元素不是连续一段），
+    // 排在最后的跟着去新小节，排在开头的留在原小节
+    const old = m.elements;
+    const place = (a: number): { moves: boolean; at: number } => {
+      if (a <= 0) return { moves: false, at: 0 };
+      if (a >= old.length) return { moves: moved.length > 0, at: moved.length > 0 ? moved.length : keep.length };
+      const e = old[a]!;
+      return moved.includes(e) ? { moves: true, at: moved.indexOf(e) } : { moves: false, at: keep.indexOf(e) };
+    };
     const dirs = m.directions ?? [];
-    const movedDirs = dirs.filter(goes).map((d) => ({ ...d, afterElements: (d.afterElements ?? 0) - keepN }));
+    const movedDirs: NonNullable<Measure["directions"]> = [];
+    const stay: NonNullable<Measure["directions"]> = [];
+    for (const d of dirs) {
+      const p = place(d.afterElements ?? 0);
+      (p.moves ? movedDirs : stay).push({ ...d, afterElements: p.at });
+    }
     if (movedDirs.length) nm.directions = movedDirs;
-    const stay = dirs.filter((d) => !goes(d));
     if (stay.length) m.directions = stay;
     else delete m.directions;
+    const later = m.laterAttrs ?? [];
+    const movedLater = later.flatMap((x) => { const p = place(x.afterElements); return p.moves ? [{ ...x, afterElements: p.at }] : []; });
+    const stayLater = later.flatMap((x) => { const p = place(x.afterElements); return p.moves ? [] : [{ ...x, afterElements: p.at }]; });
+    if (movedLater.length) nm.laterAttrs = movedLater;
+    if (stayLater.length) m.laterAttrs = stayLater;
+    else delete m.laterAttrs;
     m.elements = keep;
     delete m.duration;
     part.measures.splice(l.mi + 1, 0, nm);
@@ -624,6 +658,7 @@ export function mergeMeasures(doc: ScoreDoc, si: number, mi: number, hooks: Edit
     const b = part.measures[mi + 1];
     if (!part.measures[mi] || !b) return { error: "最后一条小节线删不掉" };
     if (b.attrs?.key || b.attrs?.time) return { error: "下一小节换了调号或拍号，不能并成一节" };
+    if (b.attrs?.divisions !== undefined && b.attrs.divisions !== measureCtx(song, part, mi).dpq) return { error: "下一小节的时值单位不同，不能并成一节" };
   }
   let anchor: Chord | null = null;
   for (const [pi, part] of song.parts.entries()) {
@@ -645,6 +680,16 @@ export function mergeMeasures(doc: ScoreDoc, si: number, mi: number, hooks: Edit
     const aN = a.elements.length;
     a.directions = [...(a.directions ?? []), ...(b.directions ?? []).map((d) => ({ ...d, afterElements: (d.afterElements ?? 0) + aN }))];
     if (!a.directions.length) delete a.directions;
+    // 下一小节开头换的谱号（等）成了这一小节中间的属性；它中间的属性、小节线照挪
+    const { divisions: _d, ...battrs } = b.attrs ?? {};
+    void _d;
+    const later = [
+      ...(a.laterAttrs ?? []),
+      ...(Object.keys(battrs).length ? [{ afterElements: aN, onset: len, attrs: battrs }] : []),
+      ...(b.laterAttrs ?? []).map((x) => ({ ...x, afterElements: x.afterElements + aN, ...(x.onset !== undefined ? { onset: x.onset + len } : {}) })),
+    ];
+    if (later.length) a.laterAttrs = later;
+    for (const x of b.barlines ?? []) if (x.location === "middle" && x.afterElements !== undefined) x.afterElements += aN;
     a.elements = [...a.elements, ...b.elements];
     a.barlines = [...(a.barlines ?? []).filter((x) => x.location !== "right"), ...(b.barlines ?? []).filter((x) => x.location !== "left")];
     if (!a.barlines.length) delete a.barlines;
@@ -780,10 +825,22 @@ export function insertMeasure(doc: ScoreDoc, si: number, mi: number, hooks: Edit
   let pick: Chord | null = null;
   for (const [pi, part] of song.parts.entries()) {
     const at = Math.max(0, Math.min(mi, part.measures.length));
-    const ref = Math.min(at, part.measures.length - 1);
-    const len = nominalLength(song, part, Math.max(0, ref));
-    const rest = wholeRest(doc, len, measureCtx(song, part, Math.max(0, ref)).dpq);
+    // 拍号取插入处前面那一小节的（后一小节换了拍号，新小节仍按换之前的）
+    const ref = Math.max(0, Math.min(at > 0 ? at - 1 : 0, part.measures.length - 1));
+    const len = nominalLength(song, part, ref);
+    const dpqRef = measureCtx(song, part, ref).dpq;
+    const rest = wholeRest(doc, len, dpqRef);
     const nm: Measure = { number: "", elements: [rest] };
+    // 大谱表（钢琴等）：每行谱表各一个整小节休止，声线照参照小节那一行用的
+    let staves = 1;
+    for (let k = 0; k <= ref; k++) staves = part.measures[k]?.attrs?.staves ?? staves;
+    for (let st = 2; st <= staves; st++) {
+      const r = wholeRest(doc, len, dpqRef);
+      r.staff = st;
+      r.voice = part.measures[ref]?.elements.find((e) => e.staff === st)?.voice ?? (st - 1) * 4 + 1;
+      r.onset = 0;
+      nm.elements.push(r);
+    }
     // 插在第一小节前面：原来第一小节的属性（调号、拍号、divisions、谱号）挪到新的第一小节
     if (at === 0 && part.measures[0]?.attrs) {
       nm.attrs = part.measures[0].attrs;
@@ -830,6 +887,12 @@ export function deleteMeasures(doc: ScoreDoc, si: number, from: number, to: numb
       last.barlines = [...(last.barlines ?? []).filter((b) => b.location !== "right"), ...lastRight];
     }
     renumber(part, from);
+  }
+  // 一头删掉的延音线：留下那头的音上的 tie 标记也清掉（不然写出孤零零的 <tie type="stop">）
+  for (const mk of song.marks) {
+    if (mk.type !== "tied" || gone.has(mk.start) === gone.has(mk.end)) continue;
+    const other = locate(doc, gone.has(mk.start) ? mk.end : mk.start)?.chord;
+    for (const nt of other?.notes ?? []) if (nt.tie) delete nt.tie[gone.has(mk.start) ? "stop" : "start"];
   }
   song.marks = song.marks.filter((m) => !gone.has(m.start) && !gone.has(m.end));
   hooks.forgetLayout?.(song);
@@ -972,17 +1035,45 @@ export function addChordNote(doc: ScoreDoc, id: ElementId, degree: number, hooks
   if (!p0) return { error: "唱名只有 1–7" };
   let p = nearestOctave(p0, top + 6);
   while (midiOfPitch(p) <= top) p = { ...p, octave: p.octave + 1 };
+  const old = [...l.chord.notes];
   l.chord.notes.push({ pitch: p });
-  l.chord.notes.sort((a, b) => midiOfPitch(a.pitch!) - midiOfPitch(b.pitch!));
+  l.chord.notes.sort((a, b) => (a.pitch ? midiOfPitch(a.pitch) : 0) - (b.pitch ? midiOfPitch(b.pitch) : 0));
+  renoteMarks(l.song, l.chord, old);
   touched([l], hooks.forgetStem);
   return { select: [l.chord] };
+}
+
+/** 和弦里的音重排、删了一个之后：挂在「第几个音」上的弧与延音线跟着那个音走（音删掉了，挂在它上面的去掉）。 */
+function renoteMarks(song: Song, chord: Chord, old: readonly Note[]): void {
+  const at = (i: number | undefined): number => chord.notes.indexOf(old[i ?? 0]!);
+  song.marks = song.marks.filter((mk) => {
+    if (mk.start === chord.id) {
+      const j = at(mk.startNote);
+      if (j < 0) return false;
+      if (j) mk.startNote = j;
+      else delete mk.startNote;
+    }
+    if (mk.end === chord.id) {
+      const j = at(mk.endNote);
+      if (j < 0) return false;
+      if (j) mk.endNote = j;
+      else delete mk.endNote;
+    }
+    return true;
+  });
 }
 
 /** 选中和弦里的第 `index` 个音（从低到高）单独删掉；只剩一个音时不删。 */
 export function removeChordNote(doc: ScoreDoc, id: ElementId, index: number, hooks: EditHooks = {}): ModelEdit {
   const l = locate(doc, id);
   if (!l || l.chord.notes.length < 2) return { error: "和弦里只剩一个音了，要删整个音请按 Delete" };
-  l.chord.notes.splice(index, 1);
+  // `index` 按谱面从低到高数；模型里的次序是原文的（不少软件从高往低写）
+  const byPitch = [...l.chord.notes].sort((a, b) => (a.pitch ? midiOfPitch(a.pitch) : 0) - (b.pitch ? midiOfPitch(b.pitch) : 0));
+  const gone = byPitch[index];
+  if (!gone) return { error: "找不到这个音" };
+  const old = [...l.chord.notes];
+  l.chord.notes = old.filter((n) => n !== gone);
+  renoteMarks(l.song, l.chord, old);
   touched([l], hooks.forgetStem);
   return { select: [l.chord] };
 }
@@ -1015,14 +1106,19 @@ export function insertInVoice(
   }
   const on = onsets(measure);
   const mine = measure.elements.map((e, i) => ({ e, i })).filter(({ e }) => e.kind === "chord" && e.voice === voice);
+  if (mine.some(({ e }) => !(e as Chord).grace && (on.get(e as Chord) ?? 0) === onset)) {
+    return { error: `第 ${voice} 声线在这一刻已经有音：选中它改，或换个位置` };
+  }
   const before = mine.filter(({ e }) => (on.get(e as Chord) ?? 0) <= onset).pop();
-  const index = before ? before.i + 1 : measure.elements.length;
+  // 比本声线第一个音还早：插在它前面（不能接在小节元素末尾——排在后面的元素起点在前，符杠与位置都乱）
+  const index = before ? before.i + 1 : (mine[0]?.i ?? measure.elements.length);
   const prevEnd = before ? (on.get(before.e as Chord) ?? 0) + (before.e as Chord).duration.divisions : -1;
   if (prevEnd !== onset) ch.onset = onset;
   // 后面同声线的那个音若原本接着前一个音，现在前面换成了新音，给它显式起点保住原位
   const follower = mine.find(({ i }) => i >= index);
   if (follower && follower.e.kind === "chord" && follower.e.onset === undefined) follower.e.onset = on.get(follower.e) ?? 0;
   measure.elements.splice(index, 0, ch);
+  shiftForInsert(measure, index);
   delete measure.duration;
   rebeam(measure, voice, time, scale);
   respellMeasure(measure, key);

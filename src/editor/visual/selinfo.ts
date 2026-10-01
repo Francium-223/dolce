@@ -42,7 +42,7 @@ export function selectionInfo(doc: ScoreDoc | null, id: ElementId): string | nul
     for (const [pi, part] of song.parts.entries()) {
       let divisions = SIMPLE_DIVISIONS;
       let key: Key | undefined = song.key;
-      let time: Time | undefined;
+      let time: Time | undefined = song.time;
       for (const [mi, m] of part.measures.entries()) {
         if (m.attrs?.divisions) divisions = m.attrs.divisions;
         if (m.attrs?.key) key = m.attrs.key;

@@ -153,11 +153,12 @@ function insertAnchor(ctx: ModelActionCtx, doc: ScoreDoc): InsertAnchor | null {
   if (prev?.kind === "note") return { after: prev.id };
   if (prev && (prev.kind === "barline" || prev.kind === "break")) {
     const l = locate(doc, prev.id);
-    return l ? { measureStart: { si: l.si, pi: l.pi, mi: l.mi + 1, voice: l.chord.voice } } : null;
+    // 小节开头：插进当前输入的声线（小节线条目借的是小节里最后那个元素的身份，它的声线不算数）
+    return l ? { measureStart: { si: l.si, pi: l.pi, mi: l.mi + 1, voice: ctx.curVoice } } : null;
   }
   const next = entryAfterCaret(ctx);
   const l = next ? locate(doc, next.id) : null;
-  return l ? { measureStart: { si: l.si, pi: l.pi, mi: l.mi, voice: l.chord.voice } } : null;
+  return l ? { measureStart: { si: l.si, pi: l.pi, mi: l.mi, voice: next?.kind === "note" ? l.chord.voice : ctx.curVoice } } : null;
 }
 
 /** 插入模式插一个音（`degreeAt` 按插入位置给唱名：音名要看那里的调号）。别的声线（声部输入）插在光标所在时刻。 */

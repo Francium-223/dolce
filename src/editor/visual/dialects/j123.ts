@@ -64,4 +64,6 @@ export const DIALECT_123: EditDialect = {
   lyricsFollowBreaks: true,
   deco: { names: { fermata: "fermata", accent: "accent" }, text: (n) => `!${n}!`, place: "before" },
   chordText: (name) => (BARE_CHORD_RE.test(name) ? `${name} ` : `"${name}"`),
+  annotationText: (t) => `"^${t}"`,
+  dynamicText: (n) => `!${n}!`,
 };

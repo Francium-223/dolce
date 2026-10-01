@@ -11,7 +11,7 @@ import {
   addBeat, addChordNote, type BarKind, chordAtPos, chordOnset, deleteChords, deleteMeasures, insertChord, insertInVoice, insertMeasure,
   isEditError, type JumpKind, locate, mergeMeasures, midiOf, type ChordPos, type EditHooks, type InsertAnchor, type ModelEdit, posOf,
   removeChordNote, scaleDuration, setBarKind, setBreakBefore, setDegree, setKeyAt, setTempoAt, setTimeAt, shiftOctave, splitMeasure,
-  pasteClip, type ClipItem, setHarmony, setLyric, shiftSemitones, transposeScore, stepDegree, stepSemitone, setStep, degreeOfStep, anchorFifths, toggleAccidental, toggleDeco, toggleDot, toggleEnding, toggleJump, toggleSlur, toggleTie,
+  pasteClip, type ClipItem, setDirectionText, setHarmony, setLyric, shiftSemitones, transposeScore, stepDegree, stepSemitone, setStep, degreeOfStep, anchorFifths, toggleAccidental, toggleDeco, toggleDot, toggleEnding, toggleJump, toggleSlur, toggleTie,
 } from "../../model/edit";
 import { parseKeyInput, parseTempoInput, parseTimeInput } from "./measureinput";
 import { dropEmbeddedLayout, forgetNoteLayout } from "../../model/xmlsurface";
@@ -208,6 +208,11 @@ export function lyricModel(ctx: ModelActionCtx, id: ElementId, verse: number, te
 /** 和弦名录入：和弦 `id` 的和弦名写成 `text`。 */
 export function harmonyModel(ctx: ModelActionCtx, id: ElementId, text: string): boolean {
   return commit(ctx, (doc) => setHarmony(doc, id, text));
+}
+
+/** 文字 / 力度录入：和弦 `id` 前面那条写成 `text`。 */
+export function directionModel(ctx: ModelActionCtx, id: ElementId, type: "words" | "dynamics", text: string): boolean {
+  return commit(ctx, (doc) => setDirectionText(doc, id, type, text));
 }
 
 /** 某个条目对应的音符 id：音符就是它；小节线、换行是它前面那个音。 */

@@ -88,6 +88,9 @@ export interface EditDialect {
   deco?: { names: Record<DecoKind, string>; text(name: string): string; place: "before" | "after" | "inToken" };
   /** 和弦名怎么写（写在音符 token 前面；123 合规的不带引号、后面跟空格，ABC 一律 `"Am7"`）。没有 = 这种格式请在源码里改 */
   chordText?(name: string): string;
+  /** 挂在音符前的文字（注记，`"^渐慢"`）与力度（`!mf!`）怎么写；没有 = 这种格式请在源码里改 */
+  annotationText?(text: string): string;
+  dynamicText?(name: string): string;
   /** 延音线另有写法（ABC 的 `-` 紧跟前一个音）；缺省 = 与圆滑线同形（括号） */
   tie?: string;
   /** 圆滑线能不能嵌套、交叠。文本谱的 `)` 按队列配对（先开的先闭），加一条与已有的交叠的弧会把配对全打乱 */

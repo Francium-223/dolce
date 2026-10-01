@@ -19,18 +19,18 @@ import { midiOf, NotePreview } from "./preview";
 import type { EditDialect, NoteDuration } from "./dialect";
 import {
   addSustain, clearBeams, deleteEntries, double, dropInlineSustain, type EditCtx, type EditOutcome, groupEnd, halve, insertNote, insertToken,
-  chordEntryOf, chordNameOf, insertLetter, isError, noteCtx, setChordName, shiftSemitones, spacedInsert, noteSpans, notesIn, setAccidental, setDegree, setLetter, shiftOctave, stepDegree, stepSemitone, toggleDeco, toggleDot, toggleSlur, toggleTie,
+  attachedTextOf, chordEntryOf, DYNAMICS, chordNameOf, insertLetter, isError, noteCtx, setAttachedText, setChordName, shiftSemitones, spacedInsert, noteSpans, notesIn, setAccidental, setDegree, setLetter, shiftOctave, stepDegree, stepSemitone, toggleDeco, toggleDot, toggleSlur, toggleTie,
 } from "./ops";
 import { keyHit, VISUAL_ACTIONS, type VisualAction, type VisualMode } from "./keys";
 import { type Clip, clipFor, itemsToText, setClip } from "./clipboard";
-import { clipOfChords, locate } from "../../model/edit";
+import { clipOfChords, directionTextOf, locate } from "../../model/edit";
 import { harmonyText } from "../../model/jianpu";
 import { showTransposeDialog, transposeText } from "./transpose";
 import { lyricTextOf, setLyricText } from "./lyrics";
 import { selectionInfo } from "./selinfo";
 import { type InlineDone, inlineEditing, openInlineEditor } from "./inline";
 import { measureEdit } from "./measureops";
-import { harmonyModel, lyricModel, pasteModel, runModelAction, transposeModel, type ModelActionCtx } from "./modelops";
+import { directionModel, harmonyModel, lyricModel, pasteModel, runModelAction, transposeModel, type ModelActionCtx } from "./modelops";
 import {
   type Box, boxInPage, charIndexAt, inkBoxInPage, clearOverlay, drawBlock, drawBreak, drawCaret, hitThroughOverlay, musicBox, rightEdgeInBand,
   sameRow, setBeatIssues, textCaretInPage,
@@ -1250,6 +1250,8 @@ export class VisualEditController {
       case "edit.transpose": return this.transpose();
       case "lyric.entry": return this.startLyrics();
       case "chord.entry": return this.startChords();
+      case "text.entry": return this.startAttached("annotation");
+      case "dyn.entry": return this.startAttached("dynamic");
       case "nav.home": return this.rowEdge(-1);
       case "nav.end": return this.rowEdge(1);
       case "mark.next": return this.cycleMark(1);
@@ -1603,6 +1605,61 @@ export class VisualEditController {
       return;
     }
     void this.host.whenIdle().then(() => this.openChordBox(idx + (tag === "prev" ? -1 : 1)));
+  }
+
+  // ---------------- 文字 / 力度 ----------------
+
+  private startAttached(kind: "annotation" | "dynamic"): boolean {
+    const notes = this.chordNotes();
+    if (!notes.length) return false;
+    const sel = this.host.view.state.selection.main;
+    const id = this.selectedEntries().find((e) => e.kind === "note" || e.kind === "mark")?.id ??
+      [...this.navigable()].reverse().find((e) => e.kind === "note" && e.to <= sel.head)?.id;
+    this.openAttachedBox(kind, Math.max(0, notes.findIndex((e) => e.id === id)));
+    return true;
+  }
+
+  private openAttachedBox(kind: "annotation" | "dynamic", idx: number): void {
+    const note = this.chordNotes()[idx];
+    if (!note) {
+      this.host.scorePane.focus({ preventScroll: true });
+      return;
+    }
+    const span = this.noteSel(note);
+    this.select(span.from, span.to);
+    const type = kind === "annotation" ? "words" : "dynamics";
+    const doc = this.host.syncDoc();
+    const c = this.host.modelEditing() ? null : this.editCtx(true);
+    const cur = c ? attachedTextOf(c, note, kind) : doc ? directionTextOf(doc, note.id, type) : "";
+    const anchor = this.host.noteEl(note.id) ?? this.elOfEntry(note) ?? this.host.scorePane;
+    const keys: Record<string, string> = kind === "dynamic" ? { " ": "next", "Shift+ ": "prev", Enter: "stop" } : { Enter: "stop" };
+    openInlineEditor(anchor, cur, (d) => {
+      if (d.value === null) {
+        this.host.scorePane.focus({ preventScroll: true });
+        return;
+      }
+      const value = d.value.trim();
+      if (kind === "dynamic" && value && !DYNAMICS.test(value)) {
+        this.host.setStatus(`「${value}」不是力度记号（p、mp、mf、f、ff、sfz、fp……）`);
+        this.host.scorePane.focus({ preventScroll: true });
+        return;
+      }
+      if (value !== cur) {
+        if (!this.host.syncFresh()) this.host.reloadNow();
+        const n = this.chordNotes()[idx];
+        if (n && this.host.modelEditing()) directionModel(this.modelCtx, n.id, type, value);
+        else if (n) {
+          const cc = this.editCtx();
+          if (cc) this.apply(setAttachedText(cc, n, kind, value));
+        }
+      }
+      const tag = d.tag ?? (d.nav === 0 ? "stop" : d.nav < 0 ? "prev" : "next");
+      if (tag === "stop" || kind === "annotation") {
+        this.host.scorePane.focus({ preventScroll: true });
+        return;
+      }
+      void this.host.whenIdle().then(() => this.openAttachedBox(kind, idx + (tag === "prev" ? -1 : 1)));
+    }, kind === "annotation" ? "文字" : "力度（p mf f…）", { keys });
   }
 
   /** 移调对话框：全曲换调或选中的音移几个半音（`transpose.ts`）。 */

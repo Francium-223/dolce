@@ -8,7 +8,7 @@
 // 语义对齐文本格式那一路（`ops.ts`）：唱名按调号换算、八度点不变；删音符就是删，不补休止（不满的小节由拍数自检标红）；
 // 增时线 = 多一拍；小节线 = 把这一小节在光标处劈成两节（所有声部一起劈）。
 
-import type { Accidental, Chord, ElementId, Key, Mark, Measure, Note, NoteType, Part, Pitch, ScoreDoc, Song, Time } from "./doc";
+import type { Accidental, Chord, Direction, ElementId, Key, Mark, Measure, Note, NoteType, Part, Pitch, ScoreDoc, Song, Time } from "./doc";
 import { SIMPLE_DIVISIONS } from "./doc";
 import { degreeFromPitch, pitchFromDegree } from "./jianpu";
 
@@ -1229,6 +1229,28 @@ export function setHarmony(doc: ScoreDoc, id: ElementId, text: string): ModelEdi
   if (text === "") delete l.chord.harmony;
   else l.chord.harmony = { root: { step: "C", alter: 0 }, kind: "", text };
   return { select: [l.chord] };
+}
+
+/** 文字 / 力度录入：和弦 `id` 前面挂一条 `<direction>`（文字在上方、力度在下方）；`text` 空串 = 去掉。 */
+export function setDirectionText(doc: ScoreDoc, id: ElementId, type: "words" | "dynamics", text: string): ModelEdit {
+  const l = locate(doc, id);
+  if (!l) return { error: "找不到这个音" };
+  const m = l.measure;
+  const at = (d: Direction): boolean => d.type === type && (d.afterElements ?? 0) === l.index && (d.voice === undefined || d.voice === l.chord.voice);
+  const rest = (m.directions ?? []).filter((d) => !at(d));
+  if (text !== "") {
+    rest.push({ type, text, afterElements: l.index, placement: type === "dynamics" ? "below" : "above", voice: l.chord.voice, staff: l.chord.staff });
+  }
+  if (rest.length) m.directions = rest;
+  else delete m.directions;
+  return { select: [l.chord] };
+}
+
+/** 和弦 `id` 前面那条文字 / 力度现在的值。 */
+export function directionTextOf(doc: ScoreDoc, id: ElementId, type: "words" | "dynamics"): string {
+  const l = locate(doc, id);
+  const d = l?.measure.directions?.find((x) => x.type === type && (x.afterElements ?? 0) === l.index);
+  return d?.text ?? "";
 }
 
 // ───────────────────────── 剪贴板 ─────────────────────────

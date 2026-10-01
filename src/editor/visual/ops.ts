@@ -401,6 +401,37 @@ export function setChordName(ctx: EditCtx, note: SyncEntry, name: string): EditO
   return done([{ from: at, to: at, insert: write(name) }]);
 }
 
+/** 力度记号名（`!mf!` 在 123 / ABC 里读成名叫 `mf` 的装饰） */
+export const DYNAMICS = /^(?:p{1,4}|f{1,4}|mp|mf|sf|sfz|sffz|sfp|fp|fz|rf|rfz|n)$/;
+
+/** 音 `note` 上那条文字（注记）/ 力度的索引条目。 */
+function attachedEntry(ctx: EditCtx, note: SyncEntry, kind: "annotation" | "dynamic"): SyncEntry | undefined {
+  return ctx.sync.ordered().find((e) => e.kind === "mark" && e.id === note.id &&
+    (e.markKind === kind || (kind === "dynamic" && e.markKind === "deco" && DYNAMICS.test(e.name ?? ""))));
+}
+
+/** 挂在音符前的文字 / 力度：音 `note` 上那一条（`kind` = `annotation` / `dynamic`）写成 `value`（空串 = 去掉）。 */
+export function setAttachedText(ctx: EditCtx, note: SyncEntry, kind: "annotation" | "dynamic", value: string): EditOutcome {
+  const write = kind === "annotation" ? ctx.dialect.annotationText : ctx.dialect.dynamicText;
+  if (!write) return { error: kind === "annotation" ? "这种格式的文字请在源码里改" : "这种格式的力度请在源码里改" };
+  const sel = ctx.state.selection.main;
+  const done = (changes: EditResult["changes"]): EditOutcome => {
+    const map = mapper(ctx.state, changes);
+    return { changes, anchor: map(sel.anchor, 1), head: map(sel.head, 1) };
+  };
+  const cur = attachedEntry(ctx, note, kind);
+  if (cur) return done([value === "" ? spaceAround(ctx, cur.from, cur.to) : { from: cur.from, to: cur.to, insert: write(value) }]);
+  if (value === "") return { error: "这个音上没有可去掉的" };
+  const marks = ctx.sync.ordered().filter((e) => e.kind === "mark" && e.id === note.id && e.from < note.from);
+  const at = Math.min(note.from, ...marks.map((e) => e.from));
+  return done([{ from: at, to: at, insert: write(value) }]);
+}
+
+/** 音 `note` 上那条文字 / 力度现在的值（框里预填）。 */
+export function attachedTextOf(ctx: EditCtx, note: SyncEntry, kind: "annotation" | "dynamic"): string {
+  return attachedEntry(ctx, note, kind)?.name ?? "";
+}
+
 // ───────────────────────── 删除 ─────────────────────────
 
 /** 删掉 `[from, to)` 时顺手带走一侧的空白，免得留下两个空格或行尾空格。 */

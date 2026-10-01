@@ -1063,4 +1063,80 @@ export function stepDegree(doc: ScoreDoc, ids: readonly ElementId[], delta: 1 | 
   return { select: locs.map((l) => l.chord) };
 }
 
+/** 半音走一步（`Alt+↑`/`Alt+↓`）：落在调内音上写本音，否则升号调写升号、降号调写降号，C 调按走的方向。 */
+export function stepSemitone(doc: ScoreDoc, ids: readonly ElementId[], delta: 1 | -1, hooks: EditHooks = {}): ModelEdit {
+  const locs = chordsOf(doc, ids).filter((l) => l.chord.notes.some((n) => n.pitch));
+  if (locs.length === 0) return { error: "先选中一个音符" };
+  for (const l of locs) {
+    const { key } = measureCtx(l.song, l.part, l.mi);
+    const sign = key.fifths > 0 ? 1 : key.fifths < 0 ? -1 : delta;
+    for (const n of l.chord.notes) if (n.pitch) n.pitch = spellMidi(midiOfPitch(n.pitch) + delta, key.fifths, sign);
+  }
+  touched(locs, hooks.forgetStem);
+  return { select: locs.map((l) => l.chord) };
+}
+
+/** MIDI 音高拼成音名：调内音优先，其次本位，再按 `sign` 取升或降。 */
+function spellMidi(midi: number, fifths: number, sign: number): Pitch {
+  let best: Pitch | null = null;
+  let rank = Infinity;
+  for (const step of STEPS) {
+    for (const alter of [-1, 0, 1]) {
+      const pc = (STEP_SEMI[step]! + alter + 12) % 12;
+      if (pc !== ((midi % 12) + 12) % 12) continue;
+      const r = alter === keyAlter(step, fifths) ? 0 : alter === 0 ? 1 : Math.sign(alter) === sign ? 2 : 3;
+      if (r >= rank) continue;
+      rank = r;
+      const octave = Math.floor((midi - STEP_SEMI[step]! - alter) / 12) - 1;
+      best = { step, alter, octave };
+    }
+  }
+  return best!;
+}
+
+/** 按音名改（`A`–`G`，编辑模式）：升降照调号，八度取离原来那个音最近的；休止改成音时离前一个音最近。和弦只改最上面那个音。 */
+export function setStep(doc: ScoreDoc, ids: readonly ElementId[], letter: string, hooks: EditHooks = {}): ModelEdit {
+  const step = STEPS.find((x) => x === letter.toUpperCase());
+  if (!step) return { error: "音名只有 A–G" };
+  const locs = chordsOf(doc, ids).filter((l) => !l.chord.grace);
+  if (locs.length === 0) return { error: "先选中一个音符" };
+  for (const l of locs) {
+    const { key } = measureCtx(l.song, l.part, l.mi);
+    const ch = l.chord;
+    const top = topNote(ch);
+    const ref = top?.pitch ? midiOfPitch(top.pitch) : neighbourMidi(l.part, l.mi, l.index, ch.voice);
+    const p = nearestOctave({ step, alter: keyAlter(step, key.fifths), octave: 4 }, ref);
+    delete ch.rest;
+    if (top) top.pitch = p;
+    else ch.notes = [{ pitch: p }];
+  }
+  touched(locs, hooks.forgetStem);
+  return { select: locs.map((l) => l.chord) };
+}
+
+function topNote(ch: Chord): Note | null {
+  let top: Note | null = null;
+  for (const n of ch.notes) if (n.pitch && (!top?.pitch || midiOfPitch(n.pitch) > midiOfPitch(top.pitch))) top = n;
+  return top;
+}
+
+/** 音名在这个调里是几（`1=` 那个音名算 1）。 */
+export function degreeOfStep(letter: string, fifths: number): number {
+  const idx = STEPS.indexOf(letter.toUpperCase() as (typeof STEPS)[number]);
+  const tonic = (((fifths * 4) % 7) + 7) % 7;
+  return ((idx - tonic + 7) % 7) + 1;
+}
+
+/** 插入位置所在小节的调号（升号个数）。 */
+export function anchorFifths(doc: ScoreDoc, anchor: InsertAnchor): number {
+  if ("after" in anchor) {
+    const l = locate(doc, anchor.after);
+    return l ? measureCtx(l.song, l.part, l.mi).key.fifths : 0;
+  }
+  const a = anchor.measureStart;
+  const song = doc.songs[a.si];
+  const part = song?.parts[a.pi];
+  return song && part ? measureCtx(song, part, a.mi).key.fifths : 0;
+}
+
 export { STEPS as PITCH_STEPS };

@@ -151,6 +151,86 @@ export function shiftOctave(ctx: EditCtx, from: number, to: number, delta: numbe
   });
 }
 
+// 唱名在八度里的半音位置（大调音阶）；简谱的升降号相对调号（ABC 的 token 也已换算成这样），按它算就与格式无关
+const MAJOR = [0, 2, 4, 5, 7, 9, 11];
+const ACC_SEMI: Record<string, number> = { sharp: 1, flat: -1, natural: 0, "double-sharp": 2, "double-flat": -2 };
+
+/** 音级走一步（`↑`/`↓`）：调内音阶，`7` 往上成高音 `1`、`1` 往下成低音 `7`；临时升降号去掉。 */
+export function stepDegree(ctx: EditCtx, from: number, to: number, delta: 1 | -1): EditOutcome {
+  return rewriteNotes(ctx, from, to, (t) => {
+    if (t.degree === 0) return null;
+    t.acc = null;
+    t.degree += delta;
+    if (t.degree > 7) (t.degree = 1), (t.octave += 1);
+    if (t.degree < 1) (t.degree = 7), (t.octave -= 1);
+    return Math.abs(t.octave) > 3 ? "八度点最多三个" : t;
+  });
+}
+
+/** 半音走一步（`Alt+↑`/`Alt+↓`）：落在调内音上就写成本音，否则升调（`1=G` 等）写升号、降调写降号，C 调按走的方向。 */
+export function stepSemitone(ctx: EditCtx, from: number, to: number, delta: 1 | -1): EditOutcome {
+  return rewriteNotes(ctx, from, to, (t, e) => {
+    if (t.degree === 0) return null;
+    const fifths = noteCtx(ctx, e.from).fifths;
+    const semi = t.octave * 12 + MAJOR[t.degree - 1]! + (t.acc ? ACC_SEMI[t.acc] ?? 0 : 0) + delta;
+    const oct = Math.floor(semi / 12);
+    const r = semi - oct * 12;
+    const dia = MAJOR.indexOf(r);
+    if (dia >= 0) Object.assign(t, { degree: dia + 1, acc: null, octave: oct });
+    else if (fifths > 0 || (fifths === 0 && delta > 0)) Object.assign(t, { degree: MAJOR.indexOf(r - 1) + 1, acc: "sharp", octave: oct });
+    else Object.assign(t, { degree: MAJOR.indexOf(r + 1) + 1, acc: "flat", octave: oct });
+    return Math.abs(t.octave) > 3 ? "八度点最多三个" : t;
+  });
+}
+
+/** 音名（`A`–`G`）在这个调里是几：`1=` 那个音名算 1（调号里本来带的升降不另写）。 */
+export function degreeOfLetter(letter: string, fifths: number): number {
+  const idx = "CDEFGAB".indexOf(letter.toUpperCase());
+  const tonic = (((fifths * 4) % 7) + 7) % 7; // 每多一个升号主音往上五度 = 音名进 4 格
+  return ((idx - tonic + 7) % 7) + 1;
+}
+
+/** 唱名 + 八度在调内音阶上的位置（比远近用）。 */
+const stepPos = (degree: number, octave: number): number => octave * 7 + degree - 1;
+
+/** 离 `ref`（音阶位置）最近的那个八度。 */
+function nearestOct(degree: number, ref: number): number {
+  const o = Math.round((ref - (degree - 1)) / 7);
+  return Math.max(-3, Math.min(3, o));
+}
+
+/** 编辑模式按音名改：唱名按调换算，八度取离原来那个音最近的（改错音名时不跳八度）。 */
+export function setLetter(ctx: EditCtx, from: number, to: number, letter: string): EditOutcome {
+  return rewriteNotes(ctx, from, to, (t, e) => {
+    const degree = degreeOfLetter(letter, noteCtx(ctx, e.from).fifths);
+    const ref = t.degree === 0 ? prevNotePos(ctx, e.from) : stepPos(t.degree, t.octave);
+    Object.assign(t, { degree, acc: null, octave: ref === null ? 0 : nearestOct(degree, ref) });
+    return t;
+  });
+}
+
+/** `pos` 之前最近一个音符（不是休止）的音阶位置；没有为 null。 */
+function prevNotePos(ctx: EditCtx, pos: number): number | null {
+  for (const e of [...ctx.sync.ordered()].reverse()) {
+    if (e.kind !== "note" || e.to > pos) continue;
+    const t = readNote(ctx, e);
+    if (t && t.degree > 0) return stepPos(t.degree, t.octave);
+  }
+  return null;
+}
+
+/** 插入模式按音名插：八度取离前一个音最近的（同 MuseScore）。 */
+export function insertLetter(ctx: EditCtx, pos: number, letter: string, dur: NoteDuration): EditOutcome {
+  const nc = noteCtx(ctx, pos);
+  const degree = degreeOfLetter(letter, nc.fifths);
+  const ref = prevNotePos(ctx, pos);
+  let tok = ctx.dialect.newNote(degree, dur, nc);
+  const t = ref === null ? null : ctx.dialect.parseNote(tok, nc);
+  if (t && ref !== null) tok = ctx.dialect.printNote({ ...t, octave: nearestOct(degree, ref) }, nc);
+  const r = spacedInsert(ctx, pos, tok);
+  return { changes: [r.change], anchor: r.end, head: r.end };
+}
+
 export function toggleDot(ctx: EditCtx, from: number, to: number): EditOutcome {
   return rewriteNotes(ctx, from, to, (t) => {
     t.dots = t.dots > 0 ? 0 : 1;

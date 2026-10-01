@@ -8,10 +8,11 @@ import { VISUAL_ACTIONS, type VisualAction, type VisualMode } from "./keys";
 /** 面板与菜单里不列的：移动、轮换这类纯键盘操作，和面板自己的开关 */
 const KEYBOARD_ONLY = new Set(["nav.prev", "nav.next", "nav.extendPrev", "nav.extendNext", "nav.home", "nav.end", "mark.next", "mark.prev"]);
 
-/** 唱名那个动作展开成一排：1–7、0；加和弦音 1–7；声部 1–4 */
+/** 唱名那个动作展开成一排：1–7、0；音名 C–B；加和弦音 1–7；声部 1–4 */
 const DIGITS = ["1", "2", "3", "4", "5", "6", "7", "0"];
 const ROWS: Record<string, { keys: string[]; label: (d: string) => string; title: (d: string) => string }> = {
   "note.digit": { keys: DIGITS, label: (d) => d, title: (d) => (d === "0" ? "休止" : `唱名 ${d}`) },
+  "note.letter": { keys: ["c", "d", "e", "f", "g", "a", "b"], label: (d) => d.toUpperCase(), title: (d) => `音名 ${d.toUpperCase()}（按调号换成唱名）` },
   "chord.add": { keys: DIGITS.slice(0, 7), label: (d) => `+${d}`, title: (d) => `加和弦音：唱名 ${d}` },
   "voice.set": { keys: ["1", "2", "3", "4"], label: (d) => `声${d}`, title: (d) => `新插的音落在第 ${d} 声部` },
 };
@@ -52,6 +53,8 @@ function button(label: string, title: string, onPick: () => void, cls = ""): HTM
 const SHORT: Record<string, string> = {
   "mode.insert": "\u258F", // ▏ 竖线光标
   "mode.edit": "\u25AE", // ▮ 方块光标
+  "step.up": "\u2191", "step.down": "\u2193", // ↑ ↓ 音级
+  "semi.up": "+\u00BD", "semi.down": "\u2212\u00BD", // ±½ 半音
   "oct.up": "1\u0307", // 1̇
   "oct.down": "1\u0323", // 1̣
   "acc.sharp": "\u266F", "acc.flat": "\u266D", "acc.natural": "\u266E",
@@ -126,7 +129,7 @@ function actionsFor(target: MenuTarget, mode: VisualMode): VisualAction[] {
     case "break":
       return all.filter((a) => a.id === "del.forward" || a.id.startsWith("edit."));
     case "caret":
-      return all.filter((a) => ["note.digit", "voice.set", "sus.add", "bar.insert", "brk.line", "brk.page", "del.forward", "del.back", "mode.edit", "dur.halve", "dur.double"].includes(a.id) || a.group === SUBMENU_GROUP);
+      return all.filter((a) => ["note.digit", "note.letter", "voice.set", "sus.add", "bar.insert", "brk.line", "brk.page", "del.forward", "del.back", "mode.edit", "dur.halve", "dur.double"].includes(a.id) || a.group === SUBMENU_GROUP);
     case "note":
       return all.filter((a) => !["mode.edit", "del.back", "view.formatMarks", "voice.set"].includes(a.id));
     default:

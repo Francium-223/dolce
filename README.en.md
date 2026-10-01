@@ -39,7 +39,7 @@ The interface is in Chinese.
   - **Plain-text jianpu scripts**: the *Fanqie* (番茄简谱) script language and the *Shigeben* (诗歌本) text score,
     which the Shigeben app calls a "dynamic score"
   - **ABC notation**
-- **Visual editing.** Select, insert and change notes and marks directly on the score: pitch, octave, accidentals,
+- **Visual editing.** Select, insert and change notes and marks directly on the score: scale degree or note name, step / semitone / octave, accidentals,
   duration, extension dashes, barlines, slurs and ties, fermatas, accents, and line and page breaks. You can use
   the keyboard, a context menu or a symbol palette, in the jianpu, staff and mixed views alike. Every edit is
   written back to the source text and shares one undo history with the code editor.

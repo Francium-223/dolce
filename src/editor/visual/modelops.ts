@@ -11,7 +11,7 @@ import {
   addBeat, addChordNote, type BarKind, chordAtPos, chordOnset, deleteChords, deleteMeasures, insertChord, insertInVoice, insertMeasure,
   isEditError, type JumpKind, locate, mergeMeasures, midiOf, type ChordPos, type EditHooks, type InsertAnchor, type ModelEdit, posOf,
   removeChordNote, scaleDuration, setBarKind, setBreakBefore, setDegree, setKeyAt, setTempoAt, setTimeAt, shiftOctave, splitMeasure,
-  stepDegree, toggleAccidental, toggleDeco, toggleDot, toggleEnding, toggleJump, toggleSlur, toggleTie,
+  stepDegree, stepSemitone, setStep, degreeOfStep, anchorFifths, toggleAccidental, toggleDeco, toggleDot, toggleEnding, toggleJump, toggleSlur, toggleTie,
 } from "../../model/edit";
 import { parseKeyInput, parseTempoInput, parseTimeInput } from "./measureinput";
 import { dropEmbeddedLayout, forgetNoteLayout } from "../../model/xmlsurface";
@@ -160,6 +160,25 @@ function insertAnchor(ctx: ModelActionCtx, doc: ScoreDoc): InsertAnchor | null {
   return l ? { measureStart: { si: l.si, pi: l.pi, mi: l.mi, voice: l.chord.voice } } : null;
 }
 
+/** 插入模式插一个音（`degreeAt` 按插入位置给唱名：音名要看那里的调号）。别的声线（声部输入）插在光标所在时刻。 */
+function insertNote(ctx: ModelActionCtx, degreeAt: (doc: ScoreDoc, at: InsertAnchor) => number): boolean {
+  return commit(ctx, (doc) => {
+    const at = insertAnchor(ctx, doc);
+    if (!at) return { error: "这里插不进音符" };
+    const d = degreeAt(doc, at);
+    const ref = "after" in at ? locate(doc, at.after) : null;
+    if (ref && ref.chord.voice !== ctx.curVoice) {
+      const onset = (chordOnset(doc, ref.chord.id) ?? 0) + ref.chord.duration.divisions;
+      return insertInVoice(doc, { si: ref.si, pi: ref.pi, mi: ref.mi, onset, staff: ref.chord.staff }, ctx.curVoice, d, ctx.curDur, HOOKS);
+    }
+    if ("measureStart" in at && at.measureStart.voice !== ctx.curVoice) {
+      const m = at.measureStart;
+      return insertInVoice(doc, { si: m.si, pi: m.pi, mi: m.mi, onset: 0, staff: 1 }, ctx.curVoice, d, ctx.curDur, HOOKS);
+    }
+    return insertChord(doc, at, d, ctx.curDur, HOOKS);
+  }, true);
+}
+
 /** 某个条目对应的音符 id：音符就是它；小节线、换行是它前面那个音。 */
 function anchorNote(ctx: ModelActionCtx): ElementId | null {
   const sel = ctx.view.state.selection.main;
@@ -231,25 +250,28 @@ export function runModelAction(ctx: ModelActionCtx, a: VisualAction, key: string
     }
     return commit(ctx, (doc) => fn(doc, list), sound);
   };
+  // 改音高的几样（音级、半音、八度）：插入模式作用于光标前刚插的那个音，光标留在它后面（同 MuseScore 输入态）
+  const pitch = (fn: (doc: ScoreDoc, ids: ElementId[]) => ModelEdit): boolean => {
+    if (edit) return need(fn, true);
+    const prev = entryBeforeCaret(ctx);
+    if (prev?.kind !== "note") {
+      ctx.setStatus("先选中一个音符");
+      return true;
+    }
+    return commit(ctx, (doc) => {
+      const r = fn(doc, [prev.id]);
+      return "select" in r && r.select[0] ? { caretAfter: r.select[0] } : r;
+    }, true);
+  };
   switch (a.id) {
     case "note.digit": {
       const d = Number(key);
       if (edit) return need((doc, l) => setDegree(doc, l, d, HOOKS), true);
-      return commit(ctx, (doc) => {
-        const at = insertAnchor(ctx, doc);
-        if (!at) return { error: "这里插不进音符" };
-        // 声部输入：光标所在时刻、别的声线
-        const ref = "after" in at ? locate(doc, at.after) : null;
-        if (ref && ref.chord.voice !== ctx.curVoice) {
-          const onset = (chordOnset(doc, ref.chord.id) ?? 0) + ref.chord.duration.divisions;
-          return insertInVoice(doc, { si: ref.si, pi: ref.pi, mi: ref.mi, onset, staff: ref.chord.staff }, ctx.curVoice, d, ctx.curDur, HOOKS);
-        }
-        if ("measureStart" in at && at.measureStart.voice !== ctx.curVoice) {
-          const m = at.measureStart;
-          return insertInVoice(doc, { si: m.si, pi: m.pi, mi: m.mi, onset: 0, staff: 1 }, ctx.curVoice, d, ctx.curDur, HOOKS);
-        }
-        return insertChord(doc, at, d, ctx.curDur, HOOKS);
-      }, true);
+      return insertNote(ctx, () => d);
+    }
+    case "note.letter": {
+      if (edit) return need((doc, l) => setStep(doc, l, key, HOOKS), true);
+      return insertNote(ctx, (doc, at) => degreeOfStep(key, anchorFifths(doc, at)));
     }
     case "chord.add": {
       const d = Number(key);
@@ -325,10 +347,12 @@ export function runModelAction(ctx: ModelActionCtx, a: VisualAction, key: string
         if (!r) return { error: "先选中一个小节里的音" };
         return toggleJump(doc, r.si, kind === "segno" || kind === "coda" ? r.from : r.to, kind);
       });
-    case "oct.up": return need((doc, l) => shiftOctave(doc, l, 1, HOOKS), true);
-    case "oct.down": return need((doc, l) => shiftOctave(doc, l, -1, HOOKS), true);
-    case "step.up": return need((doc, l) => stepDegree(doc, l, 1, HOOKS), true);
-    case "step.down": return need((doc, l) => stepDegree(doc, l, -1, HOOKS), true);
+    case "oct.up": return pitch((doc, l) => shiftOctave(doc, l, 1, HOOKS));
+    case "oct.down": return pitch((doc, l) => shiftOctave(doc, l, -1, HOOKS));
+    case "step.up": return pitch((doc, l) => stepDegree(doc, l, 1, HOOKS));
+    case "step.down": return pitch((doc, l) => stepDegree(doc, l, -1, HOOKS));
+    case "semi.up": return pitch((doc, l) => stepSemitone(doc, l, 1, HOOKS));
+    case "semi.down": return pitch((doc, l) => stepSemitone(doc, l, -1, HOOKS));
     case "acc.sharp": return need((doc, l) => toggleAccidental(doc, l, "sharp", HOOKS), true);
     case "acc.flat": return need((doc, l) => toggleAccidental(doc, l, "flat", HOOKS), true);
     case "acc.natural": return need((doc, l) => toggleAccidental(doc, l, "natural", HOOKS), true);

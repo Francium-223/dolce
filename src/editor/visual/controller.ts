@@ -19,7 +19,7 @@ import { midiOf, NotePreview } from "./preview";
 import type { EditDialect, NoteDuration } from "./dialect";
 import {
   addSustain, clearBeams, deleteEntries, double, dropInlineSustain, type EditCtx, type EditOutcome, groupEnd, halve, insertNote, insertToken,
-  isError, noteCtx, noteSpans, notesIn, setAccidental, setDegree, shiftOctave, toggleDeco, toggleDot, toggleSlur, toggleTie,
+  insertLetter, isError, noteCtx, noteSpans, notesIn, setAccidental, setDegree, setLetter, shiftOctave, stepDegree, stepSemitone, toggleDeco, toggleDot, toggleSlur, toggleTie,
 } from "./ops";
 import { keyHit, type VisualAction, type VisualMode } from "./keys";
 import { selectionInfo } from "./selinfo";
@@ -1166,8 +1166,13 @@ export class VisualEditController {
     }
     switch (a.id) {
       case "note.digit": return this.digit(Number(key));
-      case "oct.up": return this.editNotes((c, f, t) => shiftOctave(c, f, t, 1), true);
-      case "oct.down": return this.editNotes((c, f, t) => shiftOctave(c, f, t, -1), true);
+      case "note.letter": return this.letter(key);
+      case "oct.up": return this.pitchEdit((c, f, t) => shiftOctave(c, f, t, 1));
+      case "oct.down": return this.pitchEdit((c, f, t) => shiftOctave(c, f, t, -1));
+      case "step.up": return this.pitchEdit((c, f, t) => stepDegree(c, f, t, 1));
+      case "step.down": return this.pitchEdit((c, f, t) => stepDegree(c, f, t, -1));
+      case "semi.up": return this.pitchEdit((c, f, t) => stepSemitone(c, f, t, 1));
+      case "semi.down": return this.pitchEdit((c, f, t) => stepSemitone(c, f, t, -1));
       case "acc.sharp": return this.editNotes((c, f, t) => setAccidental(c, f, t, "sharp"), true);
       case "acc.flat": return this.editNotes((c, f, t) => setAccidental(c, f, t, "flat"), true);
       case "acc.natural": return this.editNotes((c, f, t) => setAccidental(c, f, t, "natural"), true);
@@ -1460,6 +1465,31 @@ export class VisualEditController {
     const c = this.editCtx();
     if (!c) return true;
     return this.apply(fn(c, this.insertPos(c)));
+  }
+
+  /** 改音高（音级、半音、八度）：编辑模式改选中的；插入模式改光标前刚插的那个音，光标留在它后面。 */
+  private pitchEdit(fn: (c: EditCtx, from: number, to: number) => EditOutcome): boolean {
+    const c = this.editCtx();
+    if (!c) return true;
+    const sel = c.state.selection.main;
+    if (!sel.empty) return this.apply(fn(c, sel.from, sel.to), true);
+    const prev = [...this.navigable()].reverse().find((e) => e.to <= sel.head);
+    if (prev?.kind !== "note") {
+      this.host.setStatus("先选中一个音符");
+      return true;
+    }
+    const out = fn(c, prev.from, prev.to);
+    if (isError(out)) return this.apply(out);
+    const caret = c.state.changes(out.changes).mapPos(sel.head, 1);
+    return this.apply({ ...out, anchor: caret, head: caret }, true);
+  }
+
+  private letter(key: string): boolean {
+    const c = this.editCtx();
+    if (!c) return true;
+    const sel = c.state.selection.main;
+    if (!sel.empty) return this.apply(setLetter(c, sel.from, sel.to, key), true);
+    return this.apply(insertLetter(c, sel.head, key, this.curDur), true);
   }
 
   private digit(d: number): boolean {

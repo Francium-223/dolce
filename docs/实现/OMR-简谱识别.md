@@ -1680,7 +1680,7 @@ det 漏检时退回**连通域几何法**(大/小字分层 + `splitBlocks` 按 x
 换格式的下拉只重走写出端，**不重跑识别**（实测识别 ~3s，换格式 ~0.1s）。
 下拉长在**代码区标题栏**、顶掉那儿的格式标签（`#doc-format-field`，打开的文件也用这个下拉，
 见 [编辑器](../模块/编辑器.md)「源码格式下拉」）——切的本来就是代码区这份文本是什么格式，
-摆在工具条上离得远、还得另加一条「核对」标签解释。选择存在 `jpeditor-render-settings` 的 `omrFormat`，下次识别沿用。
+摆在工具条上离得远、还得另加一条「核对」标签解释。选择存在 `dolce-render-settings` 的 `omrFormat`，下次识别沿用。
 
 **各格式一条路**：`todoc.ts::recognizedToDoc` → `ScoreDoc` → 转换目标表 `model/convert.ts` 的写出端
 （`emit123` / `emitJpwabc` / `emitAbc` / `emitPu`）。123 交 `App.importOmrDoc`（报 123 装不下的东西），其余交 `App.adoptText`。
@@ -1876,7 +1876,7 @@ execFile 不走 shell 找不到裸 `npm`，Git Bash 里也一样）与 tar，体
 `--options zip:compression=deflate`，否则 `-a` 默认 store、85M 的包原样存成 85M；GNU tar 不认
 zip 格式，那种环境才回退到 `zip`。
 
-产物 `dist-pkg/jpeditor-omr-<版本>-<os>-<cpu>[-musl].{tar.gz|zip}`（Windows 出 zip），
+产物 `dist-pkg/dolce-omr-<版本>-<os>-<cpu>[-musl].{tar.gz|zip}`（Windows 出 zip），
 内含 `omr.js` + 共享 chunk + `omr-cli.mjs`（Windows 另附 `omr-cli.cmd`）+ `models/` + `node_modules/`。
 
 | 目标 | 目录 | 压缩包 |
@@ -1943,7 +1943,7 @@ zip 格式，那种环境才回退到 `zip`。
 
 同一个坑在**桌面安装包**上也踩了一次：干净的 Windows 上装完 NSIS 包，一开就弹
 「由于找不到 MSVCP140_1.dll，无法继续执行代码」。原因是 `ort` 静态链进来的 ONNX Runtime 是
-微软用 `/MD` 编的，`jpeditor.exe` 于是**自己**导入 `MSVCP140*`/`VCRUNTIME140*`。（CLI 包那套只
+微软用 `/MD` 编的，`dolce.exe` 于是**自己**导入 `MSVCP140*`/`VCRUNTIME140*`。（CLI 包那套只
 管 `dist-pkg`，跟桌面包是两条打包路径，别指望其中一条覆盖另一条。）
 
 做法与 CLI 包同源，都用 `vcredist.mjs` 抠 DLL，只是投放方式换成 Tauri 的资源机制：

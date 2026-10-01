@@ -82,7 +82,7 @@ export async function promptUpdate(rel: LatestRelease): Promise<void> {
 // 不进 PersistedSettings：那份是 App.saveSettings 整对象覆盖写的，从这里补字段会被抹掉。
 // 照 settings.ts 的约定，存取一律吞异常。
 
-const STATE_KEY = "jpeditor-update-state";
+const STATE_KEY = "dolce-update-state";
 const CHECK_INTERVAL_MS = 24 * 3600 * 1000;
 
 interface UpdateState {

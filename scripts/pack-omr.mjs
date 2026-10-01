@@ -15,7 +15,7 @@
 // tar（Win10 1803+ 自带 bsdtar；GNU tar 不认 zip，那种环境回退到 zip 命令），体积统计走 Node
 // 自己遍历，不依赖 du。
 //
-// 产物：dist-pkg/jpeditor-omr-<版本>-<os>-<cpu>[-musl].{tar.gz|zip}
+// 产物：dist-pkg/dolce-omr-<版本>-<os>-<cpu>[-musl].{tar.gz|zip}
 //
 // ## 交叉打包靠什么成立
 // 两个原生依赖都是**预编译分发**，不在安装时编译：
@@ -38,7 +38,7 @@ import { execFileSync } from "node:child_process";
 import { crtLibrary, crtClosure, peImports } from "./vcredist.mjs";
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
-const NAME = "jpeditor-omr";
+const NAME = "dolce-omr";
 const OUT = join(ROOT, "dist-pkg");
 
 /** ORT 有预编译二进制的目标（`node_modules/onnxruntime-node/bin/napi-v6/` 下的实际目录）。 */

@@ -156,7 +156,7 @@ export function labeled(label: string, el: HTMLElement): HTMLElement {
   return row;
 }
 
-const HANCONV_KEY = "jpeditor-hanconv-dir";
+const HANCONV_KEY = "dolce-hanconv-dir";
 
 /** 简繁 — 整篇转换源码中的中文（歌词/标题/词曲）。 */
 export function showHanConvDialog(app: App): void {
@@ -362,7 +362,7 @@ const paperName = (k: string): string => (k === "长图" ? t("paper.longImage") 
 
 const isPaperKey = (k: string | undefined): boolean => k !== undefined && (ORIGINAL_PAPERS as readonly string[]).includes(k);
 
-const SETTINGS_TAB_KEY = "jpeditor-settings-tab";
+const SETTINGS_TAB_KEY = "dolce-settings-tab";
 
 /** 设置面板的标签页：顶上一排标签，下面各页一个 `settings-form`。空页不显示；记住上次停在哪一页。 */
 function settingsTabs(pages: readonly [string, string, HTMLElement][]): HTMLElement {

@@ -6,7 +6,7 @@
 
 **前提**：先把 `Dolce.app` 拖进“应用程序”（Applications）文件夹。
 
-> 从旧版升级：应用改名前叫 `jpeditor.app`。装好 `Dolce.app` 后可以把旧的 `jpeditor.app` 删掉——两者是同一个应用标识，设置与上次打开的文件都会保留。
+> 从旧版升级：应用改名前叫 `jpeditor.app`。`Dolce.app` 是新的应用标识，旧版的设置与草稿不会带过来；装好后可以把旧的 `jpeditor.app` 删掉。
 
 ## 方法一：一条命令（推荐，所有 macOS 版本通用）
 

@@ -3,7 +3,7 @@
 //
 // 只存一份（最近那份）。存盘、打开新文件之后，内容与盘上一致就删掉。一切读写都包 try/catch：隐私窗口、存储被禁时什么也不做。
 
-const DB = "jpeditor";
+const DB = "dolce";
 const STORE = "drafts";
 const KEY = "current";
 

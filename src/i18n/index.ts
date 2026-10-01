@@ -8,7 +8,7 @@ export type Lang = "zh" | "en";
 export type LangPref = "auto" | Lang;
 export type { MsgKey };
 
-const STORE_KEY = "jpeditor-ui-lang";
+const STORE_KEY = "dolce-ui-lang";
 const DICTS: Record<Lang, Record<MsgKey, string>> = { zh, en };
 
 let current: Lang = "zh";

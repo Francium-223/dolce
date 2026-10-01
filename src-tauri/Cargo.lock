@@ -917,6 +917,26 @@ dependencies = [
 ]
 
 [[package]]
+name = "dolce"
+version = "0.7.7"
+dependencies = [
+ "bytemuck",
+ "lopdf",
+ "objc2",
+ "objc2-avf-audio",
+ "objc2-foundation",
+ "ort",
+ "serde",
+ "serde_json",
+ "svg2pdf",
+ "tauri",
+ "tauri-build",
+ "tauri-plugin-dialog",
+ "tauri-plugin-fs",
+ "tauri-plugin-opener",
+]
+
+[[package]]
 name = "dom_query"
 version = "0.27.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2160,26 +2180,6 @@ checksum = "38c0b942f458fe50cdac086d2f946512305e5631e720728f2a61aabcd47a6264"
 dependencies = [
  "quote",
  "syn 2.0.117",
-]
-
-[[package]]
-name = "jpeditor"
-version = "0.7.7"
-dependencies = [
- "bytemuck",
- "lopdf",
- "objc2",
- "objc2-avf-audio",
- "objc2-foundation",
- "ort",
- "serde",
- "serde_json",
- "svg2pdf",
- "tauri",
- "tauri-build",
- "tauri-plugin-dialog",
- "tauri-plugin-fs",
- "tauri-plugin-opener",
 ]
 
 [[package]]

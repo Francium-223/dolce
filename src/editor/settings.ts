@@ -6,7 +6,7 @@
 //
 // 存取一律吞异常：隐私模式 / 存储满 / 存量数据损坏都不该让编辑器起不来。
 
-const KEY = "jpeditor-render-settings";
+const KEY = "dolce-render-settings";
 
 /** 存下来的东西。全部可选——旧版本存的数据缺字段是正常的。
  *  取值一律当 unknown 校验（存量数据可能是任何东西）。 */
@@ -67,7 +67,7 @@ export function savePersistedSettings(s: PersistedSettings): void {
   }
 }
 
-const LAST_FILE_KEY = "jpeditor-last-file";
+const LAST_FILE_KEY = "dolce-last-file";
 
 export function loadLastFile(): string | null {
   try {

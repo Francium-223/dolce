@@ -1,12 +1,12 @@
 #!/usr/bin/env node
-// 桌面版 Windows：把 VC++ 运行库放到 jpeditor.exe 旁边（app-local 部署），用户不必先装
+// 桌面版 Windows：把 VC++ 运行库放到 dolce.exe 旁边（app-local 部署），用户不必先装
 // vc_redist。DLL 怎么从官方 vc_redist.exe 里纯 Node 抠出来、分发许可如何 —— 见 vcredist.mjs。
 //
 //   node scripts/win-crt.mjs                       # 提取到 src-tauri/crt/（打包前跑）
 //   node scripts/win-crt.mjs --verify=<exe|dll>    # 校验该二进制要的 CRT 都在清单里
 //
 // ## 为什么桌面版也需要
-// `ort` 静态链进来的 ONNX Runtime 是微软用 /MD 编的，jpeditor.exe 因此直接导入 MSVCP140.dll /
+// `ort` 静态链进来的 ONNX Runtime 是微软用 /MD 编的，dolce.exe 因此直接导入 MSVCP140.dll /
 // MSVCP140_1.dll / VCRUNTIME140*.dll 这几个——它们不在系统自带的 UCRT 里，干净的 Windows 上
 // 一开就报「由于找不到 MSVCP140_1.dll，无法继续执行代码」。
 //

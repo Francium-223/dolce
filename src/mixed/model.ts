@@ -3068,7 +3068,7 @@ export enum Encoder {
   Finale,
   MuseScore,
   /** 本应用的写出端（`model/toxml.ts`，文本格式派生与导出的 MusicXML） */
-  Jpeditor,
+  Dolce,
 }
 
 export interface ScoreCredit {
@@ -3109,7 +3109,7 @@ export class StaffLayout {
   /** 没写朝向的圆滑线、没有多声部/和弦可依的延音线一律画在音符上方（让开下面的歌词）：自动铺排的谱，以及本应用导出的谱
    *  （读回来要与导出前一样）。别的谱照 musicpp：圆滑线缺省在下、延音线与符干反向。 */
   get arcsAbove(): boolean {
-    return this.autoLayout || this.encoder === Encoder.Jpeditor;
+    return this.autoLayout || this.encoder === Encoder.Dolce;
   }
   /** 长图：不分页，页高由内容定（排版时 `defaults.pageHeight` 只是名义值，装页后 `painter.ts` 换成实际高） */
   longImage = false;
@@ -3125,7 +3125,7 @@ export class StaffLayout {
     for (const sw of this.song.identification?.software ?? []) {
       if (sw.includes("Sibelius")) e = Encoder.Sibelius;
       else if (sw.includes("MuseScore")) e = Encoder.MuseScore;
-      else if (sw === "Dolce" || sw === "jpeditor") e = Encoder.Jpeditor; // 本应用写出的（改名前写 jpeditor）
+      else if (sw === "Dolce") e = Encoder.Dolce; // 本应用写出的
     }
     return e;
   }

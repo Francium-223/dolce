@@ -323,7 +323,7 @@ class DocPartLoader {
     // `<harmony><offset>`（长音中间换和弦）：musicpp 只认 MuseScore 写的；本应用自己写出的（文本格式派生、导出）也认
     const enc = this.score.encoder;
     const harmonyDelta = (h: Harmony): Fraction =>
-      (enc === Encoder.MuseScore || enc === Encoder.Jpeditor) && h.offset !== undefined ? new Fraction(Math.round(h.offset), div) : new Fraction(0);
+      (enc === Encoder.MuseScore || enc === Encoder.Dolce) && h.offset !== undefined ? new Fraction(Math.round(h.offset), div) : new Fraction(0);
 
     // 小节中间的 <attributes> 要在读到那个位置时就设上：后面的音读的时候就要用谱号定符干方向（nt.line()）
     const laterAttrsAt = (i: number): void => {

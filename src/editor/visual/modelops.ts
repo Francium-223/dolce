@@ -11,7 +11,7 @@ import {
   addBeat, addChordNote, type BarKind, chordAtPos, chordOnset, deleteChords, deleteMeasures, insertChord, insertInVoice, insertMeasure,
   isEditError, type JumpKind, locate, mergeMeasures, midiOf, type ChordPos, type EditHooks, type InsertAnchor, type ModelEdit, posOf,
   removeChordNote, scaleDuration, setBarKind, setBreakBefore, setDegree, setKeyAt, setTempoAt, setTimeAt, shiftOctave, splitMeasure,
-  pasteClip, type ClipItem, shiftSemitones, transposeScore, stepDegree, stepSemitone, setStep, degreeOfStep, anchorFifths, toggleAccidental, toggleDeco, toggleDot, toggleEnding, toggleJump, toggleSlur, toggleTie,
+  pasteClip, type ClipItem, setLyric, shiftSemitones, transposeScore, stepDegree, stepSemitone, setStep, degreeOfStep, anchorFifths, toggleAccidental, toggleDeco, toggleDot, toggleEnding, toggleJump, toggleSlur, toggleTie,
 } from "../../model/edit";
 import { parseKeyInput, parseTempoInput, parseTimeInput } from "./measureinput";
 import { dropEmbeddedLayout, forgetNoteLayout } from "../../model/xmlsurface";
@@ -198,6 +198,11 @@ export function transposeModel(ctx: ModelActionCtx, whole: boolean, n: number): 
     return true;
   }
   return commit(ctx, (doc) => shiftSemitones(doc, ids, n, HOOKS), true);
+}
+
+/** 歌词录入：和弦 `id` 第 `verse` 段写成 `text`（`model/edit.ts::setLyric`），写完选中这个音。 */
+export function lyricModel(ctx: ModelActionCtx, id: ElementId, verse: number, text: string, hyphen: boolean, extend: boolean): boolean {
+  return commit(ctx, (doc) => setLyric(doc, id, verse, text, hyphen, extend));
 }
 
 /** 某个条目对应的音符 id：音符就是它；小节线、换行是它前面那个音。 */

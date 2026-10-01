@@ -21,7 +21,7 @@ import { ZERO_SPAN } from "../../model/helpers";
 import type { SyncEntry } from "../sync";
 import { type EditCtx, type EditOutcome, spaceAround } from "./ops";
 
-const LYRIC_RE = /^\s*w\s*:/;
+export const LYRIC_RE = /^\s*w\s*:/;
 const CONT_RE = /^\s*\+\s*:/;
 /** 字段行（`K:`、`V:`、`I:`…）与注释：不是音乐行 */
 const FIELD_RE = /^\s*(?:[A-Za-z]\s*:|%)/;
@@ -29,7 +29,7 @@ const FIELD_RE = /^\s*(?:[A-Za-z]\s*:|%)/;
 const isMusic = (text: string): boolean => text.trim() !== "" && !FIELD_RE.test(text);
 
 /** 一条 `w:` 行拆成「字段头 + 词」：`w: 日光/之下` → `w: ` 与 `日光/之下` 的起点 */
-function lyricBody(line: Line): { head: string; body: string; bodyFrom: number } {
+export function lyricBody(line: Line): { head: string; body: string; bodyFrom: number } {
   const m = /^\s*w\s*:\s*/.exec(line.text)!;
   return { head: "w:", body: line.text.slice(m[0].length), bodyFrom: line.from + m[0].length };
 }
@@ -45,12 +45,12 @@ function slotOffset(body: string, k: number, skip: "/" | "*"): number {
 }
 
 /** 词行 body 占几个对位格。 */
-function slotCount(body: string, skip: "/" | "*"): number {
+export function slotCount(body: string, skip: "/" | "*"): number {
   return parseLyricLine(body, 1, ZERO_SPAN, undefined, skip).starts.length;
 }
 
 /** 这一行曲从哪个偏移开始：往上找最近的 `$` 或 `w:`/`+:` 行（都结束上一行曲）。 */
-function blockStart(state: EditorState, pos: number, breaks: readonly SyncEntry[], byCodeLine: boolean): number {
+export function blockStart(state: EditorState, pos: number, breaks: readonly SyncEntry[], byCodeLine: boolean): number {
   if (byCodeLine) return state.doc.lineAt(pos).from;
   let start = 0;
   for (const b of breaks) if (b.to <= pos) start = Math.max(start, b.to);
@@ -65,7 +65,7 @@ function blockStart(state: EditorState, pos: number, breaks: readonly SyncEntry[
 }
 
 /** `[from, to)` 里的对位格数（按模型里元素的原文位置数）。 */
-function slotsBetween(doc: ScoreDoc | null, from: number, to: number): number {
+export function slotsBetween(doc: ScoreDoc | null, from: number, to: number): number {
   // 休止占不占格按方言分（`lyricslot.ts::LyricSlotRule`）
   const rule = doc?.sourceFormat === "abc" ? "abc" : "123";
   let n = 0;
@@ -84,7 +84,7 @@ function slotsBetween(doc: ScoreDoc | null, from: number, to: number): number {
 }
 
 /** 从第 `n` 行起往下，这一行曲最后一条音乐代码行（遇到行末 `$` 或下一行不是音乐行就停）。 */
-function lastMusicLine(state: EditorState, n: number, breaks: readonly SyncEntry[], byCodeLine: boolean): Line {
+export function lastMusicLine(state: EditorState, n: number, breaks: readonly SyncEntry[], byCodeLine: boolean): Line {
   let line = state.doc.line(n);
   if (byCodeLine) return line;
   for (;;) {
@@ -97,7 +97,7 @@ function lastMusicLine(state: EditorState, n: number, breaks: readonly SyncEntry
 }
 
 /** 紧跟在第 `n` 行后面的 `w:` 行（遇到 `+:` 报错：续行拆不清）。 */
-function lyricLinesAfter(state: EditorState, n: number): Line[] | string {
+export function lyricLinesAfter(state: EditorState, n: number): Line[] | string {
   const out: Line[] = [];
   for (let k = n + 1; k <= state.doc.lines; k++) {
     const line = state.doc.line(k);

@@ -23,12 +23,13 @@ import {
 } from "./ops";
 import { keyHit, VISUAL_ACTIONS, type VisualAction, type VisualMode } from "./keys";
 import { type Clip, clipFor, itemsToText, setClip } from "./clipboard";
-import { clipOfChords } from "../../model/edit";
+import { clipOfChords, locate } from "../../model/edit";
 import { showTransposeDialog, transposeText } from "./transpose";
+import { lyricTextOf, setLyricText } from "./lyrics";
 import { selectionInfo } from "./selinfo";
-import { inlineEditing, openInlineEditor } from "./inline";
+import { type InlineDone, inlineEditing, openInlineEditor } from "./inline";
 import { measureEdit } from "./measureops";
-import { pasteModel, runModelAction, transposeModel, type ModelActionCtx } from "./modelops";
+import { lyricModel, pasteModel, runModelAction, transposeModel, type ModelActionCtx } from "./modelops";
 import {
   type Box, boxInPage, charIndexAt, inkBoxInPage, clearOverlay, drawBlock, drawBreak, drawCaret, hitThroughOverlay, musicBox, rightEdgeInBand,
   sameRow, setBeatIssues, textCaretInPage,
@@ -1246,6 +1247,7 @@ export class VisualEditController {
       case "edit.paste": return this.paste(clipFor(null), null);
       case "edit.repeat": return this.repeat();
       case "edit.transpose": return this.transpose();
+      case "lyric.entry": return this.startLyrics();
       case "nav.home": return this.rowEdge(-1);
       case "nav.end": return this.rowEdge(1);
       case "mark.next": return this.cycleMark(1);
@@ -1451,6 +1453,90 @@ export class VisualEditController {
     const r = spacedInsert(c, pos, text.trim());
     const sel = c.state.selection.main;
     return this.apply({ changes: [r.change], anchor: sel.empty ? r.end : r.start, head: r.end });
+  }
+
+  // ---------------- 歌词录入（`lyrics.ts`；MusicXML 走 `model/edit.ts::setLyric`） ----------------
+
+  /** 可配字的音（不含休止），按原文顺序、一个音一条。 */
+  private lyricNotes(): SyncEntry[] {
+    const doc = this.host.syncDoc();
+    const c = this.host.modelEditing() ? null : this.editCtx(true);
+    const seen = new Set<number>();
+    return this.navigable().filter((e) => {
+      if (e.kind !== "note" || seen.has(e.id)) return false;
+      seen.add(e.id);
+      if (c) return (c.dialect.parseNote(c.state.doc.sliceString(e.from, e.to), noteCtx(c, e.from))?.degree ?? 1) !== 0;
+      return !(doc && locate(doc, e.id)?.chord.rest);
+    });
+  }
+
+  /** Ctrl/⌘+L：从选中的音（选中的是字就从它的音、它那一段）开始逐字填词。 */
+  private startLyrics(): boolean {
+    const notes = this.lyricNotes();
+    if (!notes.length) return false;
+    const sel = this.host.view.state.selection.main;
+    const es = this.selectedEntries();
+    const lyr = es.find((e) => e.kind === "lyric");
+    const id = es.find((e) => e.kind === "note")?.id ?? lyr?.id ?? [...this.navigable()].reverse().find((e) => e.kind === "note" && e.to <= sel.head)?.id;
+    const at = Math.max(0, notes.findIndex((e) => e.id === id));
+    const verse = lyr ? lyr.verseNo ?? (lyr.verse ?? 0) + 1 : 1;
+    this.openLyricBox(at, verse);
+    return true;
+  }
+
+  /** 在第 `idx` 个可配字的音下面开歌词框。 */
+  private openLyricBox(idx: number, verse: number): void {
+    const note = this.lyricNotes()[idx];
+    if (!note) {
+      this.host.scorePane.focus({ preventScroll: true });
+      return;
+    }
+    const span = this.noteSel(note);
+    this.select(span.from, span.to);
+    const anchor = this.host.noteEl(note.id) ?? this.elOfEntry(note) ?? this.host.scorePane;
+    const raw = lyricTextOf(this.host.view.state, this.host.sync.ordered(), note, verse);
+    const cur = this.host.modelEditing() ? unescapeXml(raw) : raw;
+    openInlineEditor(anchor, cur, (d) => this.lyricDone(idx, verse, cur, d), `第 ${verse} 段歌词`, {
+      keys: { " ": "next", "-": "hyphen", _: "extend", "/": "skip", "Shift+ ": "prev", Enter: "verse" },
+    });
+  }
+
+  private lyricDone(idx: number, verse: number, old: string, d: InlineDone): void {
+    if (d.value === null) {
+      this.host.scorePane.focus({ preventScroll: true });
+      return;
+    }
+    const value = d.value.trim();
+    const tag = d.tag ?? (d.nav === 0 ? "stop" : d.nav < 0 ? "prev" : "next");
+    let last = idx;
+    if (tag !== "skip" && (value !== old || tag === "hyphen" || tag === "extend")) {
+      // 一次打了几个汉字：一字一音往后分（最后一个字带上这次的连字符 / 续记号）
+      const chars = /^[㐀-鿿豈-﫿]{2,}$/.test(value) ? [...value] : [value];
+      chars.forEach((ch, k) => {
+        const final = k === chars.length - 1;
+        this.writeLyric(idx + k, verse, ch, final && tag === "hyphen", final && tag === "extend");
+      });
+      last = idx + chars.length - 1;
+    }
+    const next = tag === "verse" ? idx : tag === "prev" ? idx - 1 : tag === "extend" ? last + 2 : tag === "stop" ? -1 : last + 1;
+    if (next < 0) {
+      this.host.scorePane.focus({ preventScroll: true });
+      return;
+    }
+    void this.host.whenIdle().then(() => this.openLyricBox(next, tag === "verse" ? verse + 1 : verse));
+  }
+
+  private writeLyric(idx: number, verse: number, text: string, hyphen: boolean, extend: boolean): void {
+    if (!this.host.syncFresh()) this.host.reloadNow();
+    const note = this.lyricNotes()[idx];
+    if (!note) return;
+    if (this.host.modelEditing()) {
+      lyricModel(this.modelCtx, note.id, verse, text, hyphen, extend);
+      return;
+    }
+    const c = this.editCtx();
+    if (!c) return;
+    this.apply(setLyricText(c, note, verse, text, hyphen, extend));
   }
 
   /** 移调对话框：全曲换调或选中的音移几个半音（`transpose.ts`）。 */

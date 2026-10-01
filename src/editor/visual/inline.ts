@@ -9,6 +9,13 @@ export interface InlineDone {
   value: string | null;
   /** 提交后往哪边跳：1 下一个、-1 上一个、0 不跳 */
   nav: -1 | 0 | 1;
+  /** 是按 `opts.keys` 里哪个键提交的（歌词录入的空格、连字符……）；Enter / Tab / 失焦为 undefined */
+  tag?: string;
+}
+
+export interface InlineOptions {
+  /** 另外哪些键提交（`ev.key` → 标签，交回 `InlineDone.tag`）。输入法组字时不认 */
+  keys?: Readonly<Record<string, string>>;
 }
 
 let open: HTMLInputElement | null = null;
@@ -18,7 +25,7 @@ export function inlineEditing(): boolean {
   return open !== null;
 }
 
-export function openInlineEditor(anchor: Element, value: string, onDone: (d: InlineDone) => void, placeholder = ""): void {
+export function openInlineEditor(anchor: Element, value: string, onDone: (d: InlineDone) => void, placeholder = "", opts: InlineOptions = {}): void {
   open?.blur();
   const r = anchor.getBoundingClientRect();
   const input = document.createElement("input");
@@ -46,7 +53,12 @@ export function openInlineEditor(anchor: Element, value: string, onDone: (d: Inl
   };
   input.addEventListener("keydown", (ev) => {
     ev.stopPropagation();
-    if (ev.key === "Escape") {
+    if (ev.isComposing || ev.keyCode === 229) return; // 中文输入法组字中：空格、回车是给输入法的
+    const tag = opts.keys?.[ev.shiftKey && ev.key === " " ? "Shift+ " : ev.key];
+    if (tag !== undefined) {
+      ev.preventDefault();
+      finish({ value: input.value, nav: tag.startsWith("prev") ? -1 : 1, tag });
+    } else if (ev.key === "Escape") {
       ev.preventDefault();
       finish({ value: null, nav: 0 });
     } else if (ev.key === "Enter" || ev.key === "Tab") {

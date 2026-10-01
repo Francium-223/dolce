@@ -1183,6 +1183,45 @@ export function anchorFifths(doc: ScoreDoc, anchor: InsertAnchor): number {
   return song && part ? measureCtx(song, part, a.mi).key.fifths : 0;
 }
 
+// ───────────────────────── 歌词 ─────────────────────────
+
+/** 同声部同声线、`id` 之前最近的一个和弦（找连字符的前一半）。 */
+function prevChord(l: ChordLoc): Chord | null {
+  for (let mi = l.mi; mi >= 0; mi--) {
+    const els = l.part.measures[mi]!.elements;
+    for (let i = (mi === l.mi ? l.index : els.length) - 1; i >= 0; i--) {
+      const e = els[i]!;
+      if (e.kind === "chord" && e.voice === l.chord.voice && !e.grace) return e;
+    }
+  }
+  return null;
+}
+
+/**
+ * 歌词录入：和弦 `id` 第 `verse` 段的字写成 `text`（空串 = 去掉这一段的字）。`hyphen` = 后面接连字符（`<syllabic>` 按前一个字推：
+ * 前一个字后面带连字符的这个是 middle / end，否则 begin / single）；`extend` = 一字多音的续线。
+ */
+export function setLyric(doc: ScoreDoc, id: ElementId, verse: number, text: string, hyphen: boolean, extend: boolean): ModelEdit {
+  const l = locate(doc, id);
+  if (!l) return { error: "找不到这个音" };
+  const ch = l.chord;
+  const rest = (ch.lyrics ?? []).filter((x) => x.number !== verse);
+  if (text === "") {
+    ch.lyrics = rest;
+    if (!ch.lyrics.length) delete ch.lyrics;
+    return { select: [ch] };
+  }
+  const prev = prevChord(l)?.lyrics?.find((x) => x.number === verse);
+  const joined = prev?.syllabic === "begin" || prev?.syllabic === "middle";
+  const old = ch.lyrics?.find((x) => x.number === verse);
+  const ly = { ...(old ?? {}), number: verse, text, syllabic: (joined ? (hyphen ? "middle" : "end") : hyphen ? "begin" : "single") as NonNullable<typeof old>["syllabic"] };
+  if (extend) ly.extend = true;
+  else delete ly.extend;
+  delete ly.extendType;
+  ch.lyrics = [...rest, ly].sort((a, b) => a.number - b.number);
+  return { select: [ch] };
+}
+
 // ───────────────────────── 剪贴板 ─────────────────────────
 
 /** 剪贴板里的一样东西：与格式无关（文本格式、MusicXML 之间也能贴）。音按唱名记（相对调号，贴到别的调里按唱名走），

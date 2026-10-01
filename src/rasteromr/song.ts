@@ -54,8 +54,9 @@ export interface RasterSongResult {
   xml: string | null;
   score: StaffScore | null;
   stats: RasterSongStats;
-  /** 有谱的各页的识别结果（第几份底本、第几页）：对照视图要它的位图与音符坐标 */
-  pages: { source: number; pn: number; result: RasterPageResult }[];
+  /** 有谱的各页的识别结果（第几份底本、第几页）：对照视图要它的位图与音符坐标。
+   *  `scale`：页面结构（`result.page` 的谱线坐标）乘它才是位图像素——矢量 PDF 那一路按 PDF 点识别、渲成位图时放大了（缺省 1） */
+  pages: { source: number; pn: number; result: RasterPageResult; scale?: number }[];
   /** `noteIds` 时：写进 `<note id>` 的 id → 第几页（`pages` 下标）、源图上的框（位图像素） */
   noteBoxes: Map<string, { page: number; box: { left: number; right: number; top: number; bottom: number }; step: string; octave: number; alter: number; rest: boolean }>;
   /** 各系统各谱行现在指派到第几个声部行（`buildScore` 的结果；关联表的初值） */

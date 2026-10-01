@@ -209,7 +209,7 @@ export class OmrController implements FormatSource {
   /** 有原图就给「原图页」（识别失败了也给：横着拍的图要先转过来再识别）；有位图结果才给「并排原图」 */
   private syncPagesBtn(): void {
     this.host.setContextControl(this.pagesBtn, this.lastInputs.length > 0);
-    this.host.setContextControl(this.sideBtn, this.sessionKind === "jianpu" || this.sessionKind === "staff");
+    this.host.setContextControl(this.sideBtn, this.sessionKind !== null);
     this.syncSide(null);
   }
 
@@ -365,7 +365,7 @@ export class OmrController implements FormatSource {
     this.sessionKind = s.kind;
     this.host.setContextControl(this.kindField(), true);
     this.syncPagesBtn();
-    if (s.kind === "staff" && this.lastInputs.length) {
+    if ((s.kind === "staff" || s.kind === "vector") && this.lastInputs.length) {
       if (this.btnEl) this.btnEl.textContent = "原图对照";
       this.host.setContextControl(this.btnEl, true);
     }
@@ -373,7 +373,22 @@ export class OmrController implements FormatSource {
 
   /** 五线谱项目重开后第一次进对照：从原图重跑识别补回逐页位图与音符坐标（不动原文）。 */
   private async ensureStaffResult(): Promise<boolean> {
-    if (this.staffResult || this.sessionKind !== "staff" || !this.lastInputs.length) return this.staffResult !== null;
+    if (this.staffResult || !this.lastInputs.length) return this.staffResult !== null;
+    if (this.sessionKind === "vector") {
+      // 矢量 PDF 项目重开：重跑一遍矢量识别拿框（快，不用 OCR），再渲底图
+      this.progress("正在从原 PDF 载入对照数据…");
+      try {
+        const sb = await import("../staffomr/browser");
+        const bytes = this.lastInputs[0]!.bytes;
+        this.staffResult = await sb.vectorOverlayResult(bytes, await sb.recognizeStaffPdf(bytes, { noteIds: true }));
+        this.host.setStatus("");
+        return true;
+      } catch (e) {
+        this.host.setStatus("载入对照数据失败：" + (e instanceof Error ? e.message : String(e)));
+        return false;
+      }
+    }
+    if (this.sessionKind !== "staff") return false;
     const rb = await import("../rasteromr/browser");
     this.progress("正在从原图载入对照数据…");
     try {
@@ -491,7 +506,7 @@ export class OmrController implements FormatSource {
     this.sideBtn?.setAttribute("aria-pressed", String(this.side));
     const box = this.sideEl;
     if (!box) return;
-    const on = this.side && this.host.mode !== "recognize" && (this.bin !== null && this.score !== null || this.staffResult !== null || this.sessionKind === "staff");
+    const on = this.side && this.host.mode !== "recognize" && (this.bin !== null && this.score !== null || this.staffResult !== null || this.sessionKind === "staff" || this.sessionKind === "vector");
     box.hidden = !on;
     document.getElementById("score-pane")?.classList.toggle("with-omr-side", on);
     if (!on) {
@@ -507,7 +522,7 @@ export class OmrController implements FormatSource {
   private async drawSide(id: ElementId | null): Promise<void> {
     const box = this.sideEl!;
     // 五线谱项目重开后还没有对照数据：先从原图补
-    if (!this.staffResult && this.sessionKind === "staff" && !(this.bin && this.score)) {
+    if (!this.staffResult && (this.sessionKind === "staff" || this.sessionKind === "vector") && !(this.bin && this.score)) {
       if (!(await this.ensureStaffResult())) return;
     }
     const doc = this.host.currentScoreDoc();
@@ -682,6 +697,7 @@ export class OmrController implements FormatSource {
     if (!ok) return false;
     const res = await recognizeStaffPdf(bytes, {
       onProgress: (done, total) => this.host.setStatus(`五线谱识别中… ${done}/${total} 页`),
+      noteIds: true,
     });
     if (!res.notes) {
       this.host.setStatus("这份 PDF 里没找到五线谱");
@@ -694,6 +710,16 @@ export class OmrController implements FormatSource {
     this.sessionKind = "vector";
     this.host.setContextControl(this.kindField(), true);
     const jpOk = this.host.adoptStaffXml(res.musicxml);
+    this.staffEmitted = this.host.getText();
+    // 原图对照：页面渲成位图、框放大到像素（`vectorOverlayResult`），之后与位图那一路同一套对照视图与关联表
+    try {
+      const { vectorOverlayResult } = await import("../staffomr/browser");
+      this.staffResult = await vectorOverlayResult(bytes, res);
+      if (this.btnEl) this.btnEl.textContent = "原图对照";
+      this.host.setContextControl(this.btnEl, true);
+    } catch (e) {
+      console.warn("矢量 PDF 渲不出对照底图", e);
+    }
     this.host.setStatus(
       `五线谱识别完成（${((performance.now() - t0) / 1000).toFixed(1)}s）：` +
         `${res.pages} 页 / ${res.parts} 个声部 / ${res.notes} 个音符` +
@@ -736,7 +762,7 @@ export class OmrController implements FormatSource {
   // ---------------- 核对视图 ----------------
   /** 在「简谱模式」与「识别模式」（二值图+半透明识别叠加）之间切换。需先有 OMR 识别结果。 */
   async toggle(): Promise<void> {
-    if (this.host.mode !== "recognize" && !this.staffResult && this.sessionKind === "staff") await this.ensureStaffResult();
+    if (this.host.mode !== "recognize" && !this.staffResult && (this.sessionKind === "staff" || this.sessionKind === "vector")) await this.ensureStaffResult();
     if (!this.hasResult) return;
     this.host.stopPlayback();
     if (this.host.mode === "recognize") {
@@ -882,12 +908,14 @@ export class OmrController implements FormatSource {
     const nb = omrId ? res?.noteBoxes.get(omrId) : undefined;
     const svg = el.ownerSVGElement;
     if (!res || !nb || !svg) return null;
-    const cy = (nb.box.top + nb.box.bottom) / 2;
+    // 矢量 PDF 的谱线坐标是点、底图放大过（`scale`），先换回点再比
+    const k = res.pages[nb.page]?.scale ?? 1;
+    const cy = (nb.box.top + nb.box.bottom) / 2 / k;
     const staves = res.pages[nb.page]?.result.page.staves ?? [];
     const st = staves.find((s) => s.lineYs.length >= 5 && cy > s.lineYs[0]! - (s.lineYs[4]! - s.lineYs[0]!) && cy < s.lineYs[4]! + (s.lineYs[4]! - s.lineYs[0]!));
     if (!st) return null;
     const sp = (st.lineYs[4]! - st.lineYs[0]!) / 4;
-    return { svg, y: st.lineYs[0]! - sp * 2, h: sp * 8 };
+    return { svg, y: (st.lineYs[0]! - sp * 2) * k, h: sp * 8 * k };
   }
 
   get hasStaffResult(): boolean {

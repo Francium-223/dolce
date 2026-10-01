@@ -62,6 +62,14 @@ export interface StaffPdfResult {
   parts: number;
   /** 没有谱表的页（封面/目录/歌词页）。 */
   skipped: number;
+  /** `noteIds` 时：原图对照与关联表要的东西（同位图那一路的 `RasterSongResult`，坐标是 PDF 点） */
+  detail?: {
+    pages: { pn: number; page: Parameters<typeof buildScore>[0][number]["page"]; notes: StaffNote[] }[];
+    noteBoxes: Map<string, { page: number; box: { left: number; right: number; top: number; bottom: number }; step: string; octave: number; alter: number; rest: boolean }>;
+    score: ReturnType<typeof buildScore>;
+    assignment(): number[][];
+    rebuild(slots: number[][]): { xml: string; score: ReturnType<typeof buildScore> };
+  };
 }
 
 /**
@@ -72,7 +80,7 @@ export interface StaffPdfResult {
  */
 export async function recognizeStaffPdf(
   bytes: Uint8Array,
-  opts: { pages?: number[]; title?: string; onProgress?: (done: number, total: number) => void } = {},
+  opts: { pages?: number[]; title?: string; onProgress?: (done: number, total: number) => void; noteIds?: boolean } = {},
 ): Promise<StaffPdfResult> {
   const { pdf, OPS } = await openStaffPdf(bytes);
   // 字形字典**动态 import**：Vite 会单独切一个 chunk，只在真跑五线谱识别时加载，
@@ -89,6 +97,7 @@ export async function recognizeStaffPdf(
   const notesByStaff = new Map<Staff, StaffNote[]>();
   let carryTime: { beats: number; beatType: number } | undefined;
   let skipped = 0;
+  const detailPages: NonNullable<StaffPdfResult["detail"]>["pages"] = [];
   let done = 0;
   for (const pn of list) {
     const page = await pdf.getPage(pn);
@@ -96,6 +105,7 @@ export async function recognizeStaffPdf(
     carryTime = r.carryTime;
     if (r.hasStaff) {
       entries.push({ page: r.page, ctx: r.ctx });
+      detailPages.push({ pn, page: r.page, notes: r.notes });
       for (const n of r.notes) {
         const a = notesByStaff.get(n.staff) ?? [];
         a.push(n);
@@ -116,8 +126,86 @@ export async function recognizeStaffPdf(
       return { lyric: ns.some((n) => n.lyrics?.length), pitch: ps.length ? ps[ps.length >> 1] : null };
     },
   });
-  const musicxml = scoreToMusicXml(score, (st) => notesByStaff.get(st) ?? [], { title: opts.title });
+  // 原图对照：逐页逐音编号写进 `<note id>`、记下源框（同 `rasteromr/song.ts`）
+  const noteBoxes: NonNullable<StaffPdfResult["detail"]>["noteBoxes"] = new Map();
+  if (opts.noteIds) {
+    let k = 0;
+    detailPages.forEach(({ notes }, pi) => {
+      for (const n of notes) {
+        const id = `omr${++k}`;
+        n.omrId = id;
+        noteBoxes.set(id, { page: pi, box: { ...n.sym.box }, step: n.step ?? "C", octave: n.octave ?? 4, alter: n.alter ?? 0, rest: !!n.rest });
+      }
+    });
+  }
+  const notesOf = (st: Staff): StaffNote[] => notesByStaff.get(st) ?? [];
+  const xmlOpts = { title: opts.title, ...(opts.noteIds ? { noteId: (n: StaffNote) => n.omrId } : {}) };
+  const musicxml = scoreToMusicXml(score, notesOf, xmlOpts);
   let notes = 0;
   for (const v of notesByStaff.values()) notes += v.length;
-  return { musicxml, pages: list.length, notes, parts: score.parts.length, skipped };
+  let cur = score;
+  const detail: StaffPdfResult["detail"] = opts.noteIds ? {
+    pages: detailPages, noteBoxes, score,
+    assignment: () => cur.systems.map((e, si) => e.sys.staves.map((st) => cur.scoreStaves.findIndex((ss) => ss.staves[si] === st))),
+    rebuild: (slots) => {
+      cur = buildScore(entries, { slots });
+      return { xml: scoreToMusicXml(cur, notesOf, xmlOpts), score: cur };
+    },
+  } : undefined;
+  return { musicxml, pages: list.length, notes, parts: score.parts.length, skipped, ...(detail ? { detail } : {}) };
+}
+
+/** 渲成对照底图的倍数：PDF 点 × 它 = 位图像素（约 144 dpi，五线谱的符头、临时记号看得清） */
+const OVERLAY_SCALE = 2;
+
+/**
+ * 矢量五线谱 PDF 的原图对照：`noteIds` 识别出的结果 + 各页渲成的位图，拼成位图那一路同形的结果
+ * （`RasterSongResult`），对照视图、并排原图、谱表 ↔ 声部关联表照用。框坐标从 PDF 点放大到位图像素；
+ * 页面结构（谱线）仍是点，`scale` 告诉用的人乘多少。
+ */
+export async function vectorOverlayResult(bytes: Uint8Array, res: StaffPdfResult): Promise<import("../rasteromr/song").RasterSongResult> {
+  const d = res.detail;
+  if (!d) throw new Error("识别时没开 noteIds，没有对照数据");
+  const { pdf } = await openStaffPdf(bytes);
+  const pages: import("../rasteromr/song").RasterSongResult["pages"] = [];
+  try {
+    for (const p of d.pages) {
+      const page = await pdf.getPage(p.pn);
+      const vp = page.getViewport({ scale: OVERLAY_SCALE });
+      const canvas = document.createElement("canvas");
+      canvas.width = Math.ceil(vp.width);
+      canvas.height = Math.ceil(vp.height);
+      const g = canvas.getContext("2d", { willReadFrequently: true })!;
+      g.fillStyle = "#fff";
+      g.fillRect(0, 0, canvas.width, canvas.height);
+      await page.render({ canvasContext: g, viewport: vp }).promise;
+      page.cleanup?.();
+      // 灰度过半就算墨：与位图那一路的二值图同一种底图（`omr/overlay.ts::baseImage` 按 0/1 画）
+      const px = g.getImageData(0, 0, canvas.width, canvas.height).data;
+      const data = new Uint8Array(canvas.width * canvas.height);
+      // pdf.js 没画到的地方是透明（读出来 RGB 全 0），按纸算，不能当墨
+      for (let i = 0; i < data.length; i++) data[i] = px[i * 4 + 3]! >= 128 && px[i * 4]! * 0.3 + px[i * 4 + 1]! * 0.59 + px[i * 4 + 2]! * 0.11 < 160 ? 1 : 0;
+      pages.push({
+        source: 0, pn: p.pn, scale: OVERLAY_SCALE,
+        result: { raster: { bin: { w: canvas.width, h: canvas.height, data } }, page: p.page, notes: p.notes } as unknown as import("../rasteromr/recognize").RasterPageResult,
+      });
+    }
+  } finally {
+    pdf.destroy?.();
+  }
+  const s = OVERLAY_SCALE;
+  const noteBoxes: import("../rasteromr/song").RasterSongResult["noteBoxes"] = new Map(
+    [...d.noteBoxes].map(([id, b]) => [id, { ...b, box: { left: b.box.left * s, right: b.box.right * s, top: b.box.top * s, bottom: b.box.bottom * s } }]),
+  );
+  return {
+    xml: res.musicxml,
+    score: d.score as unknown as import("../rasteromr/song").RasterSongResult["score"],
+    stats: { notes: res.notes, harmonies: 0, lyricLines: 0, lyricStats: { rows: 0, hit: 0, parity: 0 }, bars: 0, full: 0, unknown: 0, staves: 0, pages: res.pages, halftone: null, kind: "vector", jianpuFix: { pairs: 0, pitch: 0, duration: 0, removed: 0, inserted: 0 }, parts: res.parts },
+    pages, noteBoxes,
+    assignment: () => d.assignment(),
+    rebuild: (slots) => {
+      const r = d.rebuild(slots);
+      return { xml: r.xml, score: r.score as unknown as NonNullable<import("../rasteromr/song").RasterSongResult["score"]> };
+    },
+  };
 }

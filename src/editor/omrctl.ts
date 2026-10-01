@@ -874,7 +874,7 @@ export class OmrController implements FormatSource {
   /** 识别模式布局钩子：打 body.recognize 类 + 显示/隐藏视图下拉。 */
   private setLayout(on: boolean): void {
     document.getElementById("body")?.classList.toggle("recognize", on);
-    const field = this.viewSelectEl?.closest<HTMLElement>(".toolbar-select-field");
+    const field = this.viewSelectEl?.closest<HTMLElement>("label"); // 状态栏里那个（`status-select-field`）
     if (field) field.hidden = !on;
     else if (this.viewSelectEl) this.viewSelectEl.hidden = !on;
     this.host.syncContextGroup(this.btnEl ?? field ?? this.viewSelectEl);

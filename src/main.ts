@@ -14,6 +14,7 @@ import { PaintResources, ScorePainter, staffOptionsOf } from "./layout/painter";
 import type { MixedOptions } from "./mixed/model";
 import { initLang, onLangChange, t } from "./i18n";
 import { setupPopover } from "./editor/toolpop";
+import { setupCompareSelect } from "./editor/comparemode";
 
 // Built-in sample (圣哉，圣哉，圣哉) — same content as CodeEditor.kt `scr`.
 const SAMPLE = `// ************** JPW-ABC File Ver 1.0 (for JP-Word v5.50m) **************
@@ -220,20 +221,6 @@ async function boot() {
   const headerMore = document.getElementById("btn-header-more") as HTMLButtonElement | null;
   const headerTools = document.getElementById("header-tools");
   if (headerMore && headerTools) setupPopover(headerMore, headerTools);
-  // 核对组里「怎么对照 | 识别输入」之间的细线：两侧都有可见项才出现（各项按上下文显隐）
-  const inputSep = document.getElementById("recog-input-sep");
-  const recogGroup = inputSep?.parentElement;
-  if (inputSep && recogGroup) {
-    const syncSep = () => {
-      const kids = [...recogGroup.children] as HTMLElement[];
-      const i = kids.indexOf(inputSep);
-      const shown = (el: HTMLElement) => el.hasAttribute("data-context-control") && !el.hidden;
-      const hide = !(kids.slice(0, i).some(shown) && kids.slice(i + 1).some(shown));
-      if (inputSep.hidden !== hide) inputSep.hidden = hide;
-    };
-    new MutationObserver(syncSep).observe(recogGroup, { subtree: true, attributes: true, attributeFilter: ["hidden"] });
-    syncSep();
-  }
   // 排版模式（展开 / 原样 / 五线谱 / 混排）。四档 = 「哪个排版器」×「哪一档版面」的组合，
   // 配法由 App.setViewMode 说了算，这里只负责接线。
   const viewSwitch = document.getElementById("view-mode-switch");
@@ -280,6 +267,16 @@ async function boot() {
   if (recogViewSel) {
     app.omr.setRecogViewSelect(recogViewSel);
     recogViewSel.addEventListener("change", () => app.omr.setRecogView(recogViewSel.value as import("./omr").RecogView));
+  }
+  // 状态栏「对照」下拉：驱动上面几个控件（它们藏在 .compare-legacy 里，显隐仍表示能不能用）
+  {
+    const byId = <T extends HTMLElement>(id: string) => document.getElementById(id) as T | null;
+    const select = byId<HTMLSelectElement>("sel-compare");
+    const field = byId<HTMLElement>("compare-field");
+    const recognize = byId<HTMLButtonElement>("btn-recognize");
+    const side = byId<HTMLButtonElement>("btn-src-side");
+    const follow = byId<HTMLButtonElement>("btn-src-follow");
+    if (select && field && recognize && side && follow && recogViewSel) setupCompareSelect({ select, field, recognize, side, follow, view: recogViewSel });
   }
   const docFormatSel = document.getElementById("sel-doc-format") as HTMLSelectElement | null;
   if (docFormatSel) app.formats.bind(docFormatSel); // 选项由来源（识别结果 / 打开的文件）给，见 editor/formatswitch.ts

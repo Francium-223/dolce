@@ -91,6 +91,7 @@ export function applyI18n(root: ParentNode): void {
   each("data-i18n-title", (el, k) => { el.title = t(k); });
   each("data-i18n-aria", (el, k) => { el.setAttribute("aria-label", t(k)); });
   each("data-i18n-placeholder", (el, k) => { el.setAttribute("placeholder", t(k)); });
+  each("data-i18n-label", (el, k) => { el.setAttribute("label", t(k)); });
 }
 
 async function syncWindowTitle(): Promise<void> {

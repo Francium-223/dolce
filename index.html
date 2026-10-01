@@ -401,6 +401,11 @@
       <footer id="statusbar" class="statusbar">
         <div id="status" class="status-text" role="status" aria-live="polite"></div>
         <div class="status-items">
+          <label class="status-check" title="显示代码区（取消勾选收起，谱面占满；并排时原图与排版稿各占一半）" data-i18n-title="status.code.title">
+            <input id="chk-code" type="checkbox" checked>
+            <span data-i18n="status.code">源码</span>
+          </label>
+          <span class="status-sep status-sep-code" aria-hidden="true"></span>
           <span id="sel-info" class="sel-info" title="选中的元素：声部、第几小节第几拍、音高、时值" data-i18n-title="pane.selInfo.title" hidden></span>
           <span id="visual-mode" class="visual-mode" title="可视化编辑：编辑模式（方块光标）改选中的元素，插入模式（竖线光标）在光标处插入；Insert / Esc 切换" data-i18n-title="pane.visualMode.title" hidden>编辑</span>
           <span id="beat-count" class="beat-count" title="点一下跳到下一处" data-i18n-title="pane.beatCount.title" hidden></span>
@@ -412,10 +417,10 @@
             <select id="sel-compare" title="对照原图的方式" aria-label="对照方式" data-i18n-title="status.compare.title" data-i18n-aria="status.compare.aria">
               <optgroup label="排版稿" data-i18n-label="status.compare.score">
                 <option value="none" data-i18n="status.compare.none">只看排版稿</option>
-                <option value="side" data-i18n="toolbar.srcSide">并排原图</option>
                 <option value="follow" data-i18n="toolbar.srcFollow">原图片段</option>
               </optgroup>
               <optgroup label="核对视图" data-i18n-label="status.compare.overlay">
+                <option value="side" data-i18n="toolbar.srcSide">并排原图</option>
                 <option value="floating" data-i18n="toolbar.recogView.floating">附近浮窗</option>
                 <option value="inplace" data-i18n="toolbar.recogView.inplace">原位叠加</option>
                 <option value="original" data-i18n="toolbar.recogView.original">仅原图</option>
@@ -423,7 +428,6 @@
             </select>
             <span class="select-chevron" aria-hidden="true">⌄</span>
           </label>
-          <button class="status-toggle" id="btn-side-code" data-context-control aria-pressed="true" title="并排时显示或收起源码区" data-i18n-title="toolbar.sideCode.title" data-i18n="toolbar.sideCode" hidden>源码</button>
           <div class="compare-legacy" hidden>
             <button id="btn-recognize" data-context-control title="将识别结果与上传原图进行对照" data-i18n-title="toolbar.recognize.title" data-i18n="toolbar.recognize" hidden>原图对照</button>
             <button id="btn-src-side" data-context-control aria-pressed="false" title="排版稿左边铺整页原图：选中的音框出来，点原图上的音选中排版稿里那个" data-i18n-title="toolbar.srcSide.title" data-i18n="toolbar.srcSide" hidden>并排原图</button>

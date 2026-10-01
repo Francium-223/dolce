@@ -11,6 +11,8 @@ export const zh = {
   "header.export": "导出",
   "header.more": "更多",
   "status.recogView": "对照",
+  "status.code": "源码",
+  "status.code.title": "显示代码区（取消勾选收起，谱面占满；并排时原图与排版稿各占一半）",
   "status.compare.title": "对照原图的方式：排版稿里并排原图、看原图片段，或进核对视图叠加识别结果",
   "status.compare.aria": "对照方式",
   "status.compare.score": "排版稿",
@@ -642,8 +644,6 @@ export const zh = {
   "start.adjustFirst": "识别前先调整原图",
   "start.adjustFirst.title": "选好图之后先弹「原图页」：横着拍的转过来、页边裁掉、几张图排好顺序，再开始识别",
   // 并排原图收起源码
-  "toolbar.sideCode": "源码",
-  "toolbar.sideCode.title": "并排时显示或收起源码区",
   // 声部面板、原图页、识别项目、草稿恢复、识别状态
   "parts.title": "声部",
   "parts.done": "完成",

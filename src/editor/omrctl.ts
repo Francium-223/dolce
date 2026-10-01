@@ -151,6 +151,7 @@ export class OmrController implements FormatSource {
     if (typeof s.omrFollow === "boolean") this.follow = s.omrFollow;
     if (typeof s.omrSide === "boolean") this.side = s.omrSide;
     if (typeof s.sideHideCode === "boolean") this.hideCode = s.sideHideCode;
+    this.applyCodePane();
     if (typeof s.omrAdjust === "boolean") this.adjustFirst = s.omrAdjust;
     if (s.omrKind === "auto" || s.omrKind === "jianpu" || s.omrKind === "staff") this.kind = s.omrKind;
     this.syncFollowBtn();
@@ -531,19 +532,25 @@ export class OmrController implements FormatSource {
   /** 并排面板现在画的是哪份（换了识别结果、改了谱才重画底图与命中框） */
   private sideKey: unknown = null;
 
-  /** 并排时收起代码区（`#body.side-hide-code`，原图与排版稿各占一半），持久化 */
+  /** 收起代码区（`#body.hide-code`），任何模式下都生效；并排时原图与排版稿各占一半。持久化（设置键沿用 `sideHideCode`） */
   hideCode = false;
-  private sideCodeBtn: HTMLButtonElement | null = null;
+  private codeCheck: HTMLInputElement | null = null;
 
-  /** 工具条「源码」开关：只在并排开着时出现。 */
-  setSideCodeBtn(btn: HTMLButtonElement): void {
-    this.sideCodeBtn = btn;
-    this.host.setContextControl(btn, false);
-    btn.addEventListener("click", () => {
-      this.hideCode = !this.hideCode;
+  /** 状态栏「源码」复选框：勾着显示代码区。 */
+  setCodeCheckbox(chk: HTMLInputElement): void {
+    this.codeCheck = chk;
+    chk.addEventListener("change", () => {
+      this.hideCode = !chk.checked;
       this.host.saveSettings();
-      this.syncSide(null);
+      this.applyCodePane();
     });
+    this.applyCodePane();
+  }
+
+  /** 按 `hideCode` 收起 / 放出代码区，复选框跟着。 */
+  applyCodePane(): void {
+    document.getElementById("body")?.classList.toggle("hide-code", this.hideCode);
+    if (this.codeCheck) this.codeCheck.checked = !this.hideCode;
   }
 
   setSideBtn(btn: HTMLButtonElement, box: HTMLElement | null): void {
@@ -571,12 +578,6 @@ export class OmrController implements FormatSource {
     const on = this.side && this.host.mode !== "recognize" && (this.bin !== null && this.score !== null || this.staffResult !== null || this.sessionKind === "staff" || this.sessionKind === "vector");
     box.hidden = !on;
     document.getElementById("score-pane")?.classList.toggle("with-omr-side", on);
-    document.getElementById("body")?.classList.toggle("side-hide-code", on && this.hideCode);
-    if (this.sideCodeBtn) {
-      this.host.setContextControl(this.sideCodeBtn, on);
-      this.sideCodeBtn.classList.toggle("active", !this.hideCode);
-      this.sideCodeBtn.setAttribute("aria-pressed", String(!this.hideCode));
-    }
     if (!on) {
       box.replaceChildren();
       this.sideKey = null;

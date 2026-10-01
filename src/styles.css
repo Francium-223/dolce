@@ -175,7 +175,9 @@ button:focus-visible, select:focus-visible {
 .statusbar .icon-button { width: 24px; padding: 0; font-size: 15px; }
 .statusbar #btn-zoom-reset { min-width: 48px; font-variant-numeric: tabular-nums; }
 .statusbar .doubt-count { color: #e67700; }
-.statusbar .status-toggle[aria-pressed="true"] { background: var(--panel-raised); color: var(--text); }
+.status-check { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; user-select: none; }
+.status-check input { margin: 0; accent-color: var(--green); cursor: pointer; }
+.status-check:hover { color: var(--text); }
 /* 状态栏里的视图切换下拉（核对视图的对照方式）：比工具栏的小一号，前面一个短标签 */
 .status-select-field { position: relative; display: inline-flex; align-items: center; gap: 6px; }
 .status-select-field[hidden] { display: none; }
@@ -547,10 +549,13 @@ button:focus-visible, select:focus-visible {
 .omr-side-hit:hover { fill: rgba(21, 101, 255, 0.08); }
 .omr-side-hit.on { fill: rgba(21, 101, 255, 0.12); stroke: #1565ff; stroke-width: 3; }
 #score-pane.with-omr-side { margin-left: 45%; }
-/* 并排时收起代码区：原图与排版稿各占一半（不复用格式驱动的 no-code，两者会互相覆盖） */
-#body.side-hide-code #code-pane-shell { display: none !important; }
-#body.side-hide-code .omr-side { width: 50%; }
-#body.side-hide-code #score-pane.with-omr-side { margin-left: 50%; }
+/* 收起代码区（状态栏「源码」复选框，任何模式）：并排时原图与排版稿各占一半。
+   不复用格式驱动的 no-code，两者会互相覆盖；手机宽度有自己的源码 / 预览切换，不受它管 */
+@media (min-width: 681px) {
+  #body.hide-code #code-pane-shell { display: none !important; }
+  #body.hide-code .omr-side { width: 50%; }
+  #body.hide-code #score-pane.with-omr-side { margin-left: 50%; }
+}
 .omr-follow svg { width: 100%; height: auto; display: block; }
 .omr-follow .omr-follow-hit { fill: rgba(21, 101, 255, 0.12); stroke: #1565ff; stroke-width: 3; }
 .omr-overlay .omr-slur { stroke: #e65100; }
@@ -923,7 +928,7 @@ button:focus-visible, select:focus-visible {
   .header-divider { display: none; }
   .header-more { display: inline-flex; width: 36px; padding: 0; }
   .statusbar { padding-inline: 8px; gap: 6px; }
-  .statusbar .sel-info, .statusbar .visual-mode, .statusbar .tool-label { display: none; }
+  .statusbar .sel-info, .statusbar .visual-mode, .statusbar .tool-label, .status-check, .status-sep-code { display: none; }
   .header-tools:not(.open) { display: none; }
   .header-tools.open .button-tool { height: 34px; font-size: 13px; }
   #toolbar { padding-inline: 8px; }

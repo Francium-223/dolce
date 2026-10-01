@@ -3,10 +3,11 @@
 // 两者都从动作表（`keys.ts::VISUAL_ACTIONS`）生成——动作名、快捷键提示、在哪种模式下可用都取自那一份，
 // 点了调的是控制器同一个 `run`，不另写一套逻辑。
 
-import { VISUAL_ACTIONS, type VisualAction, type VisualMode } from "./keys";
+import { keyTextOf, VISUAL_ACTIONS, type VisualAction, type VisualMode } from "./keys";
 
 /** 面板与菜单里不列的：移动、轮换这类纯键盘操作，和面板自己的开关 */
-const KEYBOARD_ONLY = new Set(["nav.prev", "nav.next", "nav.extendPrev", "nav.extendNext", "nav.home", "nav.end", "mark.next", "mark.prev"]);
+const KEYBOARD_ONLY = new Set(["nav.prev", "nav.next", "nav.extendPrev", "nav.extendNext", "nav.home", "nav.end", "mark.next", "mark.prev",
+  "nav.measPrev", "nav.measNext", "nav.extendMeasPrev", "nav.extendMeasNext"]);
 
 /** 唱名那个动作展开成一排：1–7、0；音名 C–B；加和弦音 1–7；声部 1–4 */
 const DIGITS = ["1", "2", "3", "4", "5", "6", "7", "0"];
@@ -77,6 +78,7 @@ const SHORT: Record<string, string> = {
   "volta.1": "\u23B41.", "volta.2": "\u23B42.",
   "jump.segno": "\u{1D10B}", "jump.coda": "\u{1D10C}", "jump.dc": "D.C.", "jump.ds": "D.S.", "jump.fine": "Fine",
   "view.formatMarks": "\u00B6", // ¶
+  "nav.gotoMeasure": "\u2192\u2116", // →№
   "edit.undo": "\u21B6", // ↶
   "edit.redo": "\u21B7", // ↷
 };
@@ -98,7 +100,7 @@ export function buildPalette(root: HTMLElement, r: MenuRunner): () => void {
     const row = ROWS[a.id];
     if (row) {
       for (const d of row.keys) {
-        const el = button(row.label(d), `${row.title(d)}（${a.keyText}）：${a.help}`, () => {
+        const el = button(row.label(d), `${row.title(d)}（${keyTextOf(a)}）：${a.help}`, () => {
           r.run(a, d);
           r.refocus();
         }, "visual-palette-digit");
@@ -107,7 +109,7 @@ export function buildPalette(root: HTMLElement, r: MenuRunner): () => void {
       }
       continue;
     }
-    const el = button(SHORT[a.id] ?? a.label, `${a.label}（${a.keyText}）：${a.help}`, () => {
+    const el = button(SHORT[a.id] ?? a.label, `${a.label}（${keyTextOf(a)}）：${a.help}`, () => {
       r.run(a);
       r.refocus();
     });
@@ -160,7 +162,7 @@ export function showMenu(x: number, y: number, target: MenuTarget, r: MenuRunner
     const label = document.createElement("span");
     label.textContent = a.label;
     const key = document.createElement("kbd");
-    key.textContent = a.keyText;
+    key.textContent = keyTextOf(a);
     it.append(label, key);
     it.setAttribute("role", "menuitem");
     return it;

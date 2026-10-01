@@ -1219,6 +1219,16 @@ export class VisualEditController {
         this.refresh();
         return true;
       }
+      case "nav.measPrev": return this.measureJump(-1, false);
+      case "nav.measNext": return this.measureJump(1, false);
+      case "nav.extendMeasPrev": return this.measureJump(-1, true);
+      case "nav.extendMeasNext": return this.measureJump(1, true);
+      case "nav.gotoMeasure":
+        void this.modelCtx.prompt("跳到第几小节", "").then((v) => {
+          this.host.scorePane.focus({ preventScroll: true });
+          if (v !== null && v.trim()) this.gotoMeasure(Number(v.trim()));
+        });
+        return true;
       case "nav.home": return this.rowEdge(-1);
       case "nav.end": return this.rowEdge(1);
       case "mark.next": return this.cycleMark(1);
@@ -1330,6 +1340,85 @@ export class VisualEditController {
     if (!target) return false;
     const span = this.noteSel(target);
     this.select(span.from, span.to);
+    return true;
+  }
+
+  /** 按原文顺序把可停的条目按小节线 / 换行切成一段段（每段一小节，空段不要）。 */
+  private measureRuns(): SyncEntry[][] {
+    const runs: SyncEntry[][] = [];
+    let cur: SyncEntry[] = [];
+    for (const e of this.navigable()) {
+      if (e.kind === "barline" || e.kind === "break") {
+        if (cur.length) runs.push(cur);
+        cur = [];
+      } else cur.push(e);
+    }
+    if (cur.length) runs.push(cur);
+    return runs;
+  }
+
+  /** Ctrl/⌘+←→：跳到上 / 下一小节开头；`extend` 时以选区另一端为锚扩到那一小节的尾（往后）或头（往前）。 */
+  private measureJump(dir: -1 | 1, extend: boolean): boolean {
+    const runs = this.measureRuns();
+    if (!runs.length) return false;
+    const sel = this.host.view.state.selection.main;
+    const first = (r: SyncEntry[]): SyncEntry => r[0]!;
+    const last = (r: SyncEntry[]): SyncEntry => r[r.length - 1]!;
+    // 选区（光标）所在那一小节：往后跳看选区尾，往前跳看选区头
+    const edge = dir > 0 ? sel.to : sel.from;
+    let i = runs.findIndex((r) => this.groupEnd(last(r)) > edge || (sel.empty && this.groupEnd(last(r)) >= edge));
+    if (i < 0) i = runs.length - 1;
+    if (extend) {
+      const atEnd = sel.to >= this.groupEnd(last(runs[i]!));
+      const atStart = sel.from <= first(runs[i]!).from;
+      const j = dir > 0 ? (atEnd ? i + 1 : i) : (atStart ? i - 1 : i);
+      const r = runs[Math.max(0, Math.min(runs.length - 1, j))]!;
+      if (dir > 0) this.select(sel.from, this.groupEnd(last(r)));
+      else this.select(sel.to, first(r).from);
+      return true;
+    }
+    const atStart = sel.empty ? sel.head <= first(runs[i]!).from : sel.from <= first(runs[i]!).from;
+    const j = dir > 0 ? i + 1 : atStart ? i - 1 : i;
+    const r = runs[j];
+    if (!r) return false;
+    if (sel.empty) this.select(first(r).from, first(r).from);
+    else {
+      const span = this.noteSel(first(r));
+      this.select(span.from, span.to);
+    }
+    return true;
+  }
+
+  /** 跳到第 `n` 小节（按模型的小节数，从 1 数；多声部时在选区所在声部里数）。 */
+  private gotoMeasure(n: number): boolean {
+    const doc = this.host.syncDoc();
+    if (!doc || !Number.isInteger(n) || n < 1) {
+      this.host.setStatus("小节号要是正整数");
+      return true;
+    }
+    const nav = this.navigable();
+    const byId = new Map<number, SyncEntry>();
+    for (const e of nav) if (e.kind === "note" && !byId.has(e.id)) byId.set(e.id, e);
+    const sel = this.host.view.state.selection.main;
+    const here = this.selectedEntries()[0] ?? [...nav].reverse().find((e) => e.to <= sel.head) ?? nav[0];
+    let pi0 = 0;
+    for (const song of doc.songs) {
+      song.parts.forEach((part, pi) => {
+        if (here && part.measures.some((m) => m.elements.some((el) => el.id === here.id))) pi0 = pi;
+      });
+    }
+    for (const song of doc.songs) {
+      const m = song.parts[pi0]?.measures[n - 1];
+      const hit = m?.elements.map((el) => byId.get(el.id)).find((e): e is SyncEntry => !!e);
+      if (!hit) continue;
+      if (sel.empty) this.select(hit.from, hit.from);
+      else {
+        const span = this.noteSel(hit);
+        this.select(span.from, span.to);
+      }
+      return true;
+    }
+    this.host.setStatus(`没有第 ${n} 小节`);
     return true;
   }
 

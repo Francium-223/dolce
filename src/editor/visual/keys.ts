@@ -5,6 +5,8 @@
 //
 // **`/` 不绑定**：留给歌词对位（歌词录入模式要用它，见 `docs/待办.md`「可视化编辑的后续」）。
 
+import { isTauriRuntime } from "../fileio";
+
 /** 编辑模式 = 方块光标罩住元素；插入模式 = 竖线光标落在两个元素之间。
  *  **不单独存**：由代码区选区推出（非空 = 编辑，空 = 插入），两侧因此不会不同步。 */
 export type VisualMode = "edit" | "insert";
@@ -34,6 +36,21 @@ export interface VisualAction {
   modes?: VisualMode[];
   /** 一句话说明（帮助页用） */
   help: string;
+  /** 网页版另用的键（浏览器自己占着桌面版那组：Ctrl+G 查找下一个、Ctrl+L 地址栏、Ctrl/⌘+1–8 切标签……）；缺省两边一样 */
+  web?: { keys: KeyBinding[]; keyText: string };
+}
+
+/** 网页版（不在 Tauri 外壳里）：取 `web` 那组键 */
+const isWeb = (): boolean => !isTauriRuntime();
+
+/** 这个动作在当前运行环境下的键 */
+export function keysOf(a: VisualAction): KeyBinding[] {
+  return isWeb() && a.web ? a.web.keys : a.keys;
+}
+
+/** 这个动作在当前运行环境下怎么写（菜单、面板提示用；帮助表两组都列） */
+export function keyTextOf(a: VisualAction): string {
+  return isWeb() && a.web ? a.web.keyText : a.keyText;
 }
 
 export const VISUAL_ACTIONS: readonly VisualAction[] = [
@@ -49,6 +66,17 @@ export const VISUAL_ACTIONS: readonly VisualAction[] = [
     help: "选区往前多罩一个元素" },
   { id: "nav.extendNext", label: "向后扩选", group: "移动与选择", keys: [{ key: "ArrowRight", shift: true }], keyText: "Shift+→",
     help: "选区往后多罩一个元素" },
+  { id: "nav.measPrev", label: "上一小节", group: "移动与选择", keys: [{ key: "ArrowLeft", mod: true }], keyText: "Ctrl/⌘+←",
+    help: "跳到本小节开头；已在开头就跳到上一小节开头（编辑模式选中那里的第一个元素，插入模式光标落在它前面）" },
+  { id: "nav.measNext", label: "下一小节", group: "移动与选择", keys: [{ key: "ArrowRight", mod: true }], keyText: "Ctrl/⌘+→",
+    help: "跳到下一小节开头" },
+  { id: "nav.extendMeasNext", label: "向后扩选一小节", group: "移动与选择", keys: [{ key: "ArrowRight", mod: true, shift: true }], keyText: "Ctrl/⌘+Shift+→",
+    help: "选区往后扩到下一小节末尾" },
+  { id: "nav.extendMeasPrev", label: "向前扩选一小节", group: "移动与选择", keys: [{ key: "ArrowLeft", mod: true, shift: true }], keyText: "Ctrl/⌘+Shift+←",
+    help: "选区往前扩到上一小节开头" },
+  { id: "nav.gotoMeasure", label: "跳到小节…", group: "移动与选择", keys: [{ key: "g", mod: true }], keyText: "Ctrl/⌘+G",
+    web: { keys: [{ key: "g", code: "KeyG", alt: true }], keyText: "Alt+G" },
+    help: "输入小节号跳过去（多声部时在当前声部里数；小节号同右上角读数）" },
   { id: "sel.all", label: "全选", group: "移动与选择", keys: [{ key: "a", mod: true }], keyText: "Ctrl/⌘+A",
     help: "谱面有焦点时选中全曲（代码区有焦点时照旧全选文本）" },
   { id: "nav.home", label: "行首", group: "移动与选择", keys: [{ key: "Home" }], keyText: "Home",
@@ -156,13 +184,13 @@ export function keyHit(ev: KeyboardEvent): { action: VisualAction; key: string }
   const key = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;
   // 先认按物理键的（Alt 组合）：Windows 上 Alt+1 的 `key` 仍是「1」，先走字符那一轮就被当成改唱名
   for (const a of VISUAL_ACTIONS) {
-    for (const k of a.keys) {
+    for (const k of keysOf(a)) {
       if (!k.code || ev.code !== k.code || !!k.mod !== mod || !!k.alt !== ev.altKey || !!k.shift !== ev.shiftKey) continue;
       return { action: a, key: k.key };
     }
   }
   for (const a of VISUAL_ACTIONS) {
-    for (const k of a.keys) {
+    for (const k of keysOf(a)) {
       if (k.code) continue;
       if (k.alt !== undefined && k.alt !== ev.altKey) continue;
       if (k.key.toLowerCase() !== key.toLowerCase()) continue;

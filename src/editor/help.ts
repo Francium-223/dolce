@@ -338,6 +338,7 @@ const VISUAL_TOPICS: Topic[] = [
     title: "选中与移动",
     body: [
       "`←` / `→` 在音符、增时线、小节线、换行符之间逐个移动；`Shift+←` / `Shift+→` 扩大选区；`Home` / `End` 跳到谱面上这一行的头尾。",
+      "`Ctrl/⌘+←` / `Ctrl/⌘+→` 按小节跳（跳到小节开头），加 `Shift` 按小节扩选；`Ctrl/⌘+G`（网页版 `Alt+G`，浏览器占着 `Ctrl+G`）输入小节号跳过去，多声部时在当前声部里数。",
       "`Shift` + 点击：从当前选区一直选到点中的音符。",
       "**双击小节里的空白**选中整小节（单击空白仍是落插入光标）；**从空白处按住拖动**拉出一个框，松开时框里的音符连同中间的小节线整段选中（从音符、文字上起拖不会开框）；谱面有焦点时 `Ctrl/⌘+A` 选中全曲。",
       "选中音符时，排版区标题栏左侧显示它的读数：（多声部时先写声部）第几小节第几拍、音名与唱名、时值，数拍、核对音高不用回头看源码。",
@@ -477,7 +478,7 @@ function visualShortcutTable(): HTMLElement {
     for (const a of actions) {
       const tr = el("tr");
       const mode = a.modes ? (a.modes[0] === "edit" ? "编辑模式" : "插入模式") : "";
-      tr.append(el("td", undefined, a.label), el("td", undefined, a.keyText), el("td", undefined, [a.help, mode && `（仅${mode}）`].join("")));
+      tr.append(el("td", undefined, a.label), el("td", undefined, a.web ? `${a.keyText}（网页版 ${a.web.keyText}）` : a.keyText), el("td", undefined, [a.help, mode && `（仅${mode}）`].join("")));
       table.append(tr);
     }
   }

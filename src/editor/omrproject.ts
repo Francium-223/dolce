@@ -98,7 +98,7 @@ export function unpackProject(bytes: Uint8Array): ProjectSnapshot {
     throw new Error("识别项目的 manifest.json 坏了");
   }
   if (typeof manifest?.version !== "number") throw new Error("识别项目的 manifest.json 没有版本号");
-  if (manifest.version > PROJECT_VERSION) throw new Error("这个识别项目是新版本存的，请升级 jpeditor 后再打开");
+  if (manifest.version > PROJECT_VERSION) throw new Error("这个识别项目是新版本存的，请升级悦谱（Dolce）后再打开");
   if (!(["jianpu", "staff", "vector"] as unknown[]).includes(manifest.kind)) throw new Error("识别项目的识别路认不出：" + String(manifest.kind));
   if (!(["jpwabc", "pu", "123", "abc", "musicxml"] as unknown[]).includes(manifest.docFormat)) throw new Error("识别项目的谱格式认不出：" + String(manifest.docFormat));
   if (!Array.isArray(manifest.sources)) manifest.sources = [];

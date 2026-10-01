@@ -1,12 +1,12 @@
-# jpeditor
+# Dolce
 
 [中文](README.md) | **English**
 
-> An open-source editor and typesetter for **jianpu** (Chinese numbered musical notation): write, recognize,
-> typeset, play back and export scores — in the browser with nothing to install, or as a Windows / macOS desktop app.
+> **Dolce** (悦谱) is an open-source editor and typesetter for **jianpu** (Chinese numbered musical notation) and
+> staff notation: write, recognize, typeset, play back and export scores — in the browser with nothing to install, or as a Windows / macOS desktop app.
 
-[![Release](https://img.shields.io/github/v/release/lodebar2026/jpeditor?display_name=tag)](https://github.com/lodebar2026/jpeditor/releases)
-[![Live demo](https://img.shields.io/badge/%F0%9F%8C%90%20Live%20demo-online-2b6cb0)](https://lodebar2026.github.io/jpeditor/)
+[![Release](https://img.shields.io/github/v/release/lodebar2026/dolce?display_name=tag)](https://github.com/lodebar2026/dolce/releases)
+[![Live demo](https://img.shields.io/badge/%F0%9F%8C%90%20Live%20demo-online-2b6cb0)](https://lodebar2026.github.io/dolce/en/)
 ![Platform](https://img.shields.io/badge/platform-Web%20%7C%20macOS%20%7C%20Windows-555)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -19,11 +19,11 @@ Lyrics sit directly under the notes.
 
 | | Where | Notes |
 | :-: | --- | --- |
-| 🌐 | **[Live demo](https://lodebar2026.github.io/jpeditor/)** | Runs in the browser, nothing to install |
-| 🍎 | **[macOS download](https://github.com/lodebar2026/jpeditor/releases/latest)** (`.dmg`, Apple Silicon) | If macOS says the app "is damaged", see [below](#install) |
-| 🪟 | **[Windows download](https://github.com/lodebar2026/jpeditor/releases/latest)** (`x64-setup.exe`) | Installer for Windows 10/11 x64 |
+| 🌐 | **[Live demo](https://lodebar2026.github.io/dolce/en/)** | Runs in the browser, nothing to install |
+| 🍎 | **[macOS download](https://github.com/lodebar2026/dolce/releases/latest)** (`.dmg`, Apple Silicon) | If macOS says the app "is damaged", see [below](#install) |
+| 🪟 | **[Windows download](https://github.com/lodebar2026/dolce/releases/latest)** (`x64-setup.exe`) | Installer for Windows 10/11 x64 |
 
-The interface is in Chinese.
+The interface is available in **English and Chinese**: it follows your browser language and can be switched any time in **Settings → Other → Language**. English landing page: <https://lodebar2026.github.io/dolce/en/>.
 
 ![Start page](docs/screenshot-start.png)
 
@@ -53,6 +53,7 @@ The interface is in Chinese.
   whose beats don't add up to the time signature are outlined in red.
 - **Simplified ↔ Traditional Chinese conversion** covers lyrics, titles and credits and leaves the music code
   untouched.
+- **English and Chinese interface**, including the in-app Help; switch without reloading.
 
 **Optical music recognition (local, offline)**
 - **Jianpu recognition.** Drop in a photo, screenshot or scanned PDF of a jianpu score and it is recognized into
@@ -147,8 +148,8 @@ In the lyrics, CJK characters take one note each and need no spaces. Latin words
 
 | Format | Extensions | Open | Edit | Save / Save As | Notes |
 | --- | --- | :-: | :-: | :-: | --- |
-| 123 | `.123` | ✅ | ✅ | ✅ | Primary jianpu format, UTF-8 |
-| JP-Word | `.jpwabc` | ✅ | ✅ | ✅ | UTF-16LE with BOM, compatible with JP-Word |
+| 123 | `.123` | ✅ | ✅ | ✅ | Primary jianpu format |
+| JP-Word | `.jpwabc` | ✅ | ✅ | ✅ | Opens and saves files JP-Word can read |
 | Plain-text jianpu | `.pu` `.fq` `.jps` `.txt` | ✅ | ✅ | ✅ | Fanqie and Shigeben dialects, detected automatically |
 | ABC | `.abc` | ✅ | ✅ | ✅ | Native parser: voices, repeats, endings, chords, ornaments… |
 | MusicXML | `.xml` `.musicxml` | ✅ | ✅ (directly on the score) | ✅ | Notes, measures, lyrics and titles can be edited on the score in every view; a single-voice score can also be converted to 123 etc. for text editing |
@@ -157,22 +158,19 @@ In the lyrics, CJK characters take one note each and need no spaces. Latin words
 
 ## Install
 
-- **Web** (no install): <https://lodebar2026.github.io/jpeditor/>
-- **macOS** (Apple Silicon, `jpeditor_<version>_aarch64.dmg`) and **Windows** (x64,
-  `jpeditor_<version>_x64-setup.exe`): [latest release](https://github.com/lodebar2026/jpeditor/releases/latest)
-- **"jpeditor is damaged" on macOS?** The app is not signed with an Apple developer certificate. Move it to
+- **Web** (no install): <https://lodebar2026.github.io/dolce/en/>
+- **macOS** (Apple Silicon, `Dolce_<version>_aarch64.dmg`) and **Windows** (x64,
+  `Dolce_<version>_x64-setup.exe`): [latest release](https://github.com/lodebar2026/dolce/releases/latest)
+- **"Dolce is damaged" on macOS?** The app is not signed with an Apple developer certificate. Move it to
   Applications, then run this once in Terminal:
 
   ```
-  xattr -cr /Applications/jpeditor.app
+  xattr -cr /Applications/Dolce.app
   ```
 
   More details (in Chinese) are in [docs/macOS-打不开.md](docs/macOS-打不开.md).
 
 ## Development
-
-jpeditor is built with Tauri 2, TypeScript and SVG. Typesetting, rendering, the score model and editing all live
-in the TypeScript front end. Rust is used only for native acceleration.
 
 The developer docs are in Chinese:
 - Tech stack, build commands, layering and module map: [docs/架构.md](docs/架构.md)

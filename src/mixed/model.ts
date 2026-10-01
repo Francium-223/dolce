@@ -3125,7 +3125,7 @@ export class StaffLayout {
     for (const sw of this.song.identification?.software ?? []) {
       if (sw.includes("Sibelius")) e = Encoder.Sibelius;
       else if (sw.includes("MuseScore")) e = Encoder.MuseScore;
-      else if (sw === "jpeditor") e = Encoder.Jpeditor;
+      else if (sw === "Dolce" || sw === "jpeditor") e = Encoder.Jpeditor; // 本应用写出的（改名前写 jpeditor）
     }
     return e;
   }

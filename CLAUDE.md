@@ -1,6 +1,8 @@
-# jpeditor-web
+# 悦谱 Dolce
 
-简谱（JP-Word / `.jpwabc`）与文本谱的排版与编辑器：Tauri 2 + TypeScript + SVG。
+简谱与五线谱的编辑、识谱与排版（123 / JP-Word `.jpwabc` / 文本谱 / ABC / MusicXML）：Tauri 2 + TypeScript + SVG。
+旧名 jpeditor：仓库、在线版地址已改 `dolce`；**有意保留旧名**的只有桌面版标识符 `co.endao.jpeditor`、Cargo 包名、
+localStorage 键前缀 `jpeditor-*` 与草稿库 IndexedDB 名（改了就丢用户的设置与草稿），以及 MusicXML 写出端认旧的 `<software>jpeditor`。
 排版、渲染、模型、编辑全在前端 TS；Rust 只做原生加速（见架构决策 A3/A4）。
 
 文档分四层，**动某一块之前先翻对应那层**——那些阈值和判据多半是拿具体曲子换来的，别照直觉改：
@@ -25,6 +27,7 @@
   各模块页的「回归」一节同此。
 - 提交信息用简要中文，不要 `Co-Authored-By` 尾注。
 - TS 严格模式 + `noUnusedLocals/Parameters`。
+- **界面文字走 `t()` / `data-i18n`**（`src/i18n/`），不在界面代码里写中文字面量；新键 zh.ts、en.ts 两边同加，见 [编辑器](docs/模块/编辑器.md)「界面语言」。
 - **PUA 码位用 `String.fromCharCode(0x...)`**，切勿在源码里写字面 PUA 字符（Write 工具会损坏字节）。
 - 数 XML 元素的正则一律写 `<name[ >]`（否则 `<note>` 会命中 `<notehead>`）。
 - **Bravura（SMuFL）的字体盒不能当墨迹盒用**：它的全局 ascent−descent 约 4 em，按字体度量算高度、

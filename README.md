@@ -1,11 +1,11 @@
-# jpeditor
+# 悦谱 Dolce
 
 **中文** | [English](README.en.md)
 
-> 开源的简谱编辑与排版器：写谱、识谱、排版、试听、导出，浏览器即开即用，也有 Windows / macOS 桌面版。
+> 开源的简谱与五线谱编辑、识谱与排版工具：写谱、识谱、排版、试听、导出，浏览器即开即用，也有 Windows / macOS 桌面版；界面中英双语。
 
-[![Release](https://img.shields.io/github/v/release/lodebar2026/jpeditor?display_name=tag)](https://github.com/lodebar2026/jpeditor/releases)
-[![Live demo](https://img.shields.io/badge/%F0%9F%8C%90%20%E5%9C%A8%E7%BA%BF%E4%BD%BF%E7%94%A8-online-2b6cb0)](https://lodebar2026.github.io/jpeditor/)
+[![Release](https://img.shields.io/github/v/release/lodebar2026/dolce?display_name=tag)](https://github.com/lodebar2026/dolce/releases)
+[![Live demo](https://img.shields.io/badge/%F0%9F%8C%90%20%E5%9C%A8%E7%BA%BF%E4%BD%BF%E7%94%A8-online-2b6cb0)](https://lodebar2026.github.io/dolce/)
 ![Platform](https://img.shields.io/badge/platform-Web%20%7C%20macOS%20%7C%20Windows-555)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
@@ -13,9 +13,9 @@
 
 | | 入口 | 说明 |
 | :-: | --- | --- |
-| 🌐 | **[在线使用](https://lodebar2026.github.io/jpeditor/)** | 免安装，浏览器直接打开 |
-| 🍎 | **[macOS 版下载](https://github.com/lodebar2026/jpeditor/releases/latest)**（`.dmg`，Apple Silicon） | 首次打开提示“已损坏”见 [macOS 打不开](docs/macOS-打不开.md) |
-| 🪟 | **[Windows 版下载](https://github.com/lodebar2026/jpeditor/releases/latest)**（`x64-setup.exe`） | 安装包，Windows 10/11 x64 |
+| 🌐 | **[在线使用](https://lodebar2026.github.io/dolce/)** | 免安装，浏览器直接打开 |
+| 🍎 | **[macOS 版下载](https://github.com/lodebar2026/dolce/releases/latest)**（`.dmg`，Apple Silicon） | 首次打开提示“已损坏”见 [macOS 打不开](docs/macOS-打不开.md) |
+| 🪟 | **[Windows 版下载](https://github.com/lodebar2026/dolce/releases/latest)**（`x64-setup.exe`） | 安装包，Windows 10/11 x64 |
 
 ![首页](docs/screenshot-start.png)
 
@@ -33,6 +33,7 @@
 - 点选音符或歌词即双向定位到源码；拍数与拍号对不上的小节标红。
 - **声部面板**（合唱谱）：增删、排序、改名、谱号、拆分 / 合并闭合谱、歌词复制；试听静音、独奏（练声部）、各声部音量。
 - **简繁转换**：整篇转歌词、标题、词曲信息，乐谱代码不动。
+- **中英双语界面**（含帮助）：按浏览器语言自动选择，「设置 → 其他 → 界面语言」随时切换、无需刷新；英文版入口 <https://lodebar2026.github.io/dolce/en/>。
 
 **识谱（OMR，本地离线）**
 - 拖入简谱**照片、截图或扫描 PDF**，识别成 123 简谱再排版：音符、时值、歌词逐字对位、页眉标题 / 词曲 / 调号，
@@ -94,25 +95,24 @@ w:我罪已_得赦免_
 
 | 格式 | 扩展名 | 打开 | 编辑 | 保存 / 另存为 | 说明 |
 | --- | --- | :-: | :-: | :-: | --- |
-| 123 | `.123` | ✅ | ✅ | ✅ | 简谱主格式，UTF-8 |
-| JP-Word | `.jpwabc` | ✅ | ✅ | ✅ | UTF-16LE + BOM，与 JP-Word 互通 |
+| 123 | `.123` | ✅ | ✅ | ✅ | 简谱主格式 |
+| JP-Word | `.jpwabc` | ✅ | ✅ | ✅ | 与 JP-Word 互通 |
 | 文本谱 | `.pu` `.fq` `.jps` `.txt` | ✅ | ✅ | ✅ | 番茄简谱脚本、诗歌本文本谱（「动态谱」），自动识别方言 |
-| ABC | `.abc` | ✅ | ✅ | ✅ | 原生解析，多声部、反复、房号、和弦、装饰音等 |
+| ABC | `.abc` | ✅ | ✅ | ✅ | 多声部、反复、房号、和弦、装饰音等 |
 | MusicXML | `.xml` `.musicxml` | ✅ | ✅（谱面上直接改） | ✅ | 各档都能在谱面上改音符、小节、歌词与标题；单声部谱也可转成 123 等文本格式编辑 |
 | 图片 / PDF | `.png` `.jpg` `.webp` `.pdf` | 识谱 | — | — | 简谱图片与扫描 PDF；五线谱 PDF、扫描或拍照的五线谱 |
 | 识别项目 | `.jpomr` | ✅ | ✅ | ✅ | 原图 + 识别结果 + 在改的谱，重开不重新识别 |
 
 ## 安装
 
-- **浏览器在线版**（免安装）：<https://lodebar2026.github.io/jpeditor/>
-- **macOS 版**（Apple Silicon，`jpeditor_<版本>_aarch64.dmg`）与 **Windows 版**（x64，`jpeditor_<版本>_x64-setup.exe`）：
-  [最新 Release](https://github.com/lodebar2026/jpeditor/releases/latest)
+- **浏览器在线版**（免安装）：<https://lodebar2026.github.io/dolce/>
+- **macOS 版**（Apple Silicon，`Dolce_<版本>_aarch64.dmg`）与 **Windows 版**（x64，`Dolce_<版本>_x64-setup.exe`）：
+  [最新 Release](https://github.com/lodebar2026/dolce/releases/latest)
 - macOS 首次打开提示“已损坏”或“无法验证开发者”？应用未签名，属正常现象，一条命令即可解决，见
   [docs/macOS-打不开.md](docs/macOS-打不开.md)。
 
 ## 开发
 
-Tauri 2 + TypeScript + SVG：排版、渲染、模型、编辑都在前端 TypeScript，Rust 只做原生加速。
 技术栈、构建命令、分层与模块地图见 [docs/架构.md](docs/架构.md)；需求与各模块说明见 [docs/](docs/)。
 还要做什么见 [docs/待办.md](docs/待办.md)。回归脚本与测试语料不在本仓库。
 

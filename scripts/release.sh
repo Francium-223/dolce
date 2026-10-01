@@ -10,8 +10,8 @@ set -euo pipefail
 VER="${1:?用法: scripts/release.sh <version> [notes...]}"
 shift || true
 TAG="v${VER}"
-REPO="lodebar2026/jpeditor"
-PAGES_URL="https://lodebar2026.github.io/jpeditor/"
+REPO="lodebar2026/dolce"
+PAGES_URL="https://lodebar2026.github.io/dolce/"
 cd "$(dirname "$0")/.."
 
 # 约定：本项目提交/推送用 lodebar2026 帐号。不切换 gh 的活跃帐号，只在本脚本内导出它的 token：
@@ -53,7 +53,7 @@ gh run watch "${RUN_ID}" --repo "${REPO}" --exit-status || true
 # 改名/改 base 后最容易出的坑：页面还引用旧前缀的 /assets/*，全部 404、页面白屏但 run 仍绿。
 echo "==> 校验 Pages 部署（${PAGES_URL}）…"
 HOST="$(printf '%s' "${PAGES_URL}" | sed -E 's#(https?://[^/]+).*#\1#')"      # https://lodebar2026.github.io
-BASEPATH="$(printf '%s' "${PAGES_URL}" | sed -E 's#https?://[^/]+##')"        # /jpeditor/
+BASEPATH="$(printf '%s' "${PAGES_URL}" | sed -E 's#https?://[^/]+##')"        # /dolce/
 check_pages() {
   local html paths p code bad=0
   # 部署完成后 CDN 传播可能有几秒延迟，带缓存穿透参数重试

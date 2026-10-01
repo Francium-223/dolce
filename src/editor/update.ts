@@ -11,10 +11,10 @@ import { showConfirmDialog } from "./dialogs";
 import { isTauriRuntime } from "./fileio";
 import { t } from "../i18n";
 
-const REPO = "lodebar2026/jpeditor";
+const REPO = "lodebar2026/dolce";
 const LATEST_API = `https://api.github.com/repos/${REPO}/releases/latest`;
 const RELEASES_PAGE = `https://github.com/${REPO}/releases/latest`;
-export const HOMEPAGE = "https://lodebar2026.github.io/jpeditor/";
+export const HOMEPAGE = "https://lodebar2026.github.io/dolce/";
 
 /** 构建期由 vite define 注入（取 package.json 的 version）。 */
 export const APP_VERSION = __APP_VERSION__;

@@ -1,4 +1,4 @@
-# jpeditor
+# Dolce（悦谱）
 
 > 开源的简谱编辑与排版器。左侧源码、右侧实时简谱，也能直接在谱面上改音符。
 > 支持 123 简谱格式（本项目的简谱主格式，简谱的 ABC 方言）、JP-Word `.jpwabc`、
@@ -38,10 +38,10 @@
 
 ## 123 格式 / The 123 format
 
-123 是 jpeditor 的简谱主格式（扩展名 `.123`，UTF-8 纯文本）：简谱的 ABC 方言。字段头（`X:` `T:` `C:` `K:` `M:` `Q:` `w:` `V:` `P:`）、
+123 是悦谱的简谱主格式（扩展名 `.123`，UTF-8 纯文本）：简谱的 ABC 方言。字段头（`X:` `T:` `C:` `K:` `M:` `Q:` `w:` `V:` `P:`）、
 反复、房号、多声部、演唱顺序沿用 ABC 记谱；音乐体换成简谱数字。
 
-123 is jpeditor's primary jianpu format (`.123`, UTF-8 plain text), a jianpu dialect of ABC notation: ABC's
+123 is Dolce's primary jianpu format (`.123`, UTF-8 plain text), a jianpu dialect of ABC notation: ABC's
 header fields, repeats, endings, voices and play order, with jianpu digits as the note body.
 
 ```
@@ -60,16 +60,16 @@ w:奇异恩_典，何等甘甜，
 - `w:` 歌词：一行曲后紧跟它的各段词，汉字连写每字一音，`_` 一字多音、`/` 跳过音符，标点不占格；`<1.>` 印段号。
 - 和弦写在音符前（`F 1`）；记号 `!fermata!` / `!延长!` / `!yc!` 等几种写法都认；`{2_}` 倚音。
 - `$` 换行、`$$` 换页；`V:1` `V:2` 多声部；`I:playorder` 精确演唱顺序。
-- 完整规范 / Full spec: https://github.com/lodebar2026/jpeditor/blob/main/docs/%E6%A0%BC%E5%BC%8F/123%E6%A0%BC%E5%BC%8F.md
+- 完整规范 / Full spec: https://github.com/lodebar2026/dolce/blob/main/docs/%E6%A0%BC%E5%BC%8F/123%E6%A0%BC%E5%BC%8F.md
 
 ## 链接 / Links
 
-- 在线试用（中文界面）/ Live app (Chinese UI): https://lodebar2026.github.io/jpeditor/
-- Live app (English UI): https://lodebar2026.github.io/jpeditor/en/
-- 代码仓库 / Repository: https://github.com/lodebar2026/jpeditor
-- 说明（中文）/ README (Chinese): https://github.com/lodebar2026/jpeditor/blob/main/README.md
-- README (English): https://github.com/lodebar2026/jpeditor/blob/main/README.en.md
-- 下载桌面版 / Releases: https://github.com/lodebar2026/jpeditor/releases
+- 在线试用（中文界面）/ Live app (Chinese UI): https://lodebar2026.github.io/dolce/
+- Live app (English UI): https://lodebar2026.github.io/dolce/en/
+- 代码仓库 / Repository: https://github.com/lodebar2026/dolce
+- 说明（中文）/ README (Chinese): https://github.com/lodebar2026/dolce/blob/main/README.md
+- README (English): https://github.com/lodebar2026/dolce/blob/main/README.en.md
+- 下载桌面版 / Releases: https://github.com/lodebar2026/dolce/releases
 
 ## 许可 / License
 

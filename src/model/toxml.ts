@@ -861,7 +861,7 @@ export function scoreDocToMusicXml(doc: ScoreDoc, options: ToXmlOptions = {}): s
     for (const c of song.identification?.creators ?? []) o.text("creator", c.text, ` type="${escAttr(c.type)}"`);
     if (song.identification?.rights) o.text("rights", song.identification.rights);
     o.open("encoding");
-    for (const sw of song.identification?.software ?? ["jpeditor"]) o.text("software", sw);
+    for (const sw of song.identification?.software ?? ["Dolce"]) o.text("software", sw);
     o.close();
     // 扩展 meta（`model/metakeys.ts`）。schema 顺序：creator*, rights*, encoding?, source?, relation*, miscellaneous?
     const meta = Object.entries(song.meta ?? {});

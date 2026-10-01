@@ -2,10 +2,10 @@
 // 占位写 {name}，由 t(key, { name }) 替换。
 export const zh = {
   // 应用与页头
-  "app.windowTitle": "简谱编辑器",
+  "app.windowTitle": "悦谱",
   "header.home": "返回开始",
-  "header.brandAria": "jpeditor 简谱编辑器",
-  "header.subtitle": "简谱工作台",
+  "header.brandAria": "悦谱 Dolce",
+  "header.subtitle": "乐谱工作台",
   "header.save": "保存",
   "header.saveAs": "另存为",
   "header.export": "导出",
@@ -476,7 +476,7 @@ export const zh = {
   "feedback.version": "版本：{v}",
   "feedback.system": "系统：{v}",
   "feedback.date": "日期：{v}",
-  "feedback.subject": "简谱编辑器反馈 v{v}",
+  "feedback.subject": "悦谱 Dolce 反馈 v{v}",
   "feedback.body": "请描述问题或建议：",
   "update.title": "发现新版本",
   "update.body": "当前版本 {cur}，最新版本 {latest}。是否打开下载页面？",
@@ -590,7 +590,7 @@ export const zh = {
   "help.onlyMode": "（仅{mode}）",
   "help.modeEdit": "编辑模式",
   "help.modeInsert": "插入模式",
-  "about.name": "简谱编辑器 jpeditor",
+  "about.name": "悦谱 Dolce",
   "about.version": "版本 {v}",
   "about.home": "项目主页",
   "about.check": "检查更新",

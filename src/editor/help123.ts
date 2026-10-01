@@ -19,7 +19,7 @@ export interface NotationExample {
 
 /** 规范全文（界面里「完整规范」按钮打开的地址）。 */
 export const SPEC_123_URL =
-  "https://github.com/lodebar2026/jpeditor/blob/main/docs/%E6%A0%BC%E5%BC%8F/123%E6%A0%BC%E5%BC%8F.md";
+  "https://github.com/lodebar2026/dolce/blob/main/docs/%E6%A0%BC%E5%BC%8F/123%E6%A0%BC%E5%BC%8F.md";
 
 export const INTRO_123 =
   "**123** 是本项目的**简谱主格式**：沿用 ABC 记谱的字段头（`X:` `T:` `K:` `M:` `w:` …）与结构，音乐体换成简谱数字。" +

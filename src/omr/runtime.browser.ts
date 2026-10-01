@@ -8,7 +8,7 @@ import type { OmrRunOut, OmrRuntime } from "./runtime";
 import ortWasmUrl from "onnxruntime-web/ort-wasm-simd-threaded.wasm?url";
 import ortMjsUrl from "onnxruntime-web/ort-wasm-simd-threaded.mjs?url";
 
-const BASE = import.meta.env.BASE_URL; // "/" 或 "/jpeditor/"
+const BASE = import.meta.env.BASE_URL; // "/" 或 "/dolce/"
 const REC_URL = `${BASE}redist/ocr/ch_PP-OCRv6_small_rec_infer.onnx`;
 const DICT_URL = `${BASE}redist/ocr/ppocrv6_dict.txt`;
 const DET_URL = `${BASE}redist/ocr/ch_PP-OCRv4_det_infer.onnx`;

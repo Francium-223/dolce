@@ -3,9 +3,9 @@ import type { MsgKey } from "./zh";
 
 export const en: Record<MsgKey, string> = {
   // 应用与页头
-  "app.windowTitle": "Jianpu Editor",
+  "app.windowTitle": "Dolce",
   "header.home": "Home",
-  "header.brandAria": "jpeditor jianpu editor",
+  "header.brandAria": "Dolce",
   "header.subtitle": "Score Workbench",
   "header.save": "Save",
   "header.saveAs": "Save As",
@@ -477,7 +477,7 @@ export const en: Record<MsgKey, string> = {
   "feedback.version": "Version: {v}",
   "feedback.system": "System: {v}",
   "feedback.date": "Date: {v}",
-  "feedback.subject": "jpeditor feedback v{v}",
+  "feedback.subject": "Dolce feedback v{v}",
   "feedback.body": "Please describe the problem or suggestion:",
   "update.title": "New version available",
   "update.body": "You have {cur}; the latest is {latest}. Open the download page?",
@@ -591,7 +591,7 @@ export const en: Record<MsgKey, string> = {
   "help.onlyMode": " ({mode} only)",
   "help.modeEdit": "Edit mode",
   "help.modeInsert": "Insert mode",
-  "about.name": "jpeditor — Jianpu Editor",
+  "about.name": "Dolce",
   "about.version": "Version {v}",
   "about.home": "Homepage",
   "about.check": "Check for updates",

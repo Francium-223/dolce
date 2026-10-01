@@ -1,7 +1,7 @@
 [package]
 name = "jpeditor"
 version = "0.7.7"
-description = "简谱编辑器"
+description = "悦谱 Dolce：简谱与五线谱的编辑、识谱与排版"
 authors = []
 edition = "2021"
 

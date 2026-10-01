@@ -184,8 +184,40 @@ export class OmrController implements FormatSource {
 
   /** 用上次的输入按新的识别类型重识别（手改过先问）。 */
   private async rerecognize(): Promise<void> {
-    if (this.emitted !== null && this.host.getText() !== this.emitted && !(await confirmDiscardEdits())) return;
+    if (this.editedSinceRecognition() && !(await confirmDiscardEdits())) return;
     await this.recognizeFiles(this.lastInputs);
+  }
+
+  /** 识别完之后谱面上改过没有（简谱、五线谱两路各记各的「刚识别出来」那份）。 */
+  private editedSinceRecognition(): boolean {
+    const t = this.host.getText();
+    return (this.emitted !== null && t !== this.emitted) || (this.staffEmitted !== null && t !== this.staffEmitted);
+  }
+
+  // ---------------- 原图页面板（`omrpages.ts`） ----------------
+  private pagesBtn: HTMLButtonElement | null = null;
+
+  setPagesBtn(btn: HTMLButtonElement): void {
+    this.pagesBtn = btn;
+    btn.addEventListener("click", () => void this.showPages());
+  }
+
+  /** 有识别会话（有原图）时才给「原图页」 */
+  private syncPagesBtn(): void {
+    this.host.setContextControl(this.pagesBtn, this.sessionKind !== null && this.lastInputs.length > 0);
+  }
+
+  private async showPages(): Promise<void> {
+    const { showPagesDialog } = await import("./omrpages");
+    showPagesDialog(this.lastInputs, (files) => void this.rerunWith(files));
+  }
+
+  /** 按改过的原图列表重识别（手改过先问）。 */
+  async rerunWith(files: RecogInput[]): Promise<boolean> {
+    if (this.editedSinceRecognition() && !(await confirmDiscardEdits())) return false;
+    const ok = await this.recognizeFiles(files);
+    this.syncPagesBtn();
+    return ok;
   }
 
   private progress(text: string): void {
@@ -200,6 +232,12 @@ export class OmrController implements FormatSource {
    * 简谱一次识别一张（几张时只认第一张，状态栏说明）。
    */
   async recognizeFiles(files: readonly RecogInput[]): Promise<boolean> {
+    const ok = await this.recognizeFilesInner(files);
+    this.syncPagesBtn();
+    return ok;
+  }
+
+  private async recognizeFilesInner(files: readonly RecogInput[]): Promise<boolean> {
     if (!files.length) return false;
     this.lastInputs = [...files];
     const first = files[0]!;
@@ -304,6 +342,7 @@ export class OmrController implements FormatSource {
       this.emitted = s.emitted;
       this.sessionKind = "jianpu";
       this.host.setContextControl(this.kindField(), true);
+      this.syncPagesBtn();
       await this.toggle(); // 进原图对照，同刚识别完
       return;
     }
@@ -313,6 +352,7 @@ export class OmrController implements FormatSource {
     this.staffEmitted = s.emitted;
     this.sessionKind = s.kind;
     this.host.setContextControl(this.kindField(), true);
+    this.syncPagesBtn();
     if (s.kind === "staff" && this.lastInputs.length) {
       if (this.btnEl) this.btnEl.textContent = "原图对照";
       this.host.setContextControl(this.btnEl, true);
@@ -1056,6 +1096,7 @@ export class OmrController implements FormatSource {
     if (this.btnEl) this.btnEl.textContent = "原图对照";
     this.host.setContextControl(this.btnEl, false);
     this.host.setContextControl(this.followBtn, false);
+    this.host.setContextControl(this.pagesBtn, false);
     this.host.setContextControl(this.kindField(), false);
     this.staffResult = null;
     this.sessionKind = null;

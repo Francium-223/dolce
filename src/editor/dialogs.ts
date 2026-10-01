@@ -13,6 +13,7 @@ function modal(
   onOk: () => void,
   onCancel?: () => void,
   extra?: { label: string; onClick: () => void },
+  okLabel = "确定",
 ): void {
   const overlay = document.createElement("div");
   overlay.className = "modal-overlay";
@@ -30,7 +31,7 @@ function modal(
   const ok = document.createElement("button");
   ok.type = "button";
   ok.className = "modal-button-primary";
-  ok.textContent = "确定";
+  ok.textContent = okLabel;
   const cancel = document.createElement("button");
   cancel.type = "button";
   cancel.textContent = "取消";
@@ -80,8 +81,8 @@ function modal(
 }
 
 /** 一张表单对话框：确定时调 `onOk`（取消什么也不做）。 */
-export function showFormDialog(title: string, body: HTMLElement, onOk: () => void): void {
-  modal(title, body, onOk);
+export function showFormDialog(title: string, body: HTMLElement, onOk: () => void, okLabel?: string): void {
+  modal(title, body, onOk, undefined, undefined, okLabel);
 }
 
 /** 是/否确认框。用同一套 modal 样式，别退回 window.confirm——桌面版观感对不上。 */

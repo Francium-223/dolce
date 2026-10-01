@@ -221,6 +221,8 @@ async function boot() {
     document.getElementById("sel-recog-kind-start") as HTMLSelectElement | null,
     document.getElementById("sel-recog-kind") as HTMLSelectElement | null,
   );
+  const pagesBtn = document.getElementById("btn-src-pages") as HTMLButtonElement | null;
+  if (pagesBtn) app.omr.setPagesBtn(pagesBtn);
   const followBtn = document.getElementById("btn-src-follow") as HTMLButtonElement | null;
   if (followBtn) app.omr.setFollowBtn(followBtn, document.getElementById("omr-follow"));
   const recogViewSel = document.getElementById("sel-recog-view") as HTMLSelectElement | null;

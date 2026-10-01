@@ -4528,27 +4528,40 @@ function extendKeyByStrokes(pg: SPage, ctx: Map<Staff, StaffContext>, bin: Binar
   const f = pick((r) => r.flats);
   const sh = pick((r) => r.sharps);
   if (!f.k && !sh.k) return;
-  const useSharp = sh.k > 0 && (!f.k || sh.m > f.m);
-  const k = useSharp ? sh.k : f.k;
+  // 升降两种都数出来时，取各行数出的总数多的那种
+  const total = (of: (r: (typeof rows)[number]) => Rect[]) => rows.reduce((a, r) => a + of(r).length, 0);
+  const useSharp = sh.k > 0 && (!f.k || total((r) => r.sharps) > total((r) => r.flats));
+  const { k, m } = useSharp ? sh : f;
   const code: SmuflName = useSharp ? "accidentalSharp" : "accidentalFlat";
-  const other: SmuflName = useSharp ? "accidentalFlat" : "accidentalSharp";
-  // **按块多认的也收回来**：只有一行比 k 多、而竖笔没有哪一行数过 k——多出来的是调号后面头一个音的临时记号
-  //（三博士歌一个升号，有一行按块读成三个，`shareKeySignature` 见别的行都是它的前缀就全页照它补）
-  const maxStroke = Math.max(...rows.map((r) => (useSharp ? r.sharps : r.flats).length));
-  const longer = rows.filter((r) => r.c.key.filter((q) => q.code === code).length > k);
-  if (maxStroke <= k && longer.length === 1) {
-    const c = longer[0].c;
-    c.key = c.key.filter((q) => q.code === code).slice(0, k);
-  }
-  for (const r of rows) {
-    const got = useSharp ? r.sharps : r.flats;
-    const c = r.c;
-    if (got.length < k || c.key.some((q) => q.code === other) || c.key.filter((q) => q.code === code).length >= k) continue;
-    c.key = got.slice(0, k).map((box, i) => {
+  const strokesOf = (r: (typeof rows)[number]) => (useSharp ? r.sharps : r.flats);
+  const countOf = (c: StaffContext) => c.key.filter((q) => q.code === code).length;
+  const setKey = (c: StaffContext, boxes: Rect[]) => {
+    c.key = boxes.map((box, i) => {
       const sym = makeSymObj(pg.objs.length + pg.segs.length + 1 + i, { box, code }, unit.height).sym;
       sym.addTag("Key");
       return sym;
     });
+  };
+  // **按块多认的收回来**：比 k 多的行只是少数（不到三分之一）、而竖笔没有哪一行数过 k——多出来的是调号后面
+  // 头一个音的临时记号（三博士歌一个升号，有一行按块读成三个，`shareKeySignature` 见别的行都是它的前缀就全页照它补）
+  const maxStroke = Math.max(...rows.map((r) => strokesOf(r).length));
+  const longer = rows.filter((r) => countOf(r.c) > k);
+  if (maxStroke <= k && longer.length && longer.length * 3 <= rows.length) for (const r of longer) r.c.key = r.c.key.filter((q) => q.code === code).slice(0, k);
+  // **过半的行都数到 k**：全页照它定——混着别种记号的行（主恩更多歌头一行「♯♭」）、一个都没认出的行也补上
+  const strong = m >= 2 && m * 2 >= rows.length;
+  for (const r of rows) {
+    const c = r.c;
+    const got = strokesOf(r);
+    const mixed = c.key.some((q) => q.code !== code);
+    if (!mixed && countOf(c) >= k) continue;
+    if (mixed && !strong) continue;
+    if (got.length >= k) setKey(c, got.slice(0, k));
+    else if (strong) {
+      // 自己没数全：从谱号右边起按固定间距摆 k 个（下游只按个数算变音、取最右那个的右缘）
+      const cb = c.clef!.box;
+      const x = got[0]?.x ?? cb.right + unit.space * 0.4;
+      setKey(c, Array.from({ length: k }, (_, i) => ({ x: x + i * unit.space * 0.85, y: c.staff.box.top, w: unit.space * 0.8, h: unit.space * 2.5 })));
+    }
   }
 }
 
@@ -4618,18 +4631,20 @@ function sharpsByStrokesLoose(bin: Binary, lineYs: number[], clef: Rect, bass: b
   const out: Rect[] = [];
   let lastX = x0;
   for (const g of groups) {
+    // 低音谱号的两个点上下叠着、隔着 F 线，抹宽容断之后是一根正落在 F 位置上的竖笔（C 大调的页每行数出一个升号）
+    if (bass && g.x0 < x0 + sp * 0.9) continue;
     if (out.length >= 7 || g.bottom - g.top > sp * 3.6) break;
     if ((g.x0 - lastX) / sp > (out.length ? 1.6 : 3.2)) break;
     const cy = (g.top + g.bottom) / 2;
     const w = g.x1 - g.x0 + 1;
-    // 并成一根粗笔的，左右两侧都要有横杠探出来的那道厚墨（降号、符干没有）
+    // 只量出一根的（另一根淡得不够高，或两根并成一根粗的），**左侧**要有横杠探出来的那道厚墨：
+    // 降号的肚子只在右侧、符干两侧都没有（只看右侧或任一侧，降号页上每行都数出两个「升号」）
     const fits =
-      w >= sp * 0.2 &&
       w <= sp * 1.0 &&
       // 头一个卡 0.5 格；后面的放到 1 格——伸出谱表的那半截（G、A 的上端）没有谱线托着、印得淡，
       // 量出来的中心往谱表里偏（道路真理生命歌第三个升号偏下 0.9 格）
       Math.abs((cy - fY) / sp - STEP[out.length]) <= (out.length ? 1 : 0.5) &&
-      (g.n === 2 || (thickRun(g.x0 - Math.round(sp * 0.15), cy) && thickRun(g.x1 + Math.round(sp * 0.15), cy)));
+      (g.n === 2 || thickRun(g.x0 - Math.round(sp * 0.15), cy));
     if (!fits) {
       // 头一个之前的杂笔（谱号的边角）跳过；串起来之后不合就停
       if (!out.length) continue;
@@ -4675,13 +4690,18 @@ function flatsByStrokes(bin: Binary, lineYs: number[], clef: Rect, bass: boolean
   };
   const out: Rect[] = [];
   let lastX = x0;
+  // 中间漏一根（淡得连 1 格的竖墨都凑不出）只许一次：后一根落在再下一个位置上、横向也正好隔着两个身位，就当中间那个在
+  //（是否劳倦歌四个降号，高音谱表缺头一个、低音谱表缺第二个）
+  let skipped = false;
+  let skipAt = -1;
+  const boxAt = (x: number, cy: number): Rect => ({ x: Math.round(x) - 1, y: Math.round(cy - sp * FLAT_STEM), w: Math.round(sp * 0.8), h: Math.round(sp * (FLAT_STEM + 0.5)) });
   for (const [i, k] of strokes.entries()) {
     if (out.length >= 7 || k.h > sp * 3.2) break;
     // 紧跟着一根差不多高的竖笔：那是升号的两根竖笔（赞美三一歌两个升号的头一根落在 B 的位置上，被数成一个降号）
     const nx = strokes[i + 1];
     if (nx && (nx.x0 - k.x1) / sp < 0.5 && nx.h >= sp * 1.8 && k.h >= sp * 1.8) break;
     const gap = (k.x0 - lastX) / sp;
-    if (out.length ? gap > 1.6 : gap > 3.2) break;
+    if (gap > (out.length ? 2.6 : 4.2)) break;
     // 紧挨着上一根的短笔是它肚子的右缘，跳过
     if (out.length && gap < 0.5) continue;
     // 按**肚子**对位：沿竖笔自上而下找「右侧一格见方的墨比左侧多得最多」的那一行，就是肚子中心。
@@ -4693,15 +4713,20 @@ function flatsByStrokes(bin: Binary, lineYs: number[], clef: Rect, bass: boolean
       const d = density(k.x1 + 1, k.x1 + sp * 0.6, y - sp * 0.45, y + sp * 0.45) - density(k.x0 - sp * 0.6, k.x0 - 1, y - sp * 0.45, y + sp * 0.45);
       if (d > bowl) (bowl = d), (cy = y);
     }
-    const fits = bowl >= 0.15 && Math.abs((cy - bY) / sp - STEP[out.length]) <= 0.45;
-    if (!fits) {
-      // 头一个之前的杂笔（谱号的边角）跳过；串起来之后不合就停
-      if (!out.length) continue;
-      break;
-    }
-    out.push({ x: k.x0 - 1, y: Math.round(cy - sp * FLAT_STEM), w: Math.round(sp * 0.8), h: Math.round(sp * (FLAT_STEM + 0.5)) });
+    const at = (n: number) => n < 7 && bowl >= 0.15 && Math.abs((cy - bY) / sp - STEP[n]) <= 0.45;
+    const n = out.length;
+    if (at(n) && gap <= (n ? 1.6 : 3.2)) out.push(boxAt(k.x0, cy));
+    else if (!skipped && at(n + 1) && gap >= 1.2) {
+      skipped = true;
+      skipAt = n;
+      out.push(boxAt(k.x0 - sp * 0.85, bY + STEP[n] * sp), boxAt(k.x0, cy));
+    } else if (!n) continue; // 头一个之前的杂笔（谱号的边角）跳过
+    else break; // 串起来之后不合就停
     lastX = k.x1;
   }
+  // 漏的那一个后面要有**两个**真的接着（漏在最前头的，后面至少还有两个）：只跟着一个的多半是拍号的竖笔
+  //（万古磐石歌两个降号，头一行跳过「A」接上拍号 4 的竖笔，数成四个）
+  if (skipAt >= 0 && out.length - skipAt - 1 < 2) out.length = skipAt;
   return out;
 }
 

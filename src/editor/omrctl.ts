@@ -20,6 +20,7 @@ import type { ElementId, ScoreDoc } from "../model/doc";
 import type { PlayPoint } from "./player";
 import type { DocFormatId } from "./formats";
 import { confirmDiscardEdits, type FormatOption, type FormatSource, type FormatSwitch } from "./formatswitch";
+import { t } from "../i18n";
 
 /** 是否 PDF 字节（mime 或 `%PDF-` 魔数）。与 `omr/decode.ts` 里那份同判据。 */
 function isPdfBytes(bytes: Uint8Array, mime?: string): boolean {
@@ -169,7 +170,7 @@ export class OmrController implements FormatSource {
       const wasRecognize = this.host.mode === "recognize";
       this.emit(rec, bin);
       if (wasRecognize && this.host.mode !== "recognize") await this.toggle();
-      this.host.setStatus(`已切换输出格式：${omrEmitter(format).label}（未重新识别）`);
+      this.host.setStatus(t("omr.formatSwitched", { format: omrEmitter(format).label }));
     }
     return true;
   }
@@ -178,7 +179,7 @@ export class OmrController implements FormatSource {
   /** 已取得图片字节后的识别核心（供拖拽识别复用）。
    *  保留二值图+识别结果，完成后默认进入叠加核对视图（先核对；「原图对照」可切回排版稿）。 */
   async recognizeBytes(picked: { bytes: Uint8Array; mime?: string }): Promise<boolean> {
-    this.host.setStatus("识别中…可能需要几十秒");
+    this.host.setStatus(t("omr.running"));
     try {
       const t0 = performance.now();
       // **文字层完整的五线谱 PDF** 走另一条路（src/staffomr/）：不栅格化、直接读文字与矢量，
@@ -188,12 +189,12 @@ export class OmrController implements FormatSource {
       this.emit(score, bin);
       if (this.host.mode !== "recognize") await this.toggle(); // 识别后默认进叠加核对（本仓库「先核对」取向）
       const n = this.beatMarks.length;
-      this.host.setStatus(`识别完成（${((performance.now() - t0) / 1000).toFixed(1)}s）`
-        + (n ? `；${n} 个小节拍数与拍号对不上（核对视图已标红，多半是增时线/减时线读错）` : ""));
+      this.host.setStatus(t("omr.done", { sec: ((performance.now() - t0) / 1000).toFixed(1) })
+        + (n ? t("omr.beatIssues", { n }) : ""));
       return true;
     } catch (e) {
       console.error("OMR failed", e);
-      this.host.setStatus("识别失败：" + (e instanceof Error ? e.message : String(e)));
+      this.host.setStatus(t("omr.failed", { error: (e instanceof Error ? e.message : String(e)) }));
       return false;
     }
   }
@@ -216,20 +217,19 @@ export class OmrController implements FormatSource {
     }
     if (!ok) return false;
     const res = await recognizeStaffPdf(bytes, {
-      onProgress: (done, total) => this.host.setStatus(`五线谱识别中… ${done}/${total} 页`),
+      onProgress: (done, total) => this.host.setStatus(t("omr.staffProgress", { done, total })),
     });
     if (!res.notes) {
-      this.host.setStatus("这份 PDF 里没找到五线谱");
+      this.host.setStatus(t("omr.noStaff"));
       return false;
     }
     // 五线谱只出 MusicXML，且只进混排视图（理由见 OmrHost.adoptStaffXml）。
     this.clear();
     const jpOk = this.host.adoptStaffXml(res.musicxml);
     this.host.setStatus(
-      `五线谱识别完成（${((performance.now() - t0) / 1000).toFixed(1)}s）：` +
-        `${res.pages} 页 / ${res.parts} 个声部 / ${res.notes} 个音符` +
-        (res.skipped ? `，${res.skipped} 页无谱表已跳过` : "") +
-        (jpOk ? "" : "；简谱文本未变——五线谱装不进 .jpwabc，请从「导出 → MusicXML」取产物"),
+      t("omr.staffDone", { sec: ((performance.now() - t0) / 1000).toFixed(1), pages: res.pages, parts: res.parts, notes: res.notes }) +
+        (res.skipped ? t("omr.staffSkipped", { n: res.skipped }) : "") +
+        (jpOk ? "" : t("omr.staffNoJp")),
     );
     return true;
   }
@@ -256,10 +256,15 @@ export class OmrController implements FormatSource {
     this.bin = bin;
     this.score = rec;
     this.emitted = this.host.getText();
-    if (this.btnEl) this.btnEl.textContent = "原图对照";
+    if (this.btnEl) this.btnEl.textContent = t("omr.compare");
     this.host.setContextControl(this.btnEl, true);
     this.host.formats.use(this);
     this.host.syncViewModes();
+  }
+
+  /** 界面语言变了：对照按钮文字跟着换。 */
+  relabel(): void {
+    if (this.btnEl) this.btnEl.textContent = t(this.host.mode === "recognize" ? "omr.back" : "omr.compare");
   }
 
   // ---------------- 核对视图 ----------------
@@ -270,12 +275,12 @@ export class OmrController implements FormatSource {
     if (this.host.mode === "recognize") {
       this.host.setRecognizeMode(false);
       this.setLayout(false);
-      if (this.btnEl) this.btnEl.textContent = "原图对照";
+      if (this.btnEl) this.btnEl.textContent = t("omr.compare");
       this.host.reload(this.host.getText());
     } else {
       this.host.setRecognizeMode(true);
       this.setLayout(true);
-      if (this.btnEl) this.btnEl.textContent = "返回排版稿";
+      if (this.btnEl) this.btnEl.textContent = t("omr.back");
       this.renderPages();
     }
   }
@@ -544,7 +549,7 @@ export class OmrController implements FormatSource {
     this.emitted = null;
     if (this.host.formats.source === this) this.host.formats.use(null);
     this.hidePopup();
-    if (this.btnEl) this.btnEl.textContent = "原图对照";
+    if (this.btnEl) this.btnEl.textContent = t("omr.compare");
     this.host.setContextControl(this.btnEl, false);
     if (this.host.mode === "recognize") {
       this.host.setRecognizeMode(false);

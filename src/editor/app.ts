@@ -4,7 +4,7 @@
 import { EditorView, keymap, lineNumbers } from "@codemirror/view";
 import { Compartment, EditorState } from "@codemirror/state";
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands";
-import { parsePu, sniffDialect, dialectSpec, type Dialect } from "../pu";
+import { parsePu, sniffDialect, type Dialect } from "../pu";
 import { parse123, parseAbc } from "../j123/parse";
 import { eachChord } from "../model/helpers";
 import type { ElementId, ScoreDoc } from "../model/doc";
@@ -46,6 +46,8 @@ import type { EditDialect } from "./visual/dialect";
 import { describeLosses, planSave } from "../model/capability";
 import { CONVERT_TARGETS, isConvertTarget, targetSpec, type ConvertTarget } from "../model/convert";
 import { showChoiceDialog, showConfirmDialog } from "./dialogs";
+import { t } from "../i18n";
+import { diagText, dialectLabel, targetLabel, type DiagLike } from "../i18n/labels";
 import { buildMusicXml, sourceMusicXmlBare } from "./export";
 import { scoreDocToMusicXml } from "../model/toxml";
 import { jpwToScoreDoc } from "../model/fromjpw";
@@ -210,8 +212,8 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     if (!found && !before) return; // 本来就没有，现在也没有：不必重排
     if (this.bookSheet) await registerFontFaces(this._bookLayer, this.bookSheet.path);
     if (found && this.bookSheet && found.path !== before) {
-      const where = found.source === "ref" ? "文件指定" : found.source === "manual" ? "手动指定" : "自动";
-      this.setStatus(`诗集样式（${where}）：${found.path.split(/[\\/]/).pop()}` + (found.others ? `（同目录另有 ${found.others} 份，可在设置里改选）` : ""));
+      const where = t(found.source === "ref" ? "status.bookSheet.ref" : found.source === "manual" ? "status.bookSheet.manual" : "status.bookSheet.auto");
+      this.setStatus(t("status.bookSheet.using", { where, name: found.path.split(/[\\/]/).pop() ?? "" }) + (found.others ? t("status.bookSheet.others", { n: found.others }) : ""));
     }
     this._rerender();
   }
@@ -224,7 +226,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
       this._bookLayer = editorRules(found.text);
       this.bookSheet = found;
     } catch (e) {
-      this.setStatus(`诗集样式表读不了（${found.path.split(/[\\/]/).pop()}）：${e instanceof Error ? e.message : String(e)}`);
+      this.setStatus(t("status.bookSheet.bad", { name: found.path.split(/[\\/]/).pop() ?? "", error: e instanceof Error ? e.message : String(e) }));
     }
   }
 
@@ -232,7 +234,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
   async chooseBookSheet(): Promise<void> {
     if (isTauriRuntime()) {
       const { open } = await import("@tauri-apps/plugin-dialog");
-      const sel = await open({ multiple: false, filters: [{ name: "诗集样式表", extensions: ["ss"] }] });
+      const sel = await open({ multiple: false, filters: [{ name: t("filter.bookSheet"), extensions: ["ss"] }] });
       if (typeof sel !== "string") return;
       const dir = this.filePath ? dirOf(this.filePath) : dirOf(sel);
       this.bookSheets = { ...this.bookSheets, [dir]: sel };
@@ -874,7 +876,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
       return true;
     } catch (e) {
       console.error("转五线谱失败", e);
-      this.setStatus("转五线谱失败：" + (e instanceof Error ? e.message : String(e)));
+      this.setStatus(t("status.staffFailed", { error: (e instanceof Error ? e.message : String(e)) }));
       return false;
     }
   }
@@ -945,12 +947,12 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
       sdoc = parsePu(text);
     } catch (e) {
       console.error("文本谱解析失败", e);
-      this.setStatus("文本谱解析失败：" + (e instanceof Error ? e.message : String(e)));
+      this.setStatus(t("status.parseFailed", { what: t("fmt.textScore"), error: (e instanceof Error ? e.message : String(e)) }));
       return false;
     }
     const fatal = sdoc.diagnostics.find((d) => d.severity === "error");
     if (fatal) {
-      this.setStatus(`文本谱无法解析：${fatal.message}`);
+      this.setStatus(t("status.puFatal", { error: diagText(fatal) }));
       return false;
     }
     this._scoreDoc = { text, doc: sdoc };
@@ -959,9 +961,9 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     const dialect = (sdoc.puDialect ?? "tomato") as Dialect;
     this._puDialect = dialect;
     this._syncFormatLabel();
-    if (!this._layoutScoreDoc(sdoc, "文本谱")) return false;
+    if (!this._layoutScoreDoc(sdoc, t("fmt.textScore"))) return false;
     // 解析告警不拦排版，但要让用户看得见（谱面往往仍然是对的）
-    this._reportDiagnostics(dialectSpec(dialect).name, sdoc.diagnostics);
+    this._reportDiagnostics(dialectLabel(dialect), sdoc.diagnostics);
     return true;
   }
 
@@ -973,12 +975,12 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
       doc = parse123(text);
     } catch (e) {
       console.error("123 解析失败", e);
-      this.setStatus("123 解析失败：" + (e instanceof Error ? e.message : String(e)));
+      this.setStatus(t("status.parseFailed", { what: "123", error: (e instanceof Error ? e.message : String(e)) }));
       return false;
     }
     const fatal = doc.diagnostics.find((d) => d.severity === "error");
     if (fatal) {
-      this.setStatus(`123 无法解析：第 ${fatal.source.line + 1} 行 ${fatal.message}`);
+      this.setStatus(t("status.j123Fatal", { line: fatal.source.line + 1, error: diagText(fatal) }));
       return false;
     }
     this._scoreDoc = { text, doc };
@@ -1001,13 +1003,13 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
       doc = parseAbc(text);
     } catch (e) {
       console.error("ABC 解析失败", e);
-      this.setStatus("ABC 解析失败：" + (e instanceof Error ? e.message : String(e)));
+      this.setStatus(t("status.parseFailed", { what: "ABC", error: (e instanceof Error ? e.message : String(e)) }));
       return false;
     }
     const notes = doc.songs.reduce((n, song) => n + [...eachChord(song)].length, 0);
     if (notes === 0) {
       this._reportDiagnostics("ABC", doc.diagnostics);
-      this.setStatus("ABC 解析失败：没读出音符");
+      this.setStatus(t("status.abcNoNotes"));
       return false;
     }
     this._scoreDoc = { text, doc };
@@ -1036,7 +1038,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
         // 同一份文本只投影一次（puScore 有缓存）；点选与高亮按元素 id 认
         const score = this.puScore();
         if (!score) {
-          this.setStatus(`这份${what}里没有可排的曲行`);
+          this.setStatus(t("status.noLines", { what }));
           return false;
         }
         this._layoutScore(score, null);
@@ -1045,7 +1047,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
       }
     } catch (e) {
       console.error(`${what}排版失败`, e);
-      this.setStatus(`${what}排版失败：` + (e instanceof Error ? e.message : String(e)));
+      this.setStatus(t("status.layoutFailed", { what, error: (e instanceof Error ? e.message : String(e)) }));
       return false;
     }
     this.renderPages();
@@ -1340,13 +1342,12 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
   /** 解析诊断 → 状态栏。不拦排版：谱面往往仍然是对的，但要让用户看得见。 */
   private _reportDiagnostics(
     what: string,
-    diags: readonly { message: string; source: { line: number } }[],
+    diags: readonly DiagLike[],
   ): void {
     this.setStatus(
       diags.length === 0
         ? ""
-        : `${what}：${diags.length} 处需要留意` +
-            `（第 ${diags[0]!.source.line + 1} 行 ${diags[0]!.message}）`,
+        : t("status.diagnostics", { what, n: diags.length, line: diags[0]!.source.line + 1, message: diagText(diags[0]!) }),
     );
   }
 
@@ -1424,7 +1425,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
   // ---------------- FormatHost ----------------
   /** FormatHost：文本谱方言短名，供代码区标签用。 */
   get puDialectName(): string | null {
-    return this._puDialect === null ? null : dialectSpec(this._puDialect).shortName;
+    return this._puDialect === null ? null : t(`fmt.short.${this._puDialect}`);
   }
 
   /** 当前文本谱的方言（非文本谱为 null）。 */
@@ -1758,13 +1759,13 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     let choice = this.musicXmlImport;
     if (choice === "ask") {
       const res = await showChoiceDialog(
-        "导入 MusicXML",
-        "这是单声部歌谱，可以转成简谱来编辑（原 MusicXML 文件不动）。",
+        t("xmlImport.title"),
+        t("xmlImport.body"),
         [
-          ...CONVERT_TARGETS.map((t) => ({ value: t.id as "musicxml" | ConvertTarget, label: `转成 ${t.label} 编辑` })),
-          { value: "musicxml" as const, label: "保持 MusicXML（看五线谱）" },
+          ...CONVERT_TARGETS.map((c) => ({ value: c.id as "musicxml" | ConvertTarget, label: t("xmlImport.convertTo", { format: targetLabel(c.id) }) })),
+          { value: "musicxml" as const, label: t("xmlImport.keep") },
         ],
-        { defaultValue: "123", remember: "记住选择，以后不再询问（可在设置里改回）" },
+        { defaultValue: "123", remember: t("xmlImport.remember") },
       );
       // 取消 = 保持 MusicXML：文件已经打开了，不必中断
       choice = res?.value ?? "musicxml";
@@ -1811,7 +1812,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
       const sniffed = sniffDialect(puText);
       if (sniffed.dialect === null) {
         // `.txt` 太泛，认不出宁可不动——硬解只会得到一首乱谱
-        this.setStatus(`这不像文本谱：${sniffed.reason}`);
+        this.setStatus(t("status.notPu", { reason: sniffed.reason }));
         return;
       }
       this._dropMixedDoc();
@@ -1856,7 +1857,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     this.filePath = null;
     this.setText(text);
     if (losses.length) {
-      this.setStatus(`识别结果已转成 123 核对文本；有 ${losses.length} 样 123 表达不了，已略去`);
+      this.setStatus(t("status.omrLosses", { n: losses.length }));
     }
   }
 
@@ -1885,7 +1886,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     } catch (e) {
       this.mixedDoc = null;
       console.error("MusicXML 读取失败", e);
-      this.setStatus("MusicXML 读取失败：" + (e instanceof Error ? e.message : String(e)));
+      this.setStatus(t("status.xmlReadFailed", { error: (e instanceof Error ? e.message : String(e)) }));
       return false;
     }
   }
@@ -1898,12 +1899,12 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
       doc = formatOf("musicxml").toScoreDoc!(text);
     } catch (e) {
       console.error("MusicXML 读取失败", e);
-      this.setStatus("MusicXML 读取失败：" + (e instanceof Error ? e.message : String(e)));
+      this.setStatus(t("status.xmlReadFailed", { error: (e instanceof Error ? e.message : String(e)) }));
       return false;
     }
     const notes = doc.songs.reduce((n, song) => n + [...eachChord(song)].length, 0);
     if (notes === 0) {
-      this.setStatus("这份 MusicXML 里没有音符");
+      this.setStatus(t("status.xmlNoNotes"));
       return false;
     }
     this._scoreDoc = { text, doc };
@@ -1939,7 +1940,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     if (this.docFormat !== "musicxml") return;
     const src = this.formats.source;
     if (!src) {
-      this.setStatus("这份 MusicXML 读不出来，无法转换");
+      this.setStatus(t("status.xmlUnreadable"));
       return;
     }
     // 谱里写的纸：123/ABC 带得过去（`I:meta page …`）；`.jpwabc`、文本谱没有字段，改记进设置里的纸
@@ -2064,7 +2065,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     try {
       const out = relayout(text, this._puPhraseMeasure());
       if (out === text) {
-        this.setStatus("行结构没变：乐句断点与现在的分行一致");
+        this.setStatus(t("status.phraseSame"));
         return;
       }
       this._origLayoutText = text;
@@ -2074,7 +2075,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
       this.setText(out);
     } catch (e) {
       console.error("乐句重排失败", e);
-      this.setStatus("按乐句重排失败：" + (e instanceof Error ? e.message : String(e)));
+      this.setStatus(t("status.phraseFailed", { error: (e instanceof Error ? e.message : String(e)) }));
     }
   }
 
@@ -2117,19 +2118,19 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     const parse = this._hanParser();
     const doc = parse ? this._tryParse(parse, this.getText()) : null;
     if (!parse || !doc) {
-      this.setStatus("谱面解析不出来，无法简繁转换");
+      this.setStatus(t("status.hanUnparsable"));
       return;
     }
     const btn = this._hanziBtnEl;
-    const label = btn?.textContent ?? "简繁";
+    const label = btn?.textContent ?? t("toolbar.hanzi");
     if (btn) {
       btn.disabled = true;
-      btn.textContent = "加载中";
+      btn.textContent = t("status.loading");
     }
     try {
       const d = dir === "auto" ? detectHanDirection(doc, await loadConverter("t2s")) : dir;
       const conv = await loadConverter(d);
-      const done = d === "s2t" ? "已转为繁体" : "已转为简体";
+      const done = t(d === "s2t" ? "status.toTraditional" : "status.toSimplified");
       if (this.docFormat === "musicxml") {
         this.editScoreDoc((doc) => convertScoreDoc(doc, conv));
         this.setStatus(done);
@@ -2142,10 +2143,10 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
         this._origLayoutText = convertSourceText(this._origLayoutText, parse, conv).text;
       }
       if (res.text !== text) this.setText(res.text);
-      this.setStatus(res.missed > 0 ? `${done}（${res.missed} 处未能写回原文）` : done);
+      this.setStatus(res.missed > 0 ? t("status.hanMissed", { done, n: res.missed }) : done);
     } catch (e) {
       console.error("hanzi conversion failed", e);
-      this.setStatus("简繁转换失败");
+      this.setStatus(t("status.hanFailed"));
     } finally {
       if (btn) {
         btn.disabled = false;
@@ -2358,7 +2359,21 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
       effects: this._readOnlyCompartment.reconfigure(EditorState.readOnly.of(ro)),
     });
     const meta = document.getElementById("code-pane-meta");
-    if (meta) meta.textContent = ro ? "只读" : this._formatLabel();
+    if (meta) {
+      meta.textContent = ro ? t("pane.readOnly") : this._formatLabel();
+      meta.dataset.readOnly = ro ? "1" : "";
+    }
+  }
+
+  /** 界面语言变了：各控件里由代码写的文字重出（静态 DOM 由 `applyI18n` 刷）。 */
+  relabel(): void {
+    this.formats.relabel();
+    this.playback.relabel();
+    this.visual.relabel();
+    this.omr.relabel();
+    this._syncMixedReadOnly();
+    this._syncFormatLabel();
+    this.setStatus("");
   }
 
   /** 代码区右上角的格式标签。 */
@@ -2375,7 +2390,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
   private _syncFormatLabel(): void {
     const meta = document.getElementById("code-pane-meta");
     if (!meta) return;
-    if (meta.textContent !== "只读") meta.textContent = this._formatLabel();
+    if (!meta.dataset.readOnly) meta.textContent = this._formatLabel();
     const field = document.getElementById("doc-format-field");
     meta.hidden = !!field && !field.hidden;
   }
@@ -2462,7 +2477,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
         multiple: false,
         filters: [
           {
-            name: "简谱 / 123 / 文本谱 / MusicXML / ABC",
+            name: t("filter.scoreDocs"),
             // 白名单只在 `common/filetypes.ts` 写一次；`.jpwabc` 另给大写形（部分系统区分）
             extensions: [...DOC_EXT, "JPWABC"],
           },
@@ -2529,19 +2544,19 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     if (doc) {
       const losses = planSave(doc, target);
       if (losses.length) {
-        const ok = await showConfirmDialog("另存为会丢东西", describeLosses(target, losses));
+        const ok = await showConfirmDialog(t("saveAs.lossTitle"), describeLosses(target, losses));
         if (!ok) return;
       }
     }
     const text = this.convertTo(target);
     if (text === null) {
-      this.setStatus(`暂不支持另存为 ${target}`);
+      this.setStatus(t("status.saveAsUnsupported", { target }));
       return;
     }
     const adapter = formatOf(targetSpec(target).docFormat);
-    const dest = await saveBytes(adapter.encode(text), (this.documentTitle() || "未命名") + adapter.defaultExt);
+    const dest = await saveBytes(adapter.encode(text), (this.documentTitle() || t("file.untitled")) + adapter.defaultExt);
     if (!dest) return;
-    this.setStatus(`已另存为 ${targetSpec(target).label}（${adapter.defaultExt}）`);
+    this.setStatus(t("status.savedAs", { format: targetLabel(target), ext: adapter.defaultExt }));
   }
 
   /** 当前文档的 `ScoreDoc`（能力表与丢失清单要用）。拿不到就返回 null。 */
@@ -2581,7 +2596,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
 
   /** 存盘用的文件名：扩展名由适配器给。 */
   private defaultSaveName(): string {
-    return (this.documentTitle() || "未命名") + this.adapter.defaultExt;
+    return (this.documentTitle() || t("file.untitled")) + this.adapter.defaultExt;
   }
 
   /** 当前文档的标题（取法因格式而异，见适配器的 `title`）。 */
@@ -2659,11 +2674,11 @@ function upsertLayoutLines(doc: string, value: string): string {
 }
 
 function describePick(item: PageItem): string {
-  if (item instanceof LayoutLyric) return `歌词: ${item.text}`;
-  if (item instanceof JpNumber) return `音符: ${item.text}`;
-  if (item instanceof TextFrame) return `文本: ${item.text}`;
+  if (item instanceof LayoutLyric) return t("pick.lyric", { text: item.text });
+  if (item instanceof JpNumber) return t("pick.note", { text: item.text });
+  if (item instanceof TextFrame) return t("pick.text", { text: item.text });
   const cls = [...item.classes].filter((c) => c !== "entry");
-  return cls.length ? `已选: ${cls.join(",")}` : "已选: 元素";
+  return cls.length ? t("pick.classes", { list: cls.join(",") }) : t("pick.element");
 }
 
 /** 判断 MusicXML 是否多声部（≥2 part、单 part 多谱表、或 ≥2 voice）→ 默认混排。 */

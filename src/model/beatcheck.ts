@@ -19,6 +19,7 @@
 import type { ElementId, Measure, ScoreDoc, SourceSpan, Time } from "./doc";
 import { SIMPLE_DIVISIONS } from "./doc";
 import { isXmlShaped } from "./xmlproject";
+import { t } from "../i18n";
 
 export interface BeatIssue {
   songIndex: number;
@@ -133,5 +134,5 @@ function beatText(q: number): string {
 /** 一条问题的说法：「差 1/2 拍」「多 1 拍」。 */
 export function describeBeatIssue(i: BeatIssue): string {
   const diff = i.got - i.want;
-  return `${diff < 0 ? "差" : "多"} ${beatText(Math.abs(diff))} 拍（该 ${beatText(i.want)} 拍，实际 ${beatText(i.got)} 拍）`;
+  return t(diff < 0 ? "beat.short" : "beat.over", { d: beatText(Math.abs(diff)), want: beatText(i.want), got: beatText(i.got) });
 }

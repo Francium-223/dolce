@@ -13,6 +13,7 @@ import { CONVERT_TARGETS, targetSpec, type ConvertTarget } from "../model/conver
 import { describeLosses, planSave } from "../model/capability";
 import type { DocFormatId } from "./formats";
 import { showConfirmDialog } from "./dialogs";
+import { t } from "../i18n";
 
 /** 下拉里的一项。 */
 export interface FormatOption {
@@ -32,8 +33,8 @@ export interface FormatSource {
 /** 代码区文本被手工改过时，切格式会用真身重出文本、丢掉这些改动：先问一声。 */
 export function confirmDiscardEdits(): Promise<boolean> {
   return showConfirmDialog(
-    "切换格式",
-    "源码已手工修改过。切换格式会重新生成文本，这些修改将丢失。要继续吗？",
+    t("fs.confirmTitle"),
+    t("fs.confirmBody"),
   );
 }
 
@@ -65,6 +66,11 @@ export class FormatSwitch {
   /** 换来源（`null` = 没有可切的，收起下拉、露出格式标签）。 */
   use(source: FormatSource | null): void {
     this.src = source;
+    this.render();
+  }
+
+  /** 界面语言变了：选项文字重出。 */
+  relabel(): void {
     this.render();
   }
 
@@ -113,9 +119,13 @@ export interface FileSwitchHost {
 /** 原文是什么格式：可写出的文本格式（`123` / `tomato` …），或只能读的 `musicxml`。 */
 export type OriginFormat = ConvertTarget | "musicxml";
 
+function originName(origin: OriginFormat): string {
+  return origin === "musicxml" ? "MusicXML" : targetSpec(origin).label;
+}
+
 /** 下拉里原文那一项的显示名。 */
 function originLabel(origin: OriginFormat): string {
-  return (origin === "musicxml" ? "MusicXML" : targetSpec(origin).label) + "（原文）";
+  return t("fs.origin", { format: originName(origin) });
 }
 
 /**
@@ -145,8 +155,8 @@ export class FileFormatSource implements FormatSource {
   options(): readonly FormatOption[] {
     const out: FormatOption[] = [];
     if (this.origin.format === "musicxml") out.push({ value: "musicxml", label: originLabel("musicxml") });
-    for (const t of CONVERT_TARGETS) {
-      out.push({ value: t.id, label: t.id === this.origin.format ? originLabel(t.id) : t.label });
+    for (const c of CONVERT_TARGETS) {
+      out.push({ value: c.id, label: c.id === this.origin.format ? originLabel(c.id) : c.label });
     }
     return out;
   }
@@ -164,7 +174,7 @@ export class FileFormatSource implements FormatSource {
       if (text !== this.emitted || !this.doc) {
         const doc = this.host.scoreDoc();
         if (!doc) {
-          this.host.setStatus("这份谱现在读不出来，无法转换格式");
+          this.host.setStatus(t("fs.unreadable"));
           return false;
         }
         this.doc = doc;
@@ -180,25 +190,25 @@ export class FileFormatSource implements FormatSource {
       this.host.adoptText(this.origin.docFormat, this.origin.text, this.filePath);
       this.cur = this.origin.format;
       this.emitted = this.origin.text;
-      this.host.setStatus(`已切回原文（${originLabel(this.origin.format).replace("（原文）", "")}）`);
+      this.host.setStatus(t("fs.backToOrigin", { format: originName(this.origin.format) }));
       return true;
     }
-    const spec = CONVERT_TARGETS.find((t) => t.id === value);
+    const spec = CONVERT_TARGETS.find((c) => c.id === value);
     if (!spec || !this.doc) return false;
     const losses = planSave(this.doc, spec.id);
-    if (losses.length && !(await showConfirmDialog("转换会丢东西", describeLosses(spec.id, losses)))) return false;
+    if (losses.length && !(await showConfirmDialog(t("fs.lossTitle"), describeLosses(spec.id, losses)))) return false;
     let out: string;
     try {
       out = spec.emit(this.doc);
     } catch (e) {
       console.error("转换失败", e);
-      this.host.setStatus("转换失败：" + (e instanceof Error ? e.message : String(e)));
+      this.host.setStatus(t("fs.failed", { error: (e instanceof Error ? e.message : String(e)) }));
       return false;
     }
     this.host.adoptText(spec.docFormat, out, null);
     this.cur = spec.id;
     this.emitted = out;
-    this.host.setStatus(`已转成 ${spec.label}（未保存，原文件未改动；切回「原文」可还原）`);
+    this.host.setStatus(t("fs.converted", { format: spec.label }));
     return true;
   }
 }

@@ -51,6 +51,7 @@ import { assignDegrees } from "./jianpu";
 import { addMeta } from "./metakeys";
 import { child, childText, children } from "../score/xmldom";
 import { bindSurface } from "./xmlsurface";
+import { t as tr } from "../i18n";
 
 const num = (el: Element | null, tag: string): number | undefined => {
   const t = el ? childText(el, tag) : null;
@@ -770,7 +771,7 @@ function readMeasure(
  *  读不懂的子节点挂在最近的 `raw` 上，由 `toxml.ts` 原位吐回去。 */
 export function loadScoreDoc(xmlText: string): ScoreDoc {
   const dom = new DOMParser().parseFromString(xmlText, "application/xml");
-  if (dom.querySelector("parsererror")) throw new Error("MusicXML 无法解析");
+  if (dom.querySelector("parsererror")) throw new Error(tr("err.xmlParse"));
   const root = dom.documentElement;
   const doc = emptyDoc("musicxml");
   doc.source = xmlText;

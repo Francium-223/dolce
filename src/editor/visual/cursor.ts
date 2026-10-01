@@ -7,6 +7,7 @@
 
 import { type EditorState, type Extension, RangeSetBuilder, StateEffect, StateField } from "@codemirror/state";
 import { Decoration, type DecorationSet, EditorView, WidgetType } from "@codemirror/view";
+import { t } from "../../i18n";
 
 /** 谱面有没有焦点（有才补画光标）。 */
 export const setScoreFocus = StateEffect.define<boolean>();
@@ -57,7 +58,7 @@ class CaretWidget extends WidgetType {
 
 const blockMark = Decoration.mark({ class: "cm-vis-block" });
 const breakMark = Decoration.mark({ class: "cm-vis-break" });
-const beatMark = Decoration.mark({ class: "cm-vis-beat", attributes: { title: "这一小节的拍数与拍号对不上" } });
+const beatMark = (): Decoration => Decoration.mark({ class: "cm-vis-beat", attributes: { title: t("beat.cmTitle") } });
 const caret = Decoration.widget({ widget: new CaretWidget(), side: 1 });
 
 function decorations(state: EditorState): DecorationSet {
@@ -65,7 +66,7 @@ function decorations(state: EditorState): DecorationSet {
   const sel = state.selection.main;
   const items: { from: number; to: number; deco: Decoration }[] = [];
   for (const b of v.breaks) items.push({ from: b.from, to: b.to, deco: breakMark });
-  for (const b of v.beats) items.push({ from: b.from, to: b.to, deco: beatMark });
+  for (const b of v.beats) items.push({ from: b.from, to: b.to, deco: beatMark() });
   if (v.scoreFocus) {
     if (sel.empty) items.push({ from: sel.head, to: sel.head, deco: caret });
     else items.push({ from: sel.from, to: sel.to, deco: blockMark });

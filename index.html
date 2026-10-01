@@ -184,123 +184,123 @@
     <div id="app" class="is-starting">
       <header id="app-header">
         <div class="header-left">
-          <button id="btn-home" class="button button-home" aria-label="返回开始">
-            <span class="button-symbol" aria-hidden="true">←</span><span class="home-label">返回开始</span>
+          <button id="btn-home" class="button button-home" aria-label="返回开始" data-i18n-aria="header.home">
+            <span class="button-symbol" aria-hidden="true">←</span><span class="home-label" data-i18n="header.home">返回开始</span>
           </button>
-          <div class="brand" aria-label="jpeditor 简谱编辑器">
+          <div class="brand" aria-label="jpeditor 简谱编辑器" data-i18n-aria="header.brandAria">
             <img class="brand-mark" src="%BASE_URL%favicon.svg" alt="" width="30" height="30" aria-hidden="true" />
             <span class="brand-name">jpeditor</span>
-            <span class="brand-subtitle">简谱工作台</span>
+            <span class="brand-subtitle" data-i18n="header.subtitle">简谱工作台</span>
           </div>
         </div>
         <div class="header-actions">
-          <button id="btn-save" class="button button-secondary">保存</button>
-          <button id="btn-saveas" class="button button-secondary">另存为</button>
-          <button id="btn-export" class="button button-primary">导出</button>
+          <button id="btn-save" class="button button-secondary" data-i18n="header.save">保存</button>
+          <button id="btn-saveas" class="button button-secondary" data-i18n="header.saveAs">另存为</button>
+          <button id="btn-export" class="button button-primary" data-i18n="header.export">导出</button>
         </div>
       </header>
 
-      <div id="toolbar" aria-label="乐谱工具栏">
+      <div id="toolbar" aria-label="乐谱工具栏" data-i18n-aria="toolbar.aria">
         <div id="layout-tools" class="tool-group context-tool-group" hidden>
-          <span class="tool-label">分行</span>
-          <div id="layout-mode-switch" class="layout-mode-switch" data-context-control aria-label="分行方式" hidden>
-            <button id="btn-layout-original" class="active" aria-pressed="true" title="保留导入或识别时的行结构">原始排版</button>
-            <button id="btn-phrase" aria-pressed="false" title="根据歌词和音乐乐句重新安排换行">按乐句重排</button>
+          <span class="tool-label" data-i18n="toolbar.lines">分行</span>
+          <div id="layout-mode-switch" class="layout-mode-switch" data-context-control aria-label="分行方式" data-i18n-aria="toolbar.linesAria" hidden>
+            <button id="btn-layout-original" class="active" aria-pressed="true" title="保留导入或识别时的行结构" data-i18n-title="toolbar.layoutOriginal.title" data-i18n="toolbar.layoutOriginal">原始排版</button>
+            <button id="btn-phrase" aria-pressed="false" title="根据歌词和音乐乐句重新安排换行" data-i18n-title="toolbar.phrase.title" data-i18n="toolbar.phrase">按乐句重排</button>
           </div>
         </div>
         <div id="recognition-tools" class="tool-group context-tool-group" hidden>
-          <span class="tool-label">核对</span>
-          <button id="btn-recognize" data-context-control title="将识别结果与上传原图进行对照" hidden>原图对照</button>
+          <span class="tool-label" data-i18n="toolbar.check">核对</span>
+          <button id="btn-recognize" data-context-control title="将识别结果与上传原图进行对照" data-i18n-title="toolbar.recognize.title" data-i18n="toolbar.recognize" hidden>原图对照</button>
           <label id="recog-view-field" class="toolbar-select-field" data-context-control hidden>
-            <span class="sr-only">原图对照方式</span>
-            <select id="sel-recog-view" title="原图对照方式" aria-label="原图对照方式">
-              <option value="floating">附近浮窗</option>
-              <option value="inplace">原位叠加</option>
-              <option value="original">仅原图</option>
+            <span class="sr-only" data-i18n="toolbar.recogView">原图对照方式</span>
+            <select id="sel-recog-view" title="原图对照方式" aria-label="原图对照方式" data-i18n-title="toolbar.recogView" data-i18n-aria="toolbar.recogView">
+              <option value="floating" data-i18n="toolbar.recogView.floating">附近浮窗</option>
+              <option value="inplace" data-i18n="toolbar.recogView.inplace">原位叠加</option>
+              <option value="original" data-i18n="toolbar.recogView.original">仅原图</option>
             </select>
             <span class="select-chevron" aria-hidden="true">⌄</span>
           </label>
         </div>
         <div class="tool-group context-tool-group playback-tools">
-          <span class="tool-label">试听</span>
-          <button id="btn-play" class="icon-text playback-button" aria-label="播放">
+          <span class="tool-label" data-i18n="toolbar.listen">试听</span>
+          <button id="btn-play" class="icon-text playback-button" aria-label="播放" data-i18n-aria="play.play">
             <span class="playback-icon" aria-hidden="true"><svg viewBox="0 0 10 10"><path d="M2 0.8 L9.2 5 L2 9.2 Z" fill="currentColor"/></svg></span>
-            <span class="playback-label">播放</span>
+            <span class="playback-label" data-i18n="play.play">播放</span>
           </button>
-          <button id="btn-stop" class="icon-button playback-stop" title="停止试听（回到曲首）" aria-label="停止" disabled><svg class="playback-stop-icon" viewBox="0 0 10 10" aria-hidden="true"><rect x="0.8" y="0.8" width="8.4" height="8.4" rx="1.2" fill="currentColor"/></svg></button>
-          <input id="play-progress" class="play-progress" type="range" min="0" max="1" step="any" value="0" aria-label="播放进度" disabled>
-          <button id="play-time" class="play-time" aria-label="播放时间">0:00 / 0:00</button>
+          <button id="btn-stop" class="icon-button playback-stop" title="停止试听（回到曲首）" aria-label="停止" data-i18n-title="play.stop.title" data-i18n-aria="play.stop" disabled><svg class="playback-stop-icon" viewBox="0 0 10 10" aria-hidden="true"><rect x="0.8" y="0.8" width="8.4" height="8.4" rx="1.2" fill="currentColor"/></svg></button>
+          <input id="play-progress" class="play-progress" type="range" min="0" max="1" step="any" value="0" aria-label="播放进度" data-i18n-aria="play.progress" disabled>
+          <button id="play-time" class="play-time" aria-label="播放时间" data-i18n-aria="play.time">0:00 / 0:00</button>
           <label class="select-wrap">
-            <select id="sel-speed" aria-label="播放速度"></select>
+            <select id="sel-speed" aria-label="播放速度" data-i18n-aria="play.speed"></select>
             <span class="select-chevron" aria-hidden="true">⌄</span>
           </label>
         </div>
         <span class="toolbar-spacer"></span>
-        <div class="tool-group mobile-view-switch" aria-label="移动端工作区视图">
-          <button id="btn-mobile-code" aria-pressed="false">源码</button>
-          <button id="btn-mobile-score" class="active" aria-pressed="true">预览</button>
+        <div class="tool-group mobile-view-switch" aria-label="移动端工作区视图" data-i18n-aria="toolbar.mobileView">
+          <button id="btn-mobile-code" aria-pressed="false" data-i18n="toolbar.mobileCode">源码</button>
+          <button id="btn-mobile-score" class="active" aria-pressed="true" data-i18n="toolbar.mobileScore">预览</button>
         </div>
         <div class="tool-group">
-          <span class="tool-label">缩放</span>
-          <button id="btn-zoom-out" class="icon-button" title="缩小 (Ctrl/⌘ -)" aria-label="缩小">−</button>
-          <button id="btn-zoom-reset" title="复位 (Ctrl/⌘ 0)">100%</button>
-          <button id="btn-zoom-in" class="icon-button" title="放大 (Ctrl/⌘ +)" aria-label="放大">＋</button>
-        </div>
-        <span class="sep" aria-hidden="true"></span>
-        <div class="tool-group">
-          <span class="tool-label">页面</span>
-          <button id="btn-prev" class="icon-button" title="上一页" aria-label="上一页">‹</button>
-          <button id="btn-next" class="icon-button" title="下一页" aria-label="下一页">›</button>
+          <span class="tool-label" data-i18n="toolbar.zoom">缩放</span>
+          <button id="btn-zoom-out" class="icon-button" title="缩小 (Ctrl/⌘ -)" aria-label="缩小" data-i18n-title="toolbar.zoomOut.title" data-i18n-aria="toolbar.zoomOut">−</button>
+          <button id="btn-zoom-reset" title="复位 (Ctrl/⌘ 0)" data-i18n-title="toolbar.zoomReset.title">100%</button>
+          <button id="btn-zoom-in" class="icon-button" title="放大 (Ctrl/⌘ +)" aria-label="放大" data-i18n-title="toolbar.zoomIn.title" data-i18n-aria="toolbar.zoomIn">＋</button>
         </div>
         <span class="sep" aria-hidden="true"></span>
         <div class="tool-group">
-          <button id="btn-hanzi" title="整篇转换源码中的中文（简体 ⇄ 繁体）">简繁</button>
-          <button id="btn-options">设置</button>
-          <button id="btn-help" title="功能帮助、123 格式与记谱法说明">帮助</button>
+          <span class="tool-label" data-i18n="toolbar.page">页面</span>
+          <button id="btn-prev" class="icon-button" title="上一页" aria-label="上一页" data-i18n-title="toolbar.prev" data-i18n-aria="toolbar.prev">‹</button>
+          <button id="btn-next" class="icon-button" title="下一页" aria-label="下一页" data-i18n-title="toolbar.next" data-i18n-aria="toolbar.next">›</button>
+        </div>
+        <span class="sep" aria-hidden="true"></span>
+        <div class="tool-group">
+          <button id="btn-hanzi" title="整篇转换源码中的中文（简体 ⇄ 繁体）" data-i18n-title="toolbar.hanzi.title" data-i18n="toolbar.hanzi">简繁</button>
+          <button id="btn-options" data-i18n="toolbar.options">设置</button>
+          <button id="btn-help" title="功能帮助、123 格式与记谱法说明" data-i18n-title="toolbar.help.title" data-i18n="toolbar.help">帮助</button>
         </div>
       </div>
 
       <div id="body">
-        <section id="code-pane-shell" class="workspace-pane" aria-label="乐谱源码">
+        <section id="code-pane-shell" class="workspace-pane" aria-label="乐谱源码" data-i18n-aria="pane.code">
           <div class="pane-heading">
-            <span>乐谱源码</span>
+            <span data-i18n="pane.code">乐谱源码</span>
             <span id="code-pane-meta" class="pane-meta">JPWABC</span>
             <!-- 源码格式下拉：就在格式标签这个位置换着显示（识别结果、打开的文件都能切，顶掉标签） -->
             <label id="doc-format-field" class="pane-select-field" data-context-control hidden>
-              <span class="sr-only">源码格式</span>
-              <select id="sel-doc-format" title="切换源码格式（识别结果不重新识别；打开的文件切回「原文」可还原）" aria-label="源码格式"></select>
+              <span class="sr-only" data-i18n="pane.docFormat">源码格式</span>
+              <select id="sel-doc-format" title="切换源码格式（识别结果不重新识别；打开的文件切回「原文」可还原）" aria-label="源码格式" data-i18n-title="pane.docFormat.title" data-i18n-aria="pane.docFormat"></select>
               <span class="select-chevron" aria-hidden="true">⌄</span>
             </label>
           </div>
           <div id="code-pane"></div>
         </section>
-        <section id="score-pane-shell" class="workspace-pane" aria-label="排版">
+        <section id="score-pane-shell" class="workspace-pane" aria-label="排版" data-i18n-aria="pane.score">
           <div class="pane-heading">
-            <span>排版</span>
+            <span data-i18n="pane.score">排版</span>
             <div class="pane-heading-actions">
-              <span id="visual-mode" class="visual-mode" title="可视化编辑：编辑模式（方块光标）改选中的元素，插入模式（竖线光标）在光标处插入；Insert / Esc 切换" hidden>编辑</span>
-              <span id="beat-count" class="beat-count" title="点一下跳到下一处" hidden></span>
-              <button id="btn-palette" class="palette-button" aria-pressed="false" title="记号面板：用鼠标点唱名、八度、时值、记号、换行">面板</button>
-              <button id="btn-beat-check" class="beat-check-button" aria-pressed="true" title="小节时值自检：拍数与拍号对不上的小节标红">拍</button>
-              <button id="btn-format-marks" class="format-marks-button" aria-pressed="true" title="显示格式标记：换行符 ↵ 与换页符 ⤓（Ctrl/⌘+Shift+M）">¶</button>
-              <div id="view-mode-switch" class="preview-mode-switch" aria-label="排版模式">
-                <button id="btn-view-expanded" class="active" aria-pressed="true" title="反复与多段歌词逐段展开，一段一页（投影用）">展开</button>
-                <button id="btn-view-original" aria-pressed="false" title="按原谱排一遍，多段歌词叠排、反复不展开">原样</button>
-                <button id="btn-view-staff" aria-pressed="false" title="五线谱（需有 MusicXML 底本）">五线谱</button>
-                <button id="btn-view-mixed" aria-pressed="false" title="五线谱叠加简谱层（需有 MusicXML 底本）">混排</button>
+              <span id="visual-mode" class="visual-mode" title="可视化编辑：编辑模式（方块光标）改选中的元素，插入模式（竖线光标）在光标处插入；Insert / Esc 切换" data-i18n-title="pane.visualMode.title" hidden>编辑</span>
+              <span id="beat-count" class="beat-count" title="点一下跳到下一处" data-i18n-title="pane.beatCount.title" hidden></span>
+              <button id="btn-palette" class="palette-button" aria-pressed="false" title="记号面板：用鼠标点唱名、八度、时值、记号、换行" data-i18n-title="pane.palette.title" data-i18n="pane.palette">面板</button>
+              <button id="btn-beat-check" class="beat-check-button" aria-pressed="true" title="小节时值自检：拍数与拍号对不上的小节标红" data-i18n-title="pane.beatCheck.title" data-i18n="pane.beatCheck">拍</button>
+              <button id="btn-format-marks" class="format-marks-button" aria-pressed="true" title="显示格式标记：换行符 ↵ 与换页符 ⤓（Ctrl/⌘+Shift+M）" data-i18n-title="pane.formatMarks.title">¶</button>
+              <div id="view-mode-switch" class="preview-mode-switch" aria-label="排版模式" data-i18n-aria="view.aria">
+                <button id="btn-view-expanded" class="active" aria-pressed="true" title="反复与多段歌词逐段展开，一段一页（投影用）" data-i18n-title="view.expanded.title" data-i18n="view.expanded">展开</button>
+                <button id="btn-view-original" aria-pressed="false" title="按原谱排一遍，多段歌词叠排、反复不展开" data-i18n-title="view.original.title" data-i18n="view.original">原样</button>
+                <button id="btn-view-staff" aria-pressed="false" title="五线谱（需有 MusicXML 底本）" data-i18n-title="view.staff.title" data-i18n="view.staff">五线谱</button>
+                <button id="btn-view-mixed" aria-pressed="false" title="五线谱叠加简谱层（需有 MusicXML 底本）" data-i18n-title="view.mixed.title" data-i18n="view.mixed">混排</button>
               </div>
             </div>
           </div>
-          <div id="visual-palette" class="visual-palette" aria-label="记号面板" hidden></div>
+          <div id="visual-palette" class="visual-palette" aria-label="记号面板" data-i18n-aria="pane.paletteAria" hidden></div>
           <div id="score-pane"></div>
         </section>
 
         <section id="start-screen" aria-labelledby="start-title">
           <div class="start-content">
             <div class="start-heading">
-              <span class="eyebrow">开始创作</span>
-              <h1 id="start-title">把乐谱带进来，可编辑，可导出</h1>
-              <p>本地识别、校对排版、简谱与五线谱切换、在线试听和多格式导出。</p>
+              <span class="eyebrow" data-i18n="start.eyebrow">开始创作</span>
+              <h1 id="start-title" data-i18n="start.title">把乐谱带进来，可编辑，可导出</h1>
+              <p data-i18n="start.lead">本地识别、校对排版、简谱与五线谱切换、在线试听和多格式导出。</p>
             </div>
             <div class="start-modes">
               <button id="btn-start-image" class="start-mode start-mode-primary">
@@ -311,8 +311,8 @@
                   </svg>
                 </span>
                 <span class="mode-copy">
-                  <strong>图片识谱</strong>
-                  <span>上传图片，自动识别</span>
+                  <strong data-i18n="start.image">图片识谱</strong>
+                  <span data-i18n="start.image.sub">上传图片，自动识别</span>
                   <small>PNG · JPG · WEBP · PDF</small>
                 </span>
                 <span class="mode-arrow" aria-hidden="true">→</span>
@@ -327,16 +327,16 @@
                   </svg>
                 </span>
                 <span class="mode-copy">
-                  <strong>导入乐谱</strong>
-                  <span>继续编辑已有谱面</span>
-                  <small>123 · JPWABC · 文本谱 · MusicXML · ABC</small>
+                  <strong data-i18n="start.score">导入乐谱</strong>
+                  <span data-i18n="start.score.sub">继续编辑已有谱面</span>
+                  <small data-i18n="start.score.formats">123 · JPWABC · 文本谱 · MusicXML · ABC</small>
                 </span>
                 <span class="mode-arrow" aria-hidden="true">→</span>
               </button>
             </div>
             <div class="start-footer">
-              <span class="privacy-note"><span aria-hidden="true">●</span> 图片在本地识别，不会上传</span>
-              <button id="btn-start-sample" class="sample-link">查看示例乐谱</button>
+              <span class="privacy-note"><span aria-hidden="true">●</span> <span data-i18n="start.privacy">图片在本地识别，不会上传</span></span>
+              <button id="btn-start-sample" class="sample-link" data-i18n="start.sample">查看示例乐谱</button>
             </div>
             <div id="start-feedback" hidden role="alert"></div>
           </div>
@@ -346,8 +346,8 @@
           <div class="recognition-progress-card">
             <span class="progress-spinner" aria-hidden="true"></span>
             <div>
-              <strong>正在识别并生成排版</strong>
-              <span>完成后将直接显示可编辑的乐谱</span>
+              <strong data-i18n="start.progress">正在识别并生成排版</strong>
+              <span data-i18n="start.progress.sub">完成后将直接显示可编辑的乐谱</span>
             </div>
           </div>
         </div>

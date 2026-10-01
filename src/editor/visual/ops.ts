@@ -8,6 +8,7 @@ import type { ChangeSpec, EditorState } from "@codemirror/state";
 import type { ScoreDoc } from "../../model/doc";
 import type { SyncEntry, SyncIndex } from "../sync";
 import { type DecoKind, type EditDialect, keyFifthsAt, type NoteCtx, type NoteDuration, type NoteToken } from "./dialect";
+import { t as tr } from "../../i18n";
 
 export interface EditCtx {
   state: EditorState;
@@ -100,7 +101,7 @@ function rewriteNotes(
   fn: (t: NoteToken, e: SyncEntry) => NoteToken | null | string,
 ): EditOutcome {
   const notes = notesIn(ctx, from, to);
-  if (notes.length === 0) return { error: "先选中一个音符" };
+  if (notes.length === 0) return { error: tr("vis.selectNote") };
   const text = ctx.state.doc;
   const changes: EditResult["changes"] = [];
   let single: string | null = null;
@@ -108,7 +109,7 @@ function rewriteNotes(
     const src = text.sliceString(e.from, e.to);
     const nc = noteCtx(ctx, e.from);
     const t = ctx.dialect.parseNote(src, nc);
-    if (!t) return { error: `看不懂这个音符的写法：${src}` };
+    if (!t) return { error: tr("vis.unreadableNote", { src }) };
     const r = fn({ ...t }, e);
     if (typeof r === "string") return { error: r };
     if (!r) continue;
@@ -147,7 +148,7 @@ export function shiftOctave(ctx: EditCtx, from: number, to: number, delta: numbe
   return rewriteNotes(ctx, from, to, (t) => {
     if (t.degree === 0) return null; // 休止不带八度点
     t.octave += delta;
-    return Math.abs(t.octave) > 3 ? "八度点最多三个" : t;
+    return Math.abs(t.octave) > 3 ? tr("vis.octMax") : t;
   });
 }
 
@@ -197,7 +198,7 @@ export function halve(ctx: EditCtx, from: number, to: number): EditOutcome {
       else for (const s of su.slice(keep)) removals.push(spaceAround(ctx, s.from, s.to));
       return t;
     }
-    if (t.halvings >= 4) return "减时线最多四条";
+    if (t.halvings >= 4) return tr("vis.durMin");
     t.halvings += 1;
     return t;
   });
@@ -214,7 +215,7 @@ export function double(ctx: EditCtx, from: number, to: number): EditOutcome {
     }
     const su = ctx.dialect.sustain === "token" ? sustainsOf(ctx, e) : [];
     const beats = 1 + (ctx.dialect.sustain === "token" ? su.length : t.inlineSustains);
-    if (beats >= 8) return "已经够长了";
+    if (beats >= 8) return tr("vis.longEnough");
     if (ctx.dialect.sustain === "inline") t.inlineSustains += beats;
     else {
       const at = groupEnd(ctx, e);
@@ -305,7 +306,7 @@ function spansToDelete(ctx: EditCtx, e: SyncEntry): { from: number; to: number }
 
 /** 删掉这些条目。删完光标落在删除处（插入模式）。 */
 export function deleteEntries(ctx: EditCtx, entries: SyncEntry[]): EditOutcome {
-  if (entries.length === 0) return { error: "没有选中可删的东西" };
+  if (entries.length === 0) return { error: tr("vis.nothingToDelete") };
   const raw = entries.flatMap((e) => spansToDelete(ctx, e)).sort((a, b) => a.from - b.from);
   // 合并重叠的区间，再逐段带走空白
   const merged: { from: number; to: number }[] = [];
@@ -340,17 +341,17 @@ function toggleArc(ctx: EditCtx, first: SyncEntry, last: SyncEntry, keep: { from
   const existing = slurBetween(ctx, first.id, last.id);
   let changes: EditResult["changes"];
   if (!existing && !d.slurNesting && crossesSlur(ctx, first, last)) {
-    return { error: "这种格式的弧不能嵌套或交叠（括号按先开先闭配对），请先去掉相交的那条" };
+    return { error: tr("vis.slurNest") };
   }
   if (d.slurInToken) {
     // 括号写在音符 token 里（`.jpwabc`）：起点 token 前加 `(`、终点 token 后加 `)`；已有同样起止的就各去一个
-    if (first === last) return { error: "圆滑线至少连两个音" };
+    if (first === last) return { error: tr("vis.slurTwo") };
     const a = readNote(ctx, first);
     const b = readNote(ctx, last);
-    if (!a || !b) return { error: "看不懂这个音符的写法" };
+    if (!a || !b) return { error: tr("vis.unreadableNoteShort") };
     const had = ctx.doc?.songs.some((s) => (s.marks ?? []).some((m) => m.type === "slur" && m.start === first.id && m.end === last.id));
     if (had) {
-      if (!a.pre.includes(d.slurOpen) || !b.post.includes(d.slurClose)) return { error: "找不到这条弧的括号" };
+      if (!a.pre.includes(d.slurOpen) || !b.post.includes(d.slurClose)) return { error: tr("vis.slurBrackets") };
       a.pre = a.pre.replace(d.slurOpen, "");
       b.post = b.post.replace(d.slurClose, "");
     } else {
@@ -398,22 +399,22 @@ function spaceAroundParen(ctx: EditCtx, from: number, to: number): EditResult["c
 /** 圆滑线：选区首尾两个音符之间加上或去掉。 */
 export function toggleSlur(ctx: EditCtx, from: number, to: number): EditOutcome {
   const notes = notesIn(ctx, from, to);
-  if (notes.length < 2) return { error: "先选中要连起来的几个音（至少两个）" };
+  if (notes.length < 2) return { error: tr("vis.slurSelect") };
   return toggleArc(ctx, notes[0]!, notes[notes.length - 1]!, { from, to });
 }
 
 /** 延音线：选中的（最后一个）音与后面那个同音高的音之间加上或去掉。 */
 export function toggleTie(ctx: EditCtx, from: number, to: number): EditOutcome {
   const note = notesIn(ctx, from, to).pop();
-  if (!note) return { error: "先选中一个音符" };
+  if (!note) return { error: tr("vis.selectNote") };
   const after = groupEnd(ctx, note);
   const next = ctx.sync.ordered().find((e) => e.kind === "note" && e.from >= after);
-  if (!next) return { error: "后面没有音了" };
+  if (!next) return { error: tr("vis.noNext") };
   const a = readNote(ctx, note);
   const b = readNote(ctx, next);
-  if (!a || !b) return { error: "看不懂这个音符的写法" };
+  if (!a || !b) return { error: tr("vis.unreadableNoteShort") };
   if (a.degree === 0 || a.degree !== b.degree || a.octave !== b.octave || (a.acc ?? null) !== (b.acc ?? null)) {
-    return { error: "延音线只连同音高的两个音；不同音用圆滑线（s）" };
+    return { error: tr("vis.tieSamePitch") };
   }
   const tie = ctx.dialect.tie;
   if (tie) {
@@ -442,7 +443,7 @@ function toggleInPre(pre: string, name: string): string {
 /** 选中的音符加上或去掉一个常用装饰（延长号、重音）。 */
 export function toggleDeco(ctx: EditCtx, from: number, to: number, kind: DecoKind): EditOutcome {
   const deco = ctx.dialect.deco;
-  if (!deco) return { error: "这种格式暂不支持在谱面上加记号" };
+  if (!deco) return { error: tr("vis.noDeco") };
   const name = deco.names[kind];
   if (deco.place === "inToken") {
     return rewriteNotes(ctx, from, to, (t) => {
@@ -451,7 +452,7 @@ export function toggleDeco(ctx: EditCtx, from: number, to: number, kind: DecoKin
     });
   }
   const notes = notesIn(ctx, from, to);
-  if (notes.length === 0) return { error: "先选中一个音符" };
+  if (notes.length === 0) return { error: tr("vis.selectNote") };
   const changes: EditResult["changes"] = [];
   for (const e of notes) {
     const has = ctx.sync.marksOf(e.id).find((m) => m.markKind === "deco" && m.name === name && m.id === e.id);

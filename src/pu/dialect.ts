@@ -11,6 +11,7 @@
 // 靠扩展名分不开（两家都可能是 .txt），但头部字段互不兼容，够判。
 
 import type { Accidental } from "./ast";
+import { t as tr } from "../i18n";
 
 export type Dialect = "tomato" | "shige";
 
@@ -225,12 +226,12 @@ export function sniffDialect(text: string): SniffResult {
     return {
       dialect: null,
       reason: hasBody
-        ? "找到了 Q:/C: 谱行，但没有任何头部字段，无法判断是番茄还是诗歌本文本谱"
-        : "不像文本谱：既没有头部字段，也没有 Q:/C: 谱行",
+        ? tr("sniff.noHeader")
+        : tr("sniff.notPu"),
     };
   }
-  if (tomato > shige) return { dialect: "tomato", reason: `番茄头部字段 ${tomato} 项` };
-  if (shige > tomato) return { dialect: "shige", reason: `诗歌本头部字段 ${shige} 项` };
+  if (tomato > shige) return { dialect: "tomato", reason: tr("sniff.tomato", { n: tomato }) };
+  if (shige > tomato) return { dialect: "shige", reason: tr("sniff.shige", { n: shige }) };
   // 打平时偏番茄：它是原始规范，有谱是其变种。
-  return { dialect: "tomato", reason: "两方言特征持平，按番茄解析" };
+  return { dialect: "tomato", reason: tr("sniff.tie") };
 }

@@ -9,6 +9,7 @@
 // `maybeAutoCheck` 自己也判一道，防漏。
 import { showConfirmDialog } from "./dialogs";
 import { isTauriRuntime } from "./fileio";
+import { t } from "../i18n";
 
 const REPO = "lodebar2026/jpeditor";
 const LATEST_API = `https://api.github.com/repos/${REPO}/releases/latest`;
@@ -71,8 +72,8 @@ export async function openExternal(url: string): Promise<void> {
 /** 发现新版本时的询问框。确定 → 打开 release 页。 */
 export async function promptUpdate(rel: LatestRelease): Promise<void> {
   const ok = await showConfirmDialog(
-    "发现新版本",
-    `当前版本 ${APP_VERSION}，最新版本 ${rel.version}。是否打开下载页面？`,
+    t("update.title"),
+    t("update.body", { cur: APP_VERSION, latest: rel.version }),
   );
   if (ok) await openExternal(rel.url);
 }

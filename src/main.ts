@@ -11,6 +11,7 @@ import { isTauriRuntime } from "./editor/fileio";
 import { maybeAutoCheck } from "./editor/update";
 import { PaintResources, ScorePainter, staffOptionsOf } from "./layout/painter";
 import type { MixedOptions } from "./mixed/model";
+import { initLang, onLangChange, t } from "./i18n";
 
 // Built-in sample (圣哉，圣哉，圣哉) — same content as CodeEditor.kt `scr`.
 const SAMPLE = `// ************** JPW-ABC File Ver 1.0 (for JP-Word v5.50m) **************
@@ -50,6 +51,8 @@ async function registerBravura() {
 }
 
 async function boot() {
+  // 界面语言最先定：之后建的对话框、状态栏文字都按它走。
+  initLang();
   await registerBravura();
   await ensureFontsReady([
     { family: "Bravura", size: 40 },
@@ -169,7 +172,7 @@ async function boot() {
         setMobileView("score");
         revealWorkspace();
       } else if (appRoot.classList.contains("is-starting")) {
-        setStartFeedback(app.status || "识别失败，请更换图片后重试");
+        setStartFeedback(app.status || t("start.recognizeFailed"));
       }
     },
   });
@@ -245,6 +248,12 @@ async function boot() {
   mobileScoreBtn.addEventListener("click", () => setMobileView("score"));
 
   const updateZoom = wireZoomControls(app, scorePane, on);
+  // 切换界面语言：已开的对话框关掉（下次打开按新语言建），代码写的控件文字重出
+  onLangChange(() => {
+    document.querySelectorAll(".modal-overlay, .help-overlay").forEach((el) => el.remove());
+    app.relabel();
+    if (!startFeedback.hidden) setStartFeedback("");
+  });
 
   // paging / zoom keys
   window.addEventListener("keydown", (e) => {
@@ -267,7 +276,7 @@ async function boot() {
         setMobileView("score");
         revealWorkspace();
       } else if (appRoot.classList.contains("is-starting")) {
-        setStartFeedback(app.status || "识别失败，请更换图片后重试");
+        setStartFeedback(app.status || t("start.recognizeFailed"));
       }
     },
   });
@@ -396,7 +405,7 @@ async function pickRecognitionFile(app: App, hooks: RecognitionPickerHooks): Pro
     const { readFile } = await import("@tauri-apps/plugin-fs");
     const sel = await open({
       multiple: false,
-      filters: [{ name: "简谱图片 / PDF", extensions: [...IMAGE_EXT] }],
+      filters: [{ name: t("start.filterImage"), extensions: [...IMAGE_EXT] }],
     });
     if (typeof sel !== "string") return;
     hooks.onPicked();

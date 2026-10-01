@@ -4,6 +4,7 @@
 // 点了调的是控制器同一个 `run`，不另写一套逻辑。
 
 import { VISUAL_ACTIONS, type VisualAction, type VisualMode } from "./keys";
+import { t } from "../../i18n";
 
 /** 面板与菜单里不列的：移动、轮换这类纯键盘操作，和面板自己的开关 */
 const KEYBOARD_ONLY = new Set(["nav.prev", "nav.next", "nav.extendPrev", "nav.extendNext", "nav.home", "nav.end", "mark.next", "mark.prev"]);
@@ -80,7 +81,7 @@ export function buildPalette(root: HTMLElement, r: MenuRunner): () => void {
     }
     if (a.id === "note.digit") {
       for (const d of DIGITS) {
-        const el = button(d === "0" ? "0" : d, `${d === "0" ? "休止" : `唱名 ${d}`}（${a.help}）`, () => {
+        const el = button(d === "0" ? "0" : d, `${d === "0" ? t("vis.rest") : t("vis.degree", { d })}（${a.help}）`, () => {
           r.run(a, d);
           r.refocus();
         }, "visual-palette-digit");
@@ -141,7 +142,7 @@ export function showMenu(x: number, y: number, target: MenuTarget, r: MenuRunner
     if (a.id === "note.digit") {
       const row = document.createElement("div");
       row.className = "visual-menu-digits";
-      for (const d of DIGITS) row.appendChild(button(d, d === "0" ? "休止" : `唱名 ${d}`, pick(a, d)));
+      for (const d of DIGITS) row.appendChild(button(d, d === "0" ? t("vis.rest") : t("vis.degree", { d }), pick(a, d)));
       menu.appendChild(row);
       continue;
     }

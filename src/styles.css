@@ -439,6 +439,14 @@ button:focus-visible, select:focus-visible {
 .omr-follow { position: absolute; right: 16px; bottom: 16px; width: min(640px, 60%); max-height: 34%; overflow: hidden; z-index: 20;
   background: #fff; border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35); pointer-events: none; }
 .omr-follow[hidden] { display: none; }
+/* 并排原图：排版稿左边铺整页原图（omrctl.ts::syncSide），谱面让出这一块 */
+.omr-side { position: absolute; left: 0; bottom: 0; width: 45%; overflow: auto; z-index: 15; background: var(--canvas); border-right: 1px solid var(--border, #ddd); padding: 8px; box-sizing: border-box; }
+.omr-side[hidden] { display: none; }
+.omr-side-page { width: 100%; height: auto; display: block; margin-bottom: 8px; background: #fff; }
+.omr-side-hit { fill: transparent; stroke: none; cursor: pointer; }
+.omr-side-hit:hover { fill: rgba(21, 101, 255, 0.08); }
+.omr-side-hit.on { fill: rgba(21, 101, 255, 0.12); stroke: #1565ff; stroke-width: 3; }
+#score-pane.with-omr-side { margin-left: 45%; }
 .omr-follow svg { width: 100%; height: auto; display: block; }
 .omr-follow .omr-follow-hit { fill: rgba(21, 101, 255, 0.12); stroke: #1565ff; stroke-width: 3; }
 .omr-overlay .omr-slur { stroke: #e65100; }

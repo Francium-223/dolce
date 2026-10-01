@@ -21,6 +21,7 @@ import type { PlayPoint } from "./player";
 import type { DocFormatId } from "./formats";
 import { confirmDiscardEdits, type FormatOption, type FormatSource, type FormatSwitch } from "./formatswitch";
 import { reprojectRecognized, type Reprojected } from "../omr/reproject";
+import { baseImage } from "../omr/overlay";
 import type { ProjectKind, ProjectSnapshot } from "./omrproject";
 
 /** 是否 PDF 字节（mime 或 `%PDF-` 魔数）。与 `omr/decode.ts` 里那份同判据。 */
@@ -106,6 +107,8 @@ export interface OmrHost {
   visualDblClick(ev: MouseEvent): void;
   /** 核对视图重画完了：App 按新的命中框重绑索引条目、重画光标 */
   recognizeRendered(): void;
+  /** 排版稿里选中这个音（并排原图上点了它） */
+  selectNote(id: ElementId): void;
 }
 
 export class OmrController implements FormatSource {
@@ -142,9 +145,10 @@ export class OmrController implements FormatSource {
   }
 
   // ---------------- 持久化 ----------------
-  loadSettings(s: { omrFormat?: unknown; recogView?: unknown; omrFollow?: unknown; omrKind?: unknown }): void {
+  loadSettings(s: { omrFormat?: unknown; recogView?: unknown; omrFollow?: unknown; omrKind?: unknown; omrSide?: unknown }): void {
     if (isOmrFormat(s.omrFormat)) this.format = s.omrFormat;
     if (typeof s.omrFollow === "boolean") this.follow = s.omrFollow;
+    if (typeof s.omrSide === "boolean") this.side = s.omrSide;
     if (s.omrKind === "auto" || s.omrKind === "jianpu" || s.omrKind === "staff") this.kind = s.omrKind;
     this.syncFollowBtn();
     this.syncKindSelects();
@@ -202,9 +206,11 @@ export class OmrController implements FormatSource {
     btn.addEventListener("click", () => void this.showPages());
   }
 
-  /** 有原图就给「原图页」（识别失败了也给：横着拍的图要先转过来再识别） */
+  /** 有原图就给「原图页」（识别失败了也给：横着拍的图要先转过来再识别）；有位图结果才给「并排原图」 */
   private syncPagesBtn(): void {
     this.host.setContextControl(this.pagesBtn, this.lastInputs.length > 0);
+    this.host.setContextControl(this.sideBtn, this.sessionKind === "jianpu" || this.sessionKind === "staff");
+    this.syncSide(null);
   }
 
   /** 这次识别有没有原图（识别失败也算：起始页据此给「调整原图后重试」）。 */
@@ -417,6 +423,7 @@ export class OmrController implements FormatSource {
 
   /** 排版稿里选中了元素 `id`（源模型的 id）：小窗换到它那一行；null / 关着 / 没有识别结果 / 对不上框 → 收起。 */
   followSelection(id: ElementId | null): void {
+    this.syncSide(id);
     const box = this.followEl;
     if (!box) return;
     const i = id !== null && this.follow && this.bin && this.score && this.host.mode !== "recognize"
@@ -452,6 +459,125 @@ export class OmrController implements FormatSource {
     }
     box.replaceChildren(svg);
     box.hidden = false;
+  }
+
+  // ---------------- 并排原图 ----------------
+  /** 排版稿（简谱 / 五线谱 / 混排档）左边铺整页原图：选中的音框出来并滚到眼前，点原图上的音反选到排版稿。持久化 */
+  side = false;
+  private sideBtn: HTMLButtonElement | null = null;
+  private sideEl: HTMLElement | null = null;
+  /** 并排面板现在画的是哪份（换了识别结果、改了谱才重画底图与命中框） */
+  private sideKey: unknown = null;
+
+  setSideBtn(btn: HTMLButtonElement, box: HTMLElement | null): void {
+    this.sideBtn = btn;
+    this.sideEl = box;
+    this.host.setContextControl(btn, false);
+    btn.addEventListener("click", () => {
+      this.side = !this.side;
+      this.host.saveSettings();
+      this.syncSide(null);
+    });
+    box?.addEventListener("click", (e) => {
+      const r = e.target instanceof Element ? e.target.closest<SVGRectElement>("rect.omr-side-hit") : null;
+      const id = r ? Number(r.dataset.id) : NaN;
+      if (Number.isFinite(id)) this.host.selectNote(id);
+    });
+  }
+
+  /** 并排面板：开关、底图、框出 `id`。排版稿选区一变就调（`followSelection` 顺带调）。 */
+  syncSide(id: ElementId | null): void {
+    this.sideBtn?.classList.toggle("active", this.side);
+    this.sideBtn?.setAttribute("aria-pressed", String(this.side));
+    const box = this.sideEl;
+    if (!box) return;
+    const on = this.side && this.host.mode !== "recognize" && (this.bin !== null && this.score !== null || this.staffResult !== null || this.sessionKind === "staff");
+    box.hidden = !on;
+    document.getElementById("score-pane")?.classList.toggle("with-omr-side", on);
+    if (!on) {
+      box.replaceChildren();
+      this.sideKey = null;
+      return;
+    }
+    const pane = document.getElementById("score-pane");
+    if (pane) box.style.top = `${pane.offsetTop}px`;
+    void this.drawSide(id);
+  }
+
+  private async drawSide(id: ElementId | null): Promise<void> {
+    const box = this.sideEl!;
+    // 五线谱项目重开后还没有对照数据：先从原图补
+    if (!this.staffResult && this.sessionKind === "staff" && !(this.bin && this.score)) {
+      if (!(await this.ensureStaffResult())) return;
+    }
+    const doc = this.host.currentScoreDoc();
+    const key = [this.score, this.staffResult, doc];
+    const fresh = !Array.isArray(this.sideKey) || (this.sideKey as unknown[]).some((x, i) => x !== key[i]);
+    if (fresh) {
+      this.sideKey = key;
+      box.replaceChildren(...(await this.sidePages(doc)));
+    }
+    for (const r of box.querySelectorAll("rect.omr-side-hit.on")) r.classList.remove("on");
+    if (id === null) return;
+    const hit = box.querySelector<SVGRectElement>(`rect.omr-side-hit[data-id="${id}"]`);
+    hit?.classList.add("on");
+    hit?.scrollIntoView({ block: "center", inline: "nearest" });
+  }
+
+  /** 并排面板的各页：原图 + 每个音一个框（`data-id` = 排版稿里的元素 id）。 */
+  private async sidePages(doc: ScoreDoc | null): Promise<SVGSVGElement[]> {
+    const page = (bin: Binary, boxes: { id: ElementId; x: number; y: number; w: number; h: number }[]): SVGSVGElement => {
+      const NS = "http://www.w3.org/2000/svg";
+      const svg = document.createElementNS(NS, "svg");
+      svg.setAttribute("class", "omr-side-page");
+      svg.setAttribute("viewBox", `0 0 ${bin.w} ${bin.h}`);
+      svg.appendChild(baseImage(bin));
+      for (const b of boxes) {
+        const pad = Math.max(3, b.h * 0.25);
+        const r = document.createElementNS(NS, "rect");
+        r.setAttribute("class", "omr-side-hit");
+        r.dataset.id = String(b.id);
+        r.setAttribute("x", String(b.x - pad));
+        r.setAttribute("y", String(b.y - pad));
+        r.setAttribute("width", String(b.w + pad * 2));
+        r.setAttribute("height", String(b.h + pad * 2));
+        r.setAttribute("rx", String(pad));
+        svg.appendChild(r);
+      }
+      return svg;
+    };
+    if (this.staffResult) {
+      const res = this.staffResult;
+      const ids = await this.staffIds(doc);
+      const byOmr = new Map([...ids].map(([k, v]) => [v, k]));
+      return res.pages.map((p, i) => page(p.result.raster!.bin, [...res.noteBoxes].filter(([oid, b]) => b.page === i && byOmr.has(oid))
+        .map(([oid, b]) => ({ id: byOmr.get(oid)!, x: b.box.left, y: b.box.top, w: b.box.right - b.box.left, h: b.box.bottom - b.box.top }))));
+    }
+    if (!this.bin || !this.score) return [];
+    const map = this.idMapOf(doc);
+    const flat = this.score.rows.flatMap((r) => r.nums);
+    const boxes = map ? map.toId.flatMap((id, i) => {
+      const b = flat[i]?.bbox;
+      return id !== undefined && b ? [{ id, x: b.x, y: b.y, w: b.w, h: b.h }] : [];
+    }) : [];
+    return [page(this.bin, boxes)];
+  }
+
+  /** 五线谱：模型和弦 id → 识别时写进 `<note id>` 的编号（按当前原文读，改过的谱也认得回来）。 */
+  private async staffIds(doc: ScoreDoc | null): Promise<Map<ElementId, string>> {
+    const { surfaceOf } = await import("../model/xmlsurface");
+    const out = new Map<ElementId, string>();
+    for (const part of doc?.songs[0]?.parts ?? []) {
+      for (const m of part.measures) {
+        for (const el of m.elements) {
+          if (el.kind !== "chord") continue;
+          const node = (el.notes[0] && surfaceOf(el.notes[0])) ?? surfaceOf(el);
+          const oid = node?.getAttribute("id");
+          if (oid && this.staffResult?.noteBoxes.has(oid)) out.set(el.id, oid);
+        }
+      }
+    }
+    return out;
   }
 
   /** 编辑器改动时同步代码区间映射（CodeMirror 的 changes 映射）。 */
@@ -618,6 +744,7 @@ export class OmrController implements FormatSource {
       this.setLayout(false);
       if (this.btnEl) this.btnEl.textContent = "原图对照";
       this.host.reload(this.host.getText());
+      this.syncSide(null); // 回到排版稿：并排原图（开着的话）铺回来
     } else {
       this.followSelection(null); // 核对视图本身就是原图，小窗收起
       this.host.setRecognizeMode(true);
@@ -1103,6 +1230,8 @@ export class OmrController implements FormatSource {
     this.host.setContextControl(this.btnEl, false);
     this.host.setContextControl(this.followBtn, false);
     this.host.setContextControl(this.pagesBtn, false);
+    this.host.setContextControl(this.sideBtn, false);
+    this.sideKey = null;
     this.host.setContextControl(this.kindField(), false);
     this.staffResult = null;
     this.sessionKind = null;
@@ -1112,6 +1241,7 @@ export class OmrController implements FormatSource {
       this.setLayout(false);
     }
     this.host.syncViewModes();
+    this.syncSide(null);
   }
 }
 

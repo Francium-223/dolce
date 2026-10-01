@@ -238,6 +238,8 @@ async function boot() {
   );
   const pagesBtn = document.getElementById("btn-src-pages") as HTMLButtonElement | null;
   if (pagesBtn) app.omr.setPagesBtn(pagesBtn);
+  const sideBtn = document.getElementById("btn-src-side") as HTMLButtonElement | null;
+  if (sideBtn) app.omr.setSideBtn(sideBtn, document.getElementById("omr-side"));
   const followBtn = document.getElementById("btn-src-follow") as HTMLButtonElement | null;
   if (followBtn) app.omr.setFollowBtn(followBtn, document.getElementById("omr-follow"));
   const recogViewSel = document.getElementById("sel-recog-view") as HTMLSelectElement | null;

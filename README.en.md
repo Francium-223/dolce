@@ -61,7 +61,8 @@ The interface is in Chinese.
   images are never uploaded.
 - **Edit while reviewing.** Notes can be edited directly on the source-image overlay; changed, deleted and inserted
   notes are marked in place. Back in the typeset view, an optional "source snippet" window shows the original line
-  of the selected note.
+  of the selected note, or a side-by-side panel shows the whole source page with selection linked both ways.
+  A pages panel lets you reorder, add, remove, rotate and crop the source images and recognize again.
 - **Source-image review.** Recognized symbols are overlaid on the binarized source image at their original
   positions, so you can check note by note. Clicking a symbol jumps to its source text, and you can play the
   score back in this view.

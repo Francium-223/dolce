@@ -27,6 +27,7 @@
 | `src/omr/vector.ts` / `inventory.ts` / `glyphdict.ts` | 矢量 PDF 对象层、归类、形状字典 |
 | `src/editor/omrctl.ts` | 编辑器侧控制器（识别 → 出文本 → 叠加核对 → 点选定位；核对视图试听时按 `meta` 源区间把播放的音对回识别框，见 [播放](播放.md)）；核对视图里可视化编辑、排版稿的「原图片段」跟随小窗 |
 | `src/editor/omrproject.ts` | 识别项目 `.jpomr`：识别结果、二值图、点选映射与原图一起存，重开不重跑识别（见 [编辑器](编辑器.md)） |
+| `src/editor/omrctl.ts::syncSide` | **并排原图**：排版稿左边铺整页原图（简谱按 `idMapOf` 认框，五线谱按 `<note id>` 认框），选中互通（`OmrHost.selectNote`） |
 | `src/omr/reproject.ts` | 核对视图随编辑重画：当前模型投回原识别框（改过 / 删掉 / 新插、改过的歌词） |
 
 ## 吃什么吐什么

@@ -663,6 +663,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
       playMetronome: this.playback.metronome,
       omrFormat: this.omr.format,
       omrFollow: this.omr.follow,
+      omrSide: this.omr.side,
       omrKind: this.omr.kind,
       jpProfile: this.jpProfile,
       originalProfile: this.originalProfile,
@@ -1900,6 +1901,17 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     }
     this._playCache = { doc, forExpanded, src };
     return src;
+  }
+
+  /** OmrHost：并排原图上点了某个音 → 排版稿里选中它（可视化编辑的选区；没有就只记起播点并点亮） */
+  selectNote(id: ElementId): void {
+    const span = this._sync.spanOfNote(id);
+    if (span && this.visualEnabled()) {
+      this.visual.select(span.from, span.to);
+      this.scorePane.focus({ preventScroll: true });
+    }
+    this._selectedId = this._playIdOf(id);
+    this._selectedVerse = 1;
   }
 
   /** PlaybackHost：循环段——谱面上选中的第一个到最后一个音（可视化编辑的选区；五线谱 / 混排换成画出来那份的 id）。没有选区为 null。 */

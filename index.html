@@ -212,6 +212,7 @@
           <span class="tool-label">核对</span>
           <button id="btn-recognize" data-context-control title="将识别结果与上传原图进行对照" hidden>原图对照</button>
           <button id="btn-src-pages" data-context-control title="这次识别用的原图：调顺序、删减、加图、旋转、裁剪，再按这些页重新识别" hidden>原图页</button>
+          <button id="btn-src-side" data-context-control aria-pressed="false" title="排版稿左边铺整页原图：选中的音框出来，点原图上的音选中排版稿里那个" hidden>并排原图</button>
           <button id="btn-src-follow" data-context-control aria-pressed="false" title="在排版稿里选中音符时，右下角小窗显示原图上对应的那一行并框出这个音" hidden>原图片段</button>
           <label id="recog-kind-field" class="toolbar-select-field" data-context-control hidden>
             <span class="sr-only">识别类型</span>
@@ -309,6 +310,7 @@
           <div id="visual-palette" class="visual-palette" aria-label="记号面板" hidden></div>
           <div id="score-pane"></div>
           <div id="omr-follow" class="omr-follow" hidden></div>
+          <div id="omr-side" class="omr-side" hidden></div>
         </section>
 
         <section id="start-screen" aria-labelledby="start-title">

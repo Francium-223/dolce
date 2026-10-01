@@ -9,6 +9,7 @@ export const zh = {
   "header.save": "保存",
   "header.saveAs": "另存为",
   "header.export": "导出",
+  "header.more": "更多",
   // 工具栏
   "toolbar.aria": "乐谱工具栏",
   "toolbar.lines": "分行",

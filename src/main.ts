@@ -13,6 +13,7 @@ import { maybeAutoCheck } from "./editor/update";
 import { PaintResources, ScorePainter, staffOptionsOf } from "./layout/painter";
 import type { MixedOptions } from "./mixed/model";
 import { initLang, onLangChange, t } from "./i18n";
+import { setupPopover } from "./editor/toolpop";
 
 // Built-in sample (圣哉，圣哉，圣哉) — same content as CodeEditor.kt `scr`.
 const SAMPLE = `// ************** JPW-ABC File Ver 1.0 (for JP-Word v5.50m) **************
@@ -215,6 +216,24 @@ async function boot() {
   }
   on("btn-export", () => showExportDialog(app));
   on("btn-help", () => showHelpDialog(app));
+  // 顶栏的应用级四项在手机宽度收进「⋯」（电脑上那个钮不显示，四项照常排在顶栏）
+  const headerMore = document.getElementById("btn-header-more") as HTMLButtonElement | null;
+  const headerTools = document.getElementById("header-tools");
+  if (headerMore && headerTools) setupPopover(headerMore, headerTools);
+  // 核对组里「怎么对照 | 识别输入」之间的细线：两侧都有可见项才出现（各项按上下文显隐）
+  const inputSep = document.getElementById("recog-input-sep");
+  const recogGroup = inputSep?.parentElement;
+  if (inputSep && recogGroup) {
+    const syncSep = () => {
+      const kids = [...recogGroup.children] as HTMLElement[];
+      const i = kids.indexOf(inputSep);
+      const shown = (el: HTMLElement) => el.hasAttribute("data-context-control") && !el.hidden;
+      const hide = !(kids.slice(0, i).some(shown) && kids.slice(i + 1).some(shown));
+      if (inputSep.hidden !== hide) inputSep.hidden = hide;
+    };
+    new MutationObserver(syncSep).observe(recogGroup, { subtree: true, attributes: true, attributeFilter: ["hidden"] });
+    syncSep();
+  }
   // 排版模式（展开 / 原样 / 五线谱 / 混排）。四档 = 「哪个排版器」×「哪一档版面」的组合，
   // 配法由 App.setViewMode 说了算，这里只负责接线。
   const viewSwitch = document.getElementById("view-mode-switch");

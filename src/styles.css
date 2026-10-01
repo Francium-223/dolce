@@ -84,6 +84,40 @@ button:focus-visible, select:focus-visible {
 .button-quiet { background: transparent; color: var(--text-secondary); padding-inline: 10px; }
 .button-quiet:hover { color: var(--text); }
 .button-symbol { font-size: 14px; line-height: 1; }
+/* 顶栏的应用级工具（声部、简繁、设置、帮助）：比保存、导出轻一档；手机宽度收进「⋯」 */
+.header-tools { display: flex; align-items: center; gap: 2px; }
+.button-tool { background: transparent; color: var(--text-secondary); padding-inline: 10px; font-weight: 650; }
+.button-tool:hover { background: var(--panel-hover); color: var(--text); }
+.header-more { display: none; font-size: 18px; }
+.header-more[aria-expanded="true"] { background: var(--panel-hover); color: var(--text); }
+
+/* 弹出层（toolpop.ts）：fixed 定位，免得被工具栏的横向滚动裁掉 */
+.tool-more { display: flex; align-items: center; }
+#toolbar .tool-more-toggle { display: inline-flex; align-items: center; gap: 4px; }
+#toolbar .tool-more-toggle[aria-expanded="true"] { background: var(--panel-raised); color: var(--text); }
+.tool-more-chevron { font-size: 11px; line-height: 1; transform: translateY(-2px); }
+.tool-pop, .header-tools.open {
+  position: fixed;
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 2px;
+  min-width: 200px;
+  padding: 6px;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(0, 0, 0, 0.5);
+}
+.tool-pop:not(.open) { display: none; }
+#toolbar .tool-pop button, .header-tools.open .button-tool { justify-content: flex-start; text-align: left; width: 100%; }
+.tool-pop .toolbar-select-field { justify-content: space-between; gap: 10px; padding-left: 9px; }
+.tool-pop .toolbar-select-field[hidden] { display: none; }
+.tool-pop .toolbar-select-field > .sr-only {
+  position: static; width: auto; height: auto; margin: 0; overflow: visible; clip: auto;
+  color: var(--text-secondary); font-size: 12px; font-weight: 650;
+}
 
 #toolbar {
   flex: 0 0 44px;
@@ -99,8 +133,48 @@ button:focus-visible, select:focus-visible {
   border-bottom: 1px solid var(--border);
 }
 #toolbar::-webkit-scrollbar { display: none; }
+/* 电脑上放不下就折成第二行，不横向滚、也不往菜单里藏；手机宽度（≤680px）仍横向滚 */
+@media (min-width: 681px) {
+  #toolbar { flex: 0 0 auto; flex-wrap: wrap; row-gap: 4px; padding-block: 7px; overflow: visible; }
+}
 #app.is-starting #toolbar,
+#app.is-starting #statusbar,
 #app.is-starting .header-actions { display: none; }
+
+/* 状态栏：左边状态文字，右边读数（选中、编辑模式、拍数自检、可疑项）与缩放、翻页 */
+.statusbar {
+  flex: 0 0 28px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 10px 0 14px;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+  color: var(--text-secondary);
+  font-size: 12px;
+  min-width: 0;
+}
+.status-text { flex: 1 1 auto; min-width: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.status-items { flex: 0 0 auto; display: flex; align-items: center; gap: 10px; }
+.status-sep { width: 1px; height: 16px; background: var(--border); }
+.statusbar .tool-group { gap: 1px; }
+.statusbar button {
+  height: 22px;
+  border: 0;
+  border-radius: 5px;
+  padding: 0 7px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.statusbar button:hover:not(:disabled) { background: var(--panel-raised); color: var(--text); }
+.statusbar button:disabled { color: #555; cursor: not-allowed; }
+.statusbar .icon-button { width: 24px; padding: 0; font-size: 15px; }
+.statusbar #btn-zoom-reset { min-width: 48px; font-variant-numeric: tabular-nums; }
+.statusbar .doubt-count { color: #e67700; }
 #app.is-starting #btn-home { display: none; }
 .sr-only {
   position: absolute;
@@ -116,6 +190,9 @@ button:focus-visible, select:focus-visible {
 .tool-group { display: flex; align-items: center; gap: 3px; flex: 0 0 auto; }
 .context-tool-group { padding-right: 8px; border-right: 1px solid var(--border); }
 .tool-label { margin: 0 5px 0 1px; color: var(--text-muted); font-size: 10px; font-weight: 700; }
+/* 组内分段的细线（核对组：怎么对照 | 识别输入）；只在两侧都有可见项时出现，由 toolbar 那段同步 */
+.tool-sep { width: 1px; height: 16px; background: var(--border); margin: 0 4px; flex: 0 0 auto; }
+.tool-sep[hidden] { display: none; }
 #toolbar button, #toolbar select {
   height: 30px;
   border: 0;
@@ -249,6 +326,7 @@ button:focus-visible, select:focus-visible {
   font-size: 11px;
   font-weight: 700;
 }
+.pane-heading > span:first-child { white-space: nowrap; }
 .pane-meta { color: var(--text-muted); font-size: 9px; }
 /* 代码区标题栏里的下拉（识别输出格式）：占的就是格式标签那个位置，所以做得比工具条上的更小 */
 .pane-select-field { position: relative; display: inline-flex; align-items: center; }
@@ -824,6 +902,11 @@ button:focus-visible, select:focus-visible {
   .header-actions .button-home { width: 36px; padding: 0; }
   .home-label { display: none; }
   .header-divider { display: none; }
+  .header-more { display: inline-flex; width: 36px; padding: 0; }
+  .statusbar { padding-inline: 8px; gap: 6px; }
+  .statusbar .sel-info, .statusbar .visual-mode, .statusbar .tool-label { display: none; }
+  .header-tools:not(.open) { display: none; }
+  .header-tools.open .button-tool { height: 34px; font-size: 13px; }
   #toolbar { padding-inline: 8px; }
   .play-progress { width: 72px; margin: 0 3px; }
   .mobile-view-switch { display: flex; padding: 2px; border-radius: 7px; background: #0d0d0d; }

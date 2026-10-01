@@ -10,6 +10,7 @@ export const en: Record<MsgKey, string> = {
   "header.save": "Save",
   "header.saveAs": "Save As",
   "header.export": "Export",
+  "header.more": "More",
   // 工具栏
   "toolbar.aria": "Score toolbar",
   "toolbar.lines": "Lines",

@@ -237,6 +237,15 @@
           </div>
         </div>
         <div class="header-actions">
+          <!-- 应用级的四项：宽屏排在顶栏，手机宽度收进「⋯」（toolpop.ts） -->
+          <button id="btn-header-more" class="button button-tool header-more" aria-expanded="false" aria-controls="header-tools" title="更多" aria-label="更多" data-i18n-title="header.more" data-i18n-aria="header.more">⋯</button>
+          <div id="header-tools" class="header-tools">
+            <button id="btn-parts" class="button button-tool" title="声部：增删、排序、改名、谱号、拆合闭合谱、歌词复制；试听静音 / 独奏 / 音量" data-i18n-title="toolbar.parts.title" data-i18n="toolbar.parts">声部</button>
+            <button id="btn-hanzi" class="button button-tool" title="整篇转换源码中的中文（简体 ⇄ 繁体）" data-i18n-title="toolbar.hanzi.title" data-i18n="toolbar.hanzi">简繁</button>
+            <button id="btn-options" class="button button-tool" data-i18n="toolbar.options">设置</button>
+            <button id="btn-help" class="button button-tool" title="功能帮助、123 格式与记谱法说明" data-i18n-title="toolbar.help.title" data-i18n="toolbar.help">帮助</button>
+          </div>
+          <span class="header-divider" aria-hidden="true"></span>
           <button id="btn-save" class="button button-secondary" data-i18n="header.save">保存</button>
           <button id="btn-saveas" class="button button-secondary" data-i18n="header.saveAs">另存为</button>
           <button id="btn-export" class="button button-primary" data-i18n="header.export">导出</button>
@@ -254,26 +263,26 @@
         <div id="recognition-tools" class="tool-group context-tool-group" hidden>
           <span class="tool-label" data-i18n="toolbar.check">核对</span>
           <button id="btn-recognize" data-context-control title="将识别结果与上传原图进行对照" data-i18n-title="toolbar.recognize.title" data-i18n="toolbar.recognize" hidden>原图对照</button>
-          <button id="btn-doubt" class="doubt-count" title="识别时把握不大的音与歌词字（核对视图里黄框标出）：点一下跳到下一处" data-i18n-title="toolbar.doubt.title" hidden></button>
-          <button id="btn-src-pages" data-context-control title="这次识别用的原图：调顺序、删减、加图、旋转、裁剪，再按这些页重新识别" data-i18n-title="toolbar.srcPages.title" data-i18n="toolbar.srcPages" hidden>原图页</button>
-          <button id="btn-src-side" data-context-control aria-pressed="false" title="排版稿左边铺整页原图：选中的音框出来，点原图上的音选中排版稿里那个" data-i18n-title="toolbar.srcSide.title" data-i18n="toolbar.srcSide" hidden>并排原图</button>
-          <button id="btn-side-code" data-context-control aria-pressed="true" title="并排时显示或收起源码区" data-i18n-title="toolbar.sideCode.title" data-i18n="toolbar.sideCode" hidden>源码</button>
-          <button id="btn-src-follow" data-context-control aria-pressed="false" title="在排版稿里选中音符时，右下角小窗显示原图上对应的那一行并框出这个音" data-i18n-title="toolbar.srcFollow.title" data-i18n="toolbar.srcFollow" hidden>原图片段</button>
-          <label id="recog-kind-field" class="toolbar-select-field" data-context-control hidden>
-            <span class="sr-only" data-i18n="toolbar.recogKind">识别类型</span>
-            <select id="sel-recog-kind" title="识别为：自动判断 / 简谱 / 五线谱。改了就用刚才那份图重新识别" aria-label="识别类型" data-i18n-title="toolbar.recogKind.title" data-i18n-aria="toolbar.recogKind">
-              <option value="auto" data-i18n="recogKind.auto">自动判断</option>
-              <option value="jianpu" data-i18n="recogKind.jianpuAs">按简谱识别</option>
-              <option value="staff" data-i18n="recogKind.staffAs">按五线谱识别</option>
-            </select>
-            <span class="select-chevron" aria-hidden="true">⌄</span>
-          </label>
           <label id="recog-view-field" class="toolbar-select-field" data-context-control hidden>
             <span class="sr-only" data-i18n="toolbar.recogView">原图对照方式</span>
             <select id="sel-recog-view" title="原图对照方式" aria-label="原图对照方式" data-i18n-title="toolbar.recogView" data-i18n-aria="toolbar.recogView">
               <option value="floating" data-i18n="toolbar.recogView.floating">附近浮窗</option>
               <option value="inplace" data-i18n="toolbar.recogView.inplace">原位叠加</option>
               <option value="original" data-i18n="toolbar.recogView.original">仅原图</option>
+            </select>
+            <span class="select-chevron" aria-hidden="true">⌄</span>
+          </label>
+          <button id="btn-src-side" data-context-control aria-pressed="false" title="排版稿左边铺整页原图：选中的音框出来，点原图上的音选中排版稿里那个" data-i18n-title="toolbar.srcSide.title" data-i18n="toolbar.srcSide" hidden>并排原图</button>
+          <button id="btn-side-code" data-context-control aria-pressed="true" title="并排时显示或收起源码区" data-i18n-title="toolbar.sideCode.title" data-i18n="toolbar.sideCode" hidden>源码</button>
+          <button id="btn-src-follow" data-context-control aria-pressed="false" title="在排版稿里选中音符时，右下角小窗显示原图上对应的那一行并框出这个音" data-i18n-title="toolbar.srcFollow.title" data-i18n="toolbar.srcFollow" hidden>原图片段</button>
+          <span id="recog-input-sep" class="tool-sep" aria-hidden="true"></span>
+          <button id="btn-src-pages" data-context-control title="这次识别用的原图：调顺序、删减、加图、旋转、裁剪，再按这些页重新识别" data-i18n-title="toolbar.srcPages.title" data-i18n="toolbar.srcPages" hidden>原图页</button>
+          <label id="recog-kind-field" class="toolbar-select-field" data-context-control hidden>
+            <span class="sr-only" data-i18n="toolbar.recogKind">识别类型</span>
+            <select id="sel-recog-kind" title="识别为：自动判断 / 简谱 / 五线谱。改了就用刚才那份图重新识别" aria-label="识别类型" data-i18n-title="toolbar.recogKind.title" data-i18n-aria="toolbar.recogKind">
+              <option value="auto" data-i18n="recogKind.auto">自动判断</option>
+              <option value="jianpu" data-i18n="recogKind.jianpuAs">按简谱识别</option>
+              <option value="staff" data-i18n="recogKind.staffAs">按五线谱识别</option>
             </select>
             <span class="select-chevron" aria-hidden="true">⌄</span>
           </label>
@@ -299,25 +308,6 @@
           <button id="btn-mobile-code" aria-pressed="false" data-i18n="toolbar.mobileCode">源码</button>
           <button id="btn-mobile-score" class="active" aria-pressed="true" data-i18n="toolbar.mobileScore">预览</button>
         </div>
-        <div class="tool-group">
-          <span class="tool-label" data-i18n="toolbar.zoom">缩放</span>
-          <button id="btn-zoom-out" class="icon-button" title="缩小 (Ctrl/⌘ -)" aria-label="缩小" data-i18n-title="toolbar.zoomOut.title" data-i18n-aria="toolbar.zoomOut">−</button>
-          <button id="btn-zoom-reset" title="复位 (Ctrl/⌘ 0)" data-i18n-title="toolbar.zoomReset.title">100%</button>
-          <button id="btn-zoom-in" class="icon-button" title="放大 (Ctrl/⌘ +)" aria-label="放大" data-i18n-title="toolbar.zoomIn.title" data-i18n-aria="toolbar.zoomIn">＋</button>
-        </div>
-        <span class="sep" aria-hidden="true"></span>
-        <div class="tool-group">
-          <span class="tool-label" data-i18n="toolbar.page">页面</span>
-          <button id="btn-prev" class="icon-button" title="上一页" aria-label="上一页" data-i18n-title="toolbar.prev" data-i18n-aria="toolbar.prev">‹</button>
-          <button id="btn-next" class="icon-button" title="下一页" aria-label="下一页" data-i18n-title="toolbar.next" data-i18n-aria="toolbar.next">›</button>
-        </div>
-        <span class="sep" aria-hidden="true"></span>
-        <div class="tool-group">
-          <button id="btn-parts" title="声部：增删、排序、改名、谱号、拆合闭合谱、歌词复制；试听静音 / 独奏 / 音量" data-i18n-title="toolbar.parts.title" data-i18n="toolbar.parts">声部</button>
-          <button id="btn-hanzi" title="整篇转换源码中的中文（简体 ⇄ 繁体）" data-i18n-title="toolbar.hanzi.title" data-i18n="toolbar.hanzi">简繁</button>
-          <button id="btn-options" data-i18n="toolbar.options">设置</button>
-          <button id="btn-help" title="功能帮助、123 格式与记谱法说明" data-i18n-title="toolbar.help.title" data-i18n="toolbar.help">帮助</button>
-        </div>
       </div>
 
       <div id="body">
@@ -338,9 +328,6 @@
           <div class="pane-heading">
             <span data-i18n="pane.score">排版</span>
             <div class="pane-heading-actions">
-              <span id="sel-info" class="sel-info" title="选中的元素：声部、第几小节第几拍、音高、时值" data-i18n-title="pane.selInfo.title" hidden></span>
-              <span id="visual-mode" class="visual-mode" title="可视化编辑：编辑模式（方块光标）改选中的元素，插入模式（竖线光标）在光标处插入；Insert / Esc 切换" data-i18n-title="pane.visualMode.title" hidden>编辑</span>
-              <span id="beat-count" class="beat-count" title="点一下跳到下一处" data-i18n-title="pane.beatCount.title" hidden></span>
               <button id="btn-palette" class="palette-button" aria-pressed="false" title="记号面板：用鼠标点唱名、八度、时值、记号、换行" data-i18n-title="pane.palette.title" data-i18n="pane.palette">面板</button>
               <button id="btn-beat-check" class="beat-check-button" aria-pressed="true" title="小节时值自检：拍数与拍号对不上的小节标红" data-i18n-title="pane.beatCheck.title" data-i18n="pane.beatCheck">拍</button>
               <button id="btn-format-marks" class="format-marks-button" aria-pressed="true" title="显示格式标记：换行符 ↵ 与换页符 ⤓（Ctrl/⌘+Shift+M）" data-i18n-title="pane.formatMarks.title">¶</button>
@@ -425,7 +412,27 @@
           </div>
         </div>
       </div>
-      <div id="status" class="sr-only" role="status" aria-live="polite"></div>
+      <footer id="statusbar" class="statusbar">
+        <div id="status" class="status-text" role="status" aria-live="polite"></div>
+        <div class="status-items">
+          <span id="sel-info" class="sel-info" title="选中的元素：声部、第几小节第几拍、音高、时值" data-i18n-title="pane.selInfo.title" hidden></span>
+          <span id="visual-mode" class="visual-mode" title="可视化编辑：编辑模式（方块光标）改选中的元素，插入模式（竖线光标）在光标处插入；Insert / Esc 切换" data-i18n-title="pane.visualMode.title" hidden>编辑</span>
+          <span id="beat-count" class="beat-count" title="点一下跳到下一处" data-i18n-title="pane.beatCount.title" hidden></span>
+          <button id="btn-doubt" class="doubt-count" title="识别时把握不大的音与歌词字（核对视图里黄框标出）：点一下跳到下一处" data-i18n-title="toolbar.doubt.title" hidden></button>
+          <span class="status-sep" aria-hidden="true"></span>
+          <div class="tool-group">
+            <span class="tool-label" data-i18n="toolbar.zoom">缩放</span>
+            <button id="btn-zoom-out" class="icon-button" title="缩小 (Ctrl/⌘ -)" aria-label="缩小" data-i18n-title="toolbar.zoomOut.title" data-i18n-aria="toolbar.zoomOut">−</button>
+            <button id="btn-zoom-reset" title="复位 (Ctrl/⌘ 0)" data-i18n-title="toolbar.zoomReset.title">100%</button>
+            <button id="btn-zoom-in" class="icon-button" title="放大 (Ctrl/⌘ +)" aria-label="放大" data-i18n-title="toolbar.zoomIn.title" data-i18n-aria="toolbar.zoomIn">＋</button>
+          </div>
+          <div class="tool-group">
+            <span class="tool-label" data-i18n="toolbar.page">页面</span>
+            <button id="btn-prev" class="icon-button" title="上一页" aria-label="上一页" data-i18n-title="toolbar.prev" data-i18n-aria="toolbar.prev">‹</button>
+            <button id="btn-next" class="icon-button" title="下一页" aria-label="下一页" data-i18n-title="toolbar.next" data-i18n-aria="toolbar.next">›</button>
+          </div>
+        </div>
+      </footer>
     </div>
     <!-- hidden off-screen svg used for getBBox/getComputedTextLength measurement -->
     <svg id="measure-svg" width="0" height="0" aria-hidden="true"></svg>

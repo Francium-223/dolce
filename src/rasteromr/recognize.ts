@@ -3480,6 +3480,7 @@ export async function recognizeRasterPage(
   attachAccidentalsByPitch(pg, ctx, notes);
   splitUnisons(notes, stems, beams, raster.bin, unit.space);
   fixDottedPairs(notes, unit.space);
+  fixQuartersByBarSum(pg, ctx, notes, opts.carryTime, unit.space);
   findTuplets(pg, beams, stems, notes);
 
   // ── 演奏法与力度 ─────────────────────────────────────────────────────────
@@ -3556,6 +3557,27 @@ export async function recognizeRasterPage(
       pg.staves.map((st) => ({ top: st.box.top, bottom: st.box.bottom, left: st.box.left, right: st.box.right })),
       unit,
     );
+    // **谱表上方文字行里的假音**：系统行首谱表上方印的「（副歌）」之类小字，圈状的笔画被认成符头
+    //（新编赞美诗里四十来首在副歌那一行行首多出一个 D6；加线是按头的位置补出来的，查加线拦不住）。
+    // 系统最上面那行谱、头心高出第五线 1.25 格以上、又落在一条文字行的字格跨度里的，是字不是音。
+    {
+      // 要落在**某一个字格里**（不是整行的跨度里），且那一行是六个字以内的短标签：合唱谱上一个系统最末一行歌词、
+      // 速度术语就在下一个系统最上面那行谱的上方，按行跨度判会罩住女高上加线的真音（合唱谱扫描档音符 80.7 → 75.1；
+      // 只限短标签、仍按跨度判 79.9）
+      const spans = rows.filter((row) => row.cells.length >= 2 && row.cells.length <= 6).flatMap((row) => row.cells.map((c) => ({ x0: c.x, x1: c.x + c.w, y0: c.y, y1: c.y + c.h })));
+      const pad = unit.space * 0.1;
+      const topStaves = new Set(pg.systems.map((sy) => sy.staves[0]));
+      const inText = (n: StaffNote) => {
+        // 只看系统最上面那行：下面那行的上方就是歌词，男高的 D4、E4 带着上加线正落在歌词行的跨度里
+        if (n.rest || !topStaves.has(n.staff)) return false;
+        const bx = n.sym.box;
+        const cx = (bx.left + bx.right) / 2;
+        const cy = (bx.top + bx.bottom) / 2;
+        if (cy > n.staff.box.top - unit.space * 1.25) return false;
+        return spans.some((q) => cx >= q.x0 - pad && cx <= q.x1 + pad && cy >= q.y0 - pad && cy <= q.y1 + pad);
+      };
+      for (let i = notes.length - 1; i >= 0; i--) if (inText(notes[i])) notes.splice(i, 1);
+    }
     for (const row of rows) for (const cell of row.cells) ledger.claim(cell, "lyric");
     const objs = [];
     const ocr = opts.lyricOcr;
@@ -4453,6 +4475,50 @@ function inkSystemBarlines(pg: SPage, bin: Binary, sp: number): void {
           pushSeg(pg, pg.objs.length + pg.segs.length + 1, { x0: x, y0: b.box.top, x1: x, y1: b.box.bottom, lw: l.lw, maxLw: l.lw });
         });
       }
+  }
+}
+
+/**
+ * **小节多出几个八分的拍数，就有几个四分其实是八分**。密排的单符尾八分（一个音一根尾，不连杠），尾巴贴着下一个音的头，
+ * 零星有一个认不出尾、读成四分（新编赞美诗 265 愿跟随主歌，几乎每小节一个），这一小节就多出八分之一拍。
+ * 拍号认出来了才做。按干朝向分声部，某个声部的时值和比拍号多 k 个八分（不过半小节）时，
+ * 把这个声部里**到下一个音最近**的 k 个四分改成八分——八分的间距本来就比四分小；
+ * k 正好等于四分的个数就全改，否则第 k 近的要明显比第 k+1 近的小（八成以内），分不开的不动。
+ */
+function fixQuartersByBarSum(pg: SPage, ctx: Map<Staff, StaffContext>, notes: StaffNote[], carry: { beats: number; beatType: number } | undefined, sp: number): void {
+  if (!lastTimeSignature(pg, ctx, carry)) return;
+  const eps = 1e-6;
+  for (const b of checkBars(pg, ctx, notes, carry)) {
+    if (b.full) continue;
+    const bar = b.staff.bars[b.index];
+    const inBar = notes.filter((n) => n.staff === b.staff && n.x >= bar.left && n.x < bar.right && !n.grace).sort((p, q) => p.x - q.x);
+    const dirs = [...new Set(inBar.filter((n) => !n.rest).map((n) => n.stemUp))];
+    for (const d of dirs.length > 1 ? dirs : [undefined]) {
+      // 这个声部的各列（同 x 的几个头算一列，时值取最短的那个）；休止两个声部都算
+      const mine = inBar.filter((n) => n.rest || d === undefined || n.stemUp === d);
+      const cols: { x: number; dur: number; ns: StaffNote[] }[] = [];
+      for (const n of mine) {
+        const c = cols[cols.length - 1];
+        if (c && n.x - c.x <= sp * 0.6) (c.dur = Math.min(c.dur, n.duration)), c.ns.push(n);
+        else cols.push({ x: n.x, dur: n.duration, ns: [n] });
+      }
+      const over = cols.reduce((a, c) => a + c.dur, 0) - b.expect;
+      const k = Math.round(over * 8);
+      if (k < 1 || Math.abs(over * 8 - k) > eps || over > b.expect / 2 + eps) continue;
+      const quarter = (c: (typeof cols)[number]) => c.ns.every((n) => !n.rest && n.base === 1 / 4 && !n.dots && n.sym.code === "noteheadBlack");
+      const cand = cols
+        .map((c, i) => ({ c, gap: (cols[i + 1]?.x ?? bar.right) - c.x }))
+        .filter((q) => quarter(q.c))
+        .sort((p, q) => p.gap - q.gap);
+      if (cand.length < k) continue;
+      if (cand.length > k && cand[k - 1].gap > cand[k].gap * 0.8) continue;
+      for (const { c } of cand.slice(0, k))
+        for (const n of c.ns) {
+          n.base = 1 / 8;
+          n.duration = 1 / 8;
+          n.beams = Math.max(n.beams, 1);
+        }
+    }
   }
 }
 

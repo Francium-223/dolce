@@ -901,6 +901,9 @@ const ALONG_CAVITY = 0.35;
 /** 悬在干中段的头往近端找时，离干端这么多格以内那一级的模板分门槛（我灵镇静 m10 的 F4 0.26：
  *  上下缘正压两条谱线，模板窗口里的谱线行拉低了分）。 */
 const ALONG_END_TOL = 0.3;
+/** 干断在头上、再往外一格那个位置的放宽：模板分过这个数时内腔佐证只要这么多。 */
+const BEYOND_SCORE = 0.4;
+const BEYOND_CAVITY = 0.2;
 const ALONG_END_SCORE = 0.2;
 
 export function hollowHeadsAlongStems(
@@ -921,19 +924,30 @@ export function hollowHeadsAlongStems(
   const out: { box: Rect; code: SmuflName; weak?: boolean }[] = [];
   const taken = heads.map((h) => h.box);
   const cyOf = (h: { box: Rect }) => h.box.y + h.box.h / 2;
-  const ranges: { ref: { box: Rect }; y0: number; y1: number; end?: number }[] = [];
+  const ranges: { ref: { box: Rect }; y0: number; y1: number; end?: number; beyond?: boolean }[] = [];
   for (const v of stems) {
     const vx = (v.x0 + v.x1) / 2;
     const top = Math.min(v.y0, v.y1);
     const bot = Math.max(v.y0, v.y1);
     if (bot - top < sp * 1.5) continue;
     for (const h of heads) {
-      if (h.code !== "noteheadHalf" || (Math.abs(h.box.x + h.box.w - vx) > tol && Math.abs(h.box.x - vx) > tol)) continue;
+      // 叠头的盒是按内腔外扩出来的，缘离干常差出半个线宽：「干外一格」那一条容差放到 0.4 格（太阳颂 m2 差 0.27 格）；
+      // 别的几条照旧——都放宽的话合唱谱扫描档音符 80.66 → 79.94
+      const tolX = Math.max(tol, sp * 0.4);
+      const edge = Math.min(Math.abs(h.box.x + h.box.w - vx), Math.abs(h.box.x - vx));
+      if (h.code !== "noteheadHalf" || edge > tolX) continue;
+      const strict = edge <= tol;
       const hy = cyOf(h);
       if (hy >= top - sp * 0.5 && hy <= bot + sp * 0.5) {
+        const nearBot = Math.abs(bot - hy) <= Math.abs(top - hy);
+        // **干就断在这个头上**：再往外一个三度处可能还叠着一个没认出的头——两声部的二分三度，两个圈连成一块，
+        // 竖段只抽到上面那个头为止（新编赞美诗 14 太阳颂 m2 的 E♭4/G4：干到 G4 就断，底下的 E♭4 没认）。
+        // 只看往外一格那一个位置，门槛同别处。
+        if (Math.abs((nearBot ? bot : top) - hy) <= sp * 0.6)
+          ranges.push(nearBot ? { ref: h, y0: hy + sp * 0.75, y1: hy + sp * 1.25, beyond: true } : { ref: h, y0: hy - sp * 1.25, y1: hy - sp * 0.75, beyond: true });
+        if (!strict) continue;
         // 头挂在干的一端：往另一端（自由端）找，到自由端往回 ALONG_FREE 格为止
         if (bot - top < sp * (ALONG_FREE + 1)) continue;
-        const nearBot = Math.abs(bot - hy) <= Math.abs(top - hy);
         if (nearBot) ranges.push({ ref: h, y0: top + sp * ALONG_FREE, y1: hy - sp * 0.75 });
         else ranges.push({ ref: h, y0: hy + sp * 0.75, y1: bot - sp * ALONG_FREE });
         // 头悬在干中段（离近端也有 ALONG_MID 格以上）：近端挂着的是没认出的和弦头（我灵镇静 m10，
@@ -941,6 +955,8 @@ export function hollowHeadsAlongStems(
         const near = nearBot ? bot : top;
         if (Math.abs(near - hy) >= sp * ALONG_MID)
           ranges.push(nearBot ? { ref: h, y0: hy + sp * 0.75, y1: bot + sp * 0.3, end: bot } : { ref: h, y0: top - sp * 0.3, y1: hy - sp * 0.75, end: top });
+      } else if (!strict) {
+        continue;
       } else if (hy > bot && hy - bot <= sp * ALONG_GAP) {
         // 干断在头上方：中间夹着没认出的和弦头（干被叠头的圈切断）
         ranges.push({ ref: h, y0: bot - sp * 0.3, y1: hy - sp * 0.75 });
@@ -949,7 +965,7 @@ export function hollowHeadsAlongStems(
       }
     }
   }
-  for (const { ref, y0, y1, end } of ranges) {
+  for (const { ref, y0, y1, end, beyond } of ranges) {
     if (y1 <= y0) continue;
     const cx = ref.box.x + ref.box.w / 2;
     for (const st of stepsIn(y0, y1)) {
@@ -958,7 +974,9 @@ export function hollowHeadsAlongStems(
       const b = best(st, cx - sp * 0.15, cx + sp * 0.15);
       if (!b) continue;
       const ink = inkIn(b.x, st.y, ref.box.w);
-      if (b.s < (atEnd ? ALONG_END_SCORE : ALONG_SCORE) || ink < ALONG_INK[0] || ink > ALONG_INK[1] || cavity(b.x, st.y) < ALONG_CAVITY) continue;
+      // 干外那一格：模板分够高（`BEYOND_SCORE`）时内腔佐证放到 `BEYOND_CAVITY`——斜缝内腔被谱线切碎，够不上原始孔的尺寸
+      const cavMin = beyond && b.s >= BEYOND_SCORE ? BEYOND_CAVITY : ALONG_CAVITY;
+      if (b.s < (atEnd ? ALONG_END_SCORE : ALONG_SCORE) || ink < ALONG_INK[0] || ink > ALONG_INK[1] || cavity(b.x, st.y) < cavMin) continue;
       const box: Rect = { x: Math.round(b.x - ref.box.w / 2), y: Math.round(st.y - ref.box.h / 2), w: ref.box.w, h: ref.box.h };
       if (clash(box, taken)) continue;
       out.push({ box, code: "noteheadHalf", weak: true });

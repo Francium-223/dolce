@@ -402,27 +402,25 @@
       <footer id="statusbar" class="statusbar">
         <div id="status" class="status-text" role="status" aria-live="polite"></div>
         <div class="status-items">
+          <span id="sel-info" class="sel-info" title="选中的元素：声部、第几小节第几拍、音高、时值" data-i18n-title="pane.selInfo.title" hidden></span>
+          <span id="beat-count" class="beat-count" title="点一下跳到下一处" data-i18n-title="pane.beatCount.title" hidden></span>
+          <button id="btn-doubt" class="doubt-count" title="识别时把握不大的音与歌词字（核对视图里黄框标出）：点一下跳到下一处" data-i18n-title="toolbar.doubt.title" hidden></button>
+          <span class="status-sep status-sep-code" aria-hidden="true"></span>
           <label class="status-check" title="显示代码区（取消勾选收起，谱面占满；并排时原图与排版稿各占一半）" data-i18n-title="status.code.title">
             <input id="chk-code" type="checkbox" checked>
             <span data-i18n="status.code">源码</span>
           </label>
-          <span class="status-sep status-sep-code" aria-hidden="true"></span>
-          <span id="sel-info" class="sel-info" title="选中的元素：声部、第几小节第几拍、音高、时值" data-i18n-title="pane.selInfo.title" hidden></span>
-          <span id="beat-count" class="beat-count" title="点一下跳到下一处" data-i18n-title="pane.beatCount.title" hidden></span>
-          <button id="btn-doubt" class="doubt-count" title="识别时把握不大的音与歌词字（核对视图里黄框标出）：点一下跳到下一处" data-i18n-title="toolbar.doubt.title" hidden></button>
-          <!-- 对照方式统一一个下拉（editor/comparemode.ts）：排版稿里的并排 / 片段与核对视图的三种叠加。
+          <!-- 核对方式统一一个下拉（editor/comparemode.ts）：不核对、排版稿里的并排 / 片段、核对视图的三种叠加。
                下面隐藏的几个是它驱动的老控件（id 与接线不变，显隐仍表示「这一项现在能不能用」） -->
           <label id="compare-field" class="status-select-field" hidden>
-            <span class="status-label" data-i18n="status.recogView">对照</span>
-            <select id="sel-compare" title="对照原图的方式" aria-label="对照方式" data-i18n-title="status.compare.title" data-i18n-aria="status.compare.aria">
-              <option value="none" data-i18n="status.compare.none">只看排版稿</option>
-              <optgroup label="核对视图" data-i18n-label="status.compare.overlay">
-                <option value="side" data-i18n="toolbar.srcSide">并排原图</option>
-                <option value="follow" data-i18n="toolbar.srcFollow">原图片段</option>
-                <option value="floating" data-i18n="toolbar.recogView.floating">附近浮窗</option>
-                <option value="inplace" data-i18n="toolbar.recogView.inplace">原位叠加</option>
-                <option value="original" data-i18n="toolbar.recogView.original">仅原图</option>
-              </optgroup>
+            <span class="status-label" data-i18n="status.recogView">核对</span>
+            <select id="sel-compare" title="核对方式" aria-label="核对方式" data-i18n-title="status.compare.title" data-i18n-aria="status.compare.aria">
+              <option value="none" data-i18n="status.compare.none">不核对</option>
+              <option value="side" data-i18n="toolbar.srcSide">并排原图</option>
+              <option value="follow" data-i18n="toolbar.srcFollow">原图片段</option>
+              <option value="floating" data-i18n="toolbar.recogView.floating">附近浮窗</option>
+              <option value="inplace" data-i18n="toolbar.recogView.inplace">原位叠加</option>
+              <option value="original" data-i18n="toolbar.recogView.original">仅原图</option>
             </select>
             <span class="select-chevron" aria-hidden="true">⌄</span>
           </label>

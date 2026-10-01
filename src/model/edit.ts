@@ -1222,6 +1222,15 @@ export function setLyric(doc: ScoreDoc, id: ElementId, verse: number, text: stri
   return { select: [ch] };
 }
 
+/** 和弦名录入：和弦 `id` 的和弦名写成 `text`（空串 = 去掉）。只记原文，结构由写出端按文字解析（同简谱来源的和弦名）。 */
+export function setHarmony(doc: ScoreDoc, id: ElementId, text: string): ModelEdit {
+  const l = locate(doc, id);
+  if (!l) return { error: "找不到这个音" };
+  if (text === "") delete l.chord.harmony;
+  else l.chord.harmony = { root: { step: "C", alter: 0 }, kind: "", text };
+  return { select: [l.chord] };
+}
+
 // ───────────────────────── 剪贴板 ─────────────────────────
 
 /** 剪贴板里的一样东西：与格式无关（文本格式、MusicXML 之间也能贴）。音按唱名记（相对调号，贴到别的调里按唱名走），

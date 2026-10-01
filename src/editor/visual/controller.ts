@@ -19,17 +19,18 @@ import { midiOf, NotePreview } from "./preview";
 import type { EditDialect, NoteDuration } from "./dialect";
 import {
   addSustain, clearBeams, deleteEntries, double, dropInlineSustain, type EditCtx, type EditOutcome, groupEnd, halve, insertNote, insertToken,
-  insertLetter, isError, noteCtx, shiftSemitones, spacedInsert, noteSpans, notesIn, setAccidental, setDegree, setLetter, shiftOctave, stepDegree, stepSemitone, toggleDeco, toggleDot, toggleSlur, toggleTie,
+  chordEntryOf, chordNameOf, insertLetter, isError, noteCtx, setChordName, shiftSemitones, spacedInsert, noteSpans, notesIn, setAccidental, setDegree, setLetter, shiftOctave, stepDegree, stepSemitone, toggleDeco, toggleDot, toggleSlur, toggleTie,
 } from "./ops";
 import { keyHit, VISUAL_ACTIONS, type VisualAction, type VisualMode } from "./keys";
 import { type Clip, clipFor, itemsToText, setClip } from "./clipboard";
 import { clipOfChords, locate } from "../../model/edit";
+import { harmonyText } from "../../model/jianpu";
 import { showTransposeDialog, transposeText } from "./transpose";
 import { lyricTextOf, setLyricText } from "./lyrics";
 import { selectionInfo } from "./selinfo";
 import { type InlineDone, inlineEditing, openInlineEditor } from "./inline";
 import { measureEdit } from "./measureops";
-import { lyricModel, pasteModel, runModelAction, transposeModel, type ModelActionCtx } from "./modelops";
+import { harmonyModel, lyricModel, pasteModel, runModelAction, transposeModel, type ModelActionCtx } from "./modelops";
 import {
   type Box, boxInPage, charIndexAt, inkBoxInPage, clearOverlay, drawBlock, drawBreak, drawCaret, hitThroughOverlay, musicBox, rightEdgeInBand,
   sameRow, setBeatIssues, textCaretInPage,
@@ -1248,6 +1249,7 @@ export class VisualEditController {
       case "edit.repeat": return this.repeat();
       case "edit.transpose": return this.transpose();
       case "lyric.entry": return this.startLyrics();
+      case "chord.entry": return this.startChords();
       case "nav.home": return this.rowEdge(-1);
       case "nav.end": return this.rowEdge(1);
       case "mark.next": return this.cycleMark(1);
@@ -1537,6 +1539,70 @@ export class VisualEditController {
     const c = this.editCtx();
     if (!c) return;
     this.apply(setLyricText(c, note, verse, text, hyphen, extend));
+  }
+
+  // ---------------- 和弦名录入 ----------------
+
+  /** 能挂和弦名的音（休止也能挂），按原文顺序、一个音一条。 */
+  private chordNotes(): SyncEntry[] {
+    const seen = new Set<number>();
+    return this.navigable().filter((e) => e.kind === "note" && !seen.has(e.id) && (seen.add(e.id), true));
+  }
+
+  /** Ctrl/⌘+K：从选中的音（或光标前那个）开始逐个填和弦名。 */
+  private startChords(): boolean {
+    const notes = this.chordNotes();
+    if (!notes.length) return false;
+    const sel = this.host.view.state.selection.main;
+    const es = this.selectedEntries();
+    const id = es.find((e) => e.kind === "note" || e.kind === "mark")?.id ?? [...this.navigable()].reverse().find((e) => e.kind === "note" && e.to <= sel.head)?.id;
+    this.openChordBox(Math.max(0, notes.findIndex((e) => e.id === id)));
+    return true;
+  }
+
+  private openChordBox(idx: number): void {
+    const note = this.chordNotes()[idx];
+    if (!note) {
+      this.host.scorePane.focus({ preventScroll: true });
+      return;
+    }
+    const span = this.noteSel(note);
+    this.select(span.from, span.to);
+    let cur = "";
+    if (this.host.modelEditing()) {
+      const doc = this.host.syncDoc();
+      const h = doc ? locate(doc, note.id)?.chord.harmony : undefined;
+      cur = h ? harmonyText(h) : "";
+    } else {
+      const c = this.editCtx(true);
+      const e = c ? chordEntryOf(c, note) : null;
+      cur = c && e ? chordNameOf(c, e) : "";
+    }
+    const anchor = this.host.noteEl(note.id) ?? this.elOfEntry(note) ?? this.host.scorePane;
+    openInlineEditor(anchor, cur, (d) => this.chordDone(idx, cur, d), "和弦名", { keys: { " ": "next", "Shift+ ": "prev", Enter: "stop" } });
+  }
+
+  private chordDone(idx: number, old: string, d: InlineDone): void {
+    if (d.value === null) {
+      this.host.scorePane.focus({ preventScroll: true });
+      return;
+    }
+    const value = d.value.trim();
+    if (value !== old) {
+      if (!this.host.syncFresh()) this.host.reloadNow();
+      const note = this.chordNotes()[idx];
+      if (note && this.host.modelEditing()) harmonyModel(this.modelCtx, note.id, value);
+      else if (note) {
+        const c = this.editCtx();
+        if (c) this.apply(setChordName(c, note, value));
+      }
+    }
+    const tag = d.tag ?? (d.nav === 0 ? "stop" : d.nav < 0 ? "prev" : "next");
+    if (tag === "stop") {
+      this.host.scorePane.focus({ preventScroll: true });
+      return;
+    }
+    void this.host.whenIdle().then(() => this.openChordBox(idx + (tag === "prev" ? -1 : 1)));
   }
 
   /** 移调对话框：全曲换调或选中的音移几个半音（`transpose.ts`）。 */

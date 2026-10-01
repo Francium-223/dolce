@@ -365,6 +365,42 @@ export function addSustain(ctx: EditCtx, note: SyncEntry): EditOutcome {
   return { changes: [{ from: at, to: at, insert }], anchor: map(head.from, -1), head: map(head.to, -1) };
 }
 
+// ───────────────────────── 和弦名 ─────────────────────────
+
+/** 音 `note` 上的和弦名条目（没有为 null）。 */
+export function chordEntryOf(ctx: EditCtx, note: SyncEntry): SyncEntry | null {
+  return ctx.sync.ordered().find((e) => e.kind === "mark" && e.markKind === "harmony" && e.id === note.id) ?? null;
+}
+
+/** 和弦名的原文值（去掉引号）。 */
+export function chordNameOf(ctx: EditCtx, e: SyncEntry): string {
+  return ctx.state.doc.sliceString(e.from, e.to).trim().replace(/^"(.*)"$/, "$1");
+}
+
+/** 音 `note` 的和弦名写成 `name`（空串 = 去掉）：有就换，没有就写在这个音的记号最前面。 */
+export function setChordName(ctx: EditCtx, note: SyncEntry, name: string): EditOutcome {
+  const write = ctx.dialect.chordText;
+  if (!write) return { error: "这种格式的和弦名请在源码里改" };
+  const sel = ctx.state.selection.main;
+  const done = (changes: EditResult["changes"]): EditOutcome => {
+    const map = mapper(ctx.state, changes);
+    return { changes, anchor: map(sel.anchor, 1), head: map(sel.head, 1) };
+  };
+  const cur = chordEntryOf(ctx, note);
+  const text = ctx.state.doc;
+  if (cur) {
+    if (name === "") return done([spaceAround(ctx, cur.from, cur.to)]);
+    let ins = write(name);
+    // 原来后面已经有空白（或改写成带引号的）：不再多补空格
+    if (/\s$/.test(ins) && /\s/.test(text.sliceString(cur.to, cur.to + 1))) ins = ins.trimEnd();
+    return done([{ from: cur.from, to: cur.to, insert: ins }]);
+  }
+  if (name === "") return { error: "这个音没有和弦名" };
+  const marks = ctx.sync.ordered().filter((e) => e.kind === "mark" && e.id === note.id && e.from < note.from);
+  const at = Math.min(note.from, ...marks.map((e) => e.from));
+  return done([{ from: at, to: at, insert: write(name) }]);
+}
+
 // ───────────────────────── 删除 ─────────────────────────
 
 /** 删掉 `[from, to)` 时顺手带走一侧的空白，免得留下两个空格或行尾空格。 */

@@ -157,4 +157,5 @@ export const DIALECT_ABC: EditDialect = {
   lyricBlockByCodeLine: true,
   lyricsFollowBreaks: true,
   deco: { names: { fermata: "fermata", accent: "accent" }, text: (n) => `!${n}!`, place: "before" },
+  chordText: (name) => `"${name}"`,
 };

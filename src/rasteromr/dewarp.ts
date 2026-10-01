@@ -193,6 +193,34 @@ export function completeStaffLines(bin: Binary, lines: StaffLineRun[], groups: S
       break;
     }
   }
+  // ── 五条等距、其中一两条只找出半截：**照整行的跨度补齐** ─────────────────
+  //
+  // 页面局部微弯时，一条谱线的行投影在某一行只够半截（新编赞美诗 329 尊主为大歌第二系统高音谱表，
+  // 五线 y=1172/1193.5/1215.5/1237/1259，头一条只有右半 [975,2042]、第二条只有左边 [192,761]），
+  // `groupStaves` 的「x 交集」「左缘一致」两道闸过不去，整行谱没了，下一行低音谱表还被并进上一个系统。
+  // 五条等距（两成以内）、线距与已有谱行相当、至少三条跨满整行，就按那三条的跨度成组。
+  {
+    const done = new Set(outGroups.flatMap((g) => g.lines));
+    const loose = out.filter((l) => !done.has(l)).sort((a, b) => a.y - b.y);
+    const known = outGroups.map((g) => g.space).sort((a, b) => a - b);
+    const ref = known.length ? known[known.length >> 1] : 0;
+    for (let i = 0; ref && i + 4 < loose.length; i++) {
+      const five = loose.slice(i, i + 5);
+      const ds = [1, 2, 3, 4].map((k) => five[k].y - five[k - 1].y);
+      const avg = (ds[0] + ds[1] + ds[2] + ds[3]) / 4;
+      if (ds.some((d) => Math.abs(d - avg) > avg * 0.2) || Math.abs(avg - ref) > ref * 0.15) continue;
+      if (outGroups.some((g) => five[0].y < g.lines[4].y + avg && five[4].y > g.lines[0].y - avg)) continue;
+      const full = five.filter((l) => l.right - l.left >= bin.w * 0.6);
+      // 五条都跨满的不归这里管：那是左缘参差（`LEFT_SPREAD`）没成组，后面另有一路按实测线位接回去，
+      // 这里抢先成组反而用了不准的线位（我灵镇静末行，音符 98.9 → 93.1）
+      if (full.length < 3 || full.length === 5) continue;
+      const left = Math.min(...full.map((l) => l.left));
+      const right = Math.max(...full.map((l) => l.right));
+      for (const l of five) (l.left = left), (l.right = right);
+      outGroups.push({ lines: five, space: avg });
+      i += 4;
+    }
+  }
   outGroups.sort((a, b) => a.lines[0].y - b.lines[0].y);
   return { lines: out.sort((a, b) => a.y - b.y), groups: outGroups };
 }

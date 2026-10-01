@@ -4476,9 +4476,12 @@ function shareSystemClefs(pg: SPage, ctx: Map<Staff, StaffContext>, unit: { spac
         if (code) tally.set(code, (tally.get(code) ?? 0) + 1);
       }
       let [code, n] = [...tally].sort((a, b) => b[1] - a[1])[0] ?? [];
-      // 只有两个系统、最下一行一个读成高音一个读成低音：平手时取低音（上面那行是高音谱号的大谱表，下面那行不会也是高音）
-      const tieBass = i === len - 1 && i > 0 && gs.length === 2 && tally.get("fClef") === 1 && gs.every((g) => ctx.get(g[0])?.clef?.code === "gClef");
-      if (tieBass) (code = "fClef"), (n = 2);
+      // 下面那行有读成低音谱号的、且不比读成高音的少，上面那行又都是高音谱号：照低音定（上面是高音谱号的大谱表，
+      // 下面那行不会也是高音）。只有两个系统、一个读成高音一个读成低音的平手（每日新恩歌），
+      // 或四个系统里两行没认出谱号、剩下一高一低（尊主为大歌）都落在这里。
+      const fs = tally.get("fClef") ?? 0;
+      const tieBass = i === len - 1 && i > 0 && fs >= 1 && fs >= (tally.get("gClef") ?? 0) && gs.every((g) => (ctx.get(g[0])?.clef?.code ?? "gClef") === "gClef");
+      if (tieBass) (code = "fClef"), (n = gs.length);
       if (!code || n === undefined || n < 2 || n * 2 <= gs.length) continue;
       for (const g of gs) {
         const c = ctx.get(g[i]);

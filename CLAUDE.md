@@ -1,7 +1,7 @@
 # 悦谱 Dolce
 
 简谱与五线谱的编辑、识谱与排版（123 / JP-Word `.jpwabc` / 文本谱 / ABC / MusicXML）：Tauri 2 + TypeScript + SVG。
-旧名 jpeditor 已全部改掉：仓库、在线版地址、桌面版标识符 `co.endao.dolce`、Cargo 包名 `dolce`、localStorage 键前缀 `dolce-*`、
+旧名 jpeditor 已全部改掉：仓库、在线版地址、桌面版标识符 `io.github.lodebar2026.dolce`、Cargo 包名 `dolce`、localStorage 键前缀 `dolce-*`、
 草稿库 IndexedDB 名 `dolce`、MusicXML 写出端署名 `Dolce`。旧名下的设置与草稿不迁移。
 排版、渲染、模型、编辑全在前端 TS；Rust 只做原生加速（见架构决策 A3/A4）。
 

@@ -342,8 +342,10 @@ function accidentalFont(c: OriginalCtx): Font {
 /**
  * 一组（system）的左缘布局：段号占位 → 细竖线 → 连谱号。
  * 页眉的 `TL:`/`XL:` 要对齐到 system 左缘，所以这段得能单独取用。
+ * 段号占位按**整页最宽**的那组留：段号常只印在第一个 system，按各组自己留的话只有那一组的
+ * 细竖线、连谱号往左凸出去，同页各 system 左缘对不齐（原谱一律对齐）。段号文字仍贴着本组歌词首字。
  */
-function systemMetrics(c: OriginalCtx, group: PlacedGroup): {
+function systemMetrics(c: OriginalCtx, group: PlacedGroup, page?: PlacedPage): {
   notesLeft: number;
   thinX: number;
   braceX: number;
@@ -353,21 +355,24 @@ function systemMetrics(c: OriginalCtx, group: PlacedGroup): {
 } {
   const m = c.metrics;
   const labelFont = new Font(m.font.text, m.size.verseNum);
-  let labelWidth = 0;
-  for (const v of group.voices) {
-    for (const line of v.voice.lyrics) {
-      if (line.annotation) {
-        labelWidth = Math.max(labelWidth, labelFont.measureText(line.annotation));
+  const widthOf = (g: PlacedGroup) => {
+    let w = 0;
+    for (const v of g.voices) {
+      for (const line of v.voice.lyrics) {
+        if (line.annotation) w = Math.max(w, labelFont.measureText(line.annotation));
       }
     }
-  }
+    return w;
+  };
+  const labelWidth = widthOf(group);
+  const slotWidth = Math.max(labelWidth, ...(page?.groups ?? []).map(widthOf));
   const notesLeft = m.page.margin.left + m.page.systemIndent;
   // 段号排在 [细竖线] ← 间隙 → [段号] ← 间隙 → [歌词首字] 之间
   const labelToLyric = m.size.verseNum * 0.2;
   const lineToLabel = m.size.verseNum * 0.55;
   const firstCharHalf = m.size.lyric * 0.5;
   const labelSlot =
-    labelWidth > 0 ? firstCharHalf + labelToLyric + labelWidth + lineToLabel : 0;
+    slotWidth > 0 ? firstCharHalf + labelToLyric + slotWidth + lineToLabel : 0;
   const thinX = notesLeft - Math.max(labelSlot, m.note.barlineSpace * 0.55);
   const braceX = thinX - m.ink.noteHeight * 0.55;
   const labelLeft =
@@ -382,7 +387,7 @@ function systemLeft(c: OriginalCtx, page: PlacedPage): number {
   for (const group of page.groups) {
     // 单声部没有连谱号也没有起始细线，左缘取音符起点；但歌词说明（`<狼:1.>`）
     // 会伸到音符左边，也得算进去，否则会贴到页面边缘上。
-    const g = systemMetrics(c, group);
+    const g = systemMetrics(c, group, page);
     left = Math.min(left, group.hasBrace ? g.braceX : Math.min(g.notesLeft, g.labelLeft));
   }
   return left;
@@ -403,7 +408,7 @@ function paintPage(c: OriginalCtx, page: PlacedPage, pageIndex: number): Group {
       const font = new Font(m.font.text, m.size.words);
       sys.add(text(texts.map((t) => t.text).join("  "), m.page.margin.left, group.textY, font, c.ink));
     }
-    const { braceX, notesLeft } = systemMetrics(c, group);
+    const { braceX, notesLeft } = systemMetrics(c, group, page);
     // `&sbf` 标了分声部位置就从那里起（前半段仍是单声部），否则从 system 左缘
     const braceAt =
       group.braceFromX !== undefined

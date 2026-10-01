@@ -15,7 +15,6 @@ export const zh = {
   "status.code.title": "显示代码区（取消勾选收起，谱面占满；并排时原图与排版稿各占一半）",
   "status.compare.title": "对照原图的方式：排版稿里并排原图、看原图片段，或进核对视图叠加识别结果",
   "status.compare.aria": "对照方式",
-  "status.compare.score": "排版稿",
   "status.compare.none": "只看排版稿",
   "status.compare.overlay": "核对视图",
   "toolbar.recogGroup": "识别",

@@ -16,7 +16,6 @@ export const en: Record<MsgKey, string> = {
   "status.code.title": "Show the code pane (untick to hide it and give the score the full width; side by side then splits page and score in half)",
   "status.compare.title": "How to compare with the source: side by side or a source snippet in the score, or an overlay in the proofing view",
   "status.compare.aria": "Comparison",
-  "status.compare.score": "Score",
   "status.compare.none": "Score only",
   "status.compare.overlay": "Proofing view",
   "toolbar.recogGroup": "Recognition",

@@ -432,6 +432,36 @@ export function attachedTextOf(ctx: EditCtx, note: SyncEntry, kind: "annotation"
   return attachedEntry(ctx, note, kind)?.name ?? "";
 }
 
+// ───────────────────────── 连音 ─────────────────────────
+
+/** 选中的几个音做成连音（123 `(3: … )`、ABC `(3`）；组前已经是连音头（123 还要组后紧跟 `)`）就拆回去。 */
+export function toggleTupletText(ctx: EditCtx, from: number, to: number): EditOutcome {
+  const tp = ctx.dialect.tuplet;
+  if (!tp) return { error: "这种格式的连音请在源码里改" };
+  const notes = notesIn(ctx, from, to);
+  if (notes.length < 2) return { error: "选中两个以上的音再做连音" };
+  const first = notes[0]!;
+  const last = notes[notes.length - 1]!;
+  const marks = ctx.sync.ordered().filter((e) => e.kind === "mark" && e.id === first.id && e.from < first.from);
+  const start = Math.min(first.from, ...marks.map((e) => e.from));
+  const end = groupEnd(ctx, last);
+  const doc = ctx.state.doc;
+  const line = doc.lineAt(start);
+  const head = tp.openRe.exec(doc.sliceString(line.from, start));
+  const tail = tp.close ? /^\s*\)/.exec(doc.sliceString(end, Math.min(doc.length, end + 8))) : null;
+  const sel = ctx.state.selection.main;
+  let changes: EditResult["changes"];
+  if (head && (tp.close === null || tail)) {
+    changes = [{ from: start - head[0].length, to: start, insert: "" }];
+    if (tail) changes.push({ from: end, to: end + tail[0].length, insert: "" });
+  } else {
+    changes = [{ from: start, to: start, insert: tp.open(notes.length) }];
+    if (tp.close) changes.push({ from: end, to: end, insert: tp.close });
+  }
+  const map = mapper(ctx.state, changes);
+  return { changes, anchor: map(sel.from, 1), head: map(sel.to, -1) };
+}
+
 // ───────────────────────── 删除 ─────────────────────────
 
 /** 删掉 `[from, to)` 时顺手带走一侧的空白，免得留下两个空格或行尾空格。 */

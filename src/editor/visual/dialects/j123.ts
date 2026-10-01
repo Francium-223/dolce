@@ -66,4 +66,5 @@ export const DIALECT_123: EditDialect = {
   chordText: (name) => (BARE_CHORD_RE.test(name) ? `${name} ` : `"${name}"`),
   annotationText: (t) => `"^${t}"`,
   dynamicText: (n) => `!${n}!`,
+  tuplet: { open: (n) => `(${n}: `, close: ")", openRe: /\(\d+(?::\d+)?:\s*$/ },
 };

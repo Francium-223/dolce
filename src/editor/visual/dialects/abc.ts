@@ -160,4 +160,5 @@ export const DIALECT_ABC: EditDialect = {
   chordText: (name) => `"${name}"`,
   annotationText: (t) => `"^${t}"`,
   dynamicText: (n) => `!${n}!`,
+  tuplet: { open: (n) => `(${n}`, close: null, openRe: /\(\d+(?::\d*){0,2}\s*$/ },
 };

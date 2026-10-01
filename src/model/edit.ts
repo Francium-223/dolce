@@ -1183,6 +1183,51 @@ export function anchorFifths(doc: ScoreDoc, anchor: InsertAnchor): number {
   return song && part ? measureCtx(song, part, a.mi).key.fifths : 0;
 }
 
+// ───────────────────────── 连音 ─────────────────────────
+
+/** 连音的默认比例：二连、四连占 3，其余占小于 n 的最大 2 的幂（3→2、5→4、6→4、7→4），同 123 的表。 */
+export function tupletNormal(n: number): number {
+  if (n === 2 || n === 4) return 3;
+  let p = 1;
+  while (p * 2 < n) p *= 2;
+  return p;
+}
+
+/** 选中的几个音（同一小节、同一声线）做成连音，已经是同一组连音就拆回去。 */
+export function toggleTuplet(doc: ScoreDoc, ids: readonly ElementId[], hooks: EditHooks = {}): ModelEdit {
+  const locs = chordsOf(doc, ids).filter((l) => !l.chord.grace).sort((a, b) => a.index - b.index);
+  if (locs.length < 2) return { error: "选中两个以上的音再做连音" };
+  const f = locs[0]!;
+  if (locs.some((l) => l.measure !== f.measure || l.chord.voice !== f.chord.voice)) return { error: "连音只能在同一小节、同一声部里" };
+  const song = f.song;
+  const mark = song.marks.find((m) => m.type === "tuplet" && m.start === f.chord.id && m.end === locs[locs.length - 1]!.chord.id);
+  if (mark) {
+    // 拆回去：时值还原、去掉比例与括号
+    for (const l of locs) {
+      const tm = l.chord.duration.timeMod;
+      if (!tm) continue;
+      l.chord.duration.divisions = fitDivisions(l.part, (l.chord.duration.divisions * tm.actual) / tm.normal);
+      delete l.chord.duration.timeMod;
+    }
+    song.marks = song.marks.filter((m) => m !== mark);
+  } else {
+    if (locs.some((l) => l.chord.duration.timeMod)) return { error: "选中的音已经在别的连音里" };
+    const n = locs.length;
+    const normal = tupletNormal(n);
+    for (const l of locs) {
+      // 放大单位（`fitDivisions` 可能整声部乘一倍）后再按当前值算，前面改过的也一起放大了，比例不变
+      l.chord.duration.divisions = fitDivisions(l.part, (l.chord.duration.divisions * normal) / n);
+      l.chord.duration.timeMod = { actual: n, normal };
+    }
+    song.marks.push({ type: "tuplet", start: f.chord.id, end: locs[locs.length - 1]!.chord.id, tupletActual: n, tupletNormal: normal });
+  }
+  const { time, dpq } = measureCtx(song, f.part, f.mi);
+  rebeam(f.measure, f.chord.voice, time, dpq);
+  delete f.measure.duration;
+  hooks.forgetLayout?.(song);
+  return { select: locs.map((l) => l.chord) };
+}
+
 // ───────────────────────── 歌词 ─────────────────────────
 
 /** 同声部同声线、`id` 之前最近的一个和弦（找连字符的前一半）。 */

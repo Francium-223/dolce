@@ -19,7 +19,7 @@ import { midiOf, NotePreview } from "./preview";
 import type { EditDialect, NoteDuration } from "./dialect";
 import {
   addSustain, clearBeams, deleteEntries, double, dropInlineSustain, type EditCtx, type EditOutcome, groupEnd, halve, insertNote, insertToken,
-  attachedTextOf, chordEntryOf, DYNAMICS, chordNameOf, insertLetter, isError, noteCtx, setAttachedText, setChordName, shiftSemitones, spacedInsert, noteSpans, notesIn, setAccidental, setDegree, setLetter, shiftOctave, stepDegree, stepSemitone, toggleDeco, toggleDot, toggleSlur, toggleTie,
+  attachedTextOf, chordEntryOf, DYNAMICS, chordNameOf, insertLetter, isError, noteCtx, setAttachedText, setChordName, shiftSemitones, toggleTupletText, spacedInsert, noteSpans, notesIn, setAccidental, setDegree, setLetter, shiftOctave, stepDegree, stepSemitone, toggleDeco, toggleDot, toggleSlur, toggleTie,
 } from "./ops";
 import { keyHit, VISUAL_ACTIONS, type VisualAction, type VisualMode } from "./keys";
 import { type Clip, clipFor, itemsToText, setClip } from "./clipboard";
@@ -1196,6 +1196,7 @@ export class VisualEditController {
       case "sus.add": return this.sustain();
       case "slur.toggle": return this.editNotes(toggleSlur);
       case "tie.toggle": return this.editNotes(toggleTie);
+      case "tuplet.toggle": return this.editNotes(toggleTupletText);
       case "deco.fermata": return this.editNotes((c, f, t) => toggleDeco(c, f, t, "fermata"));
       case "deco.accent": return this.editNotes((c, f, t) => toggleDeco(c, f, t, "accent"));
       case "bar.insert": return this.insertAtCursor((c, pos) => insertToken(c, pos, c.dialect.barline));

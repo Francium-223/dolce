@@ -91,6 +91,9 @@ export interface EditDialect {
   /** 挂在音符前的文字（注记，`"^渐慢"`）与力度（`!mf!`）怎么写；没有 = 这种格式请在源码里改 */
   annotationText?(text: string): string;
   dynamicText?(name: string): string;
+  /** 连音怎么写：`open` 写在组前、`close` 写在组后（没有收尾符号的格式为 null，按个数收）；没有 = 请在源码里改。
+   *  `openRe` 认组前已有的连音头（拆回去用，锚在串尾） */
+  tuplet?: { open(n: number): string; close: string | null; openRe: RegExp };
   /** 延音线另有写法（ABC 的 `-` 紧跟前一个音）；缺省 = 与圆滑线同形（括号） */
   tie?: string;
   /** 圆滑线能不能嵌套、交叠。文本谱的 `)` 按队列配对（先开的先闭），加一条与已有的交叠的弧会把配对全打乱 */

@@ -65,6 +65,7 @@ const SHORT: Record<string, string> = {
   "sus.add": "1 \u2013", // 1 –
   "slur.toggle": "\u2322", // ⌢
   "tie.toggle": "\u2040", // ⁀
+  "tuplet.toggle": "\u23B43\u23B5", // ⎴3⎵
   "deco.fermata": "\u{1D110}", // 𝄐
   "deco.accent": ">",
   "bar.insert": "|",

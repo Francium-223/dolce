@@ -11,7 +11,7 @@ import {
   addBeat, addChordNote, type BarKind, chordAtPos, chordOnset, deleteChords, deleteMeasures, insertChord, insertInVoice, insertMeasure,
   isEditError, type JumpKind, locate, mergeMeasures, midiOf, type ChordPos, type EditHooks, type InsertAnchor, type ModelEdit, posOf,
   removeChordNote, scaleDuration, setBarKind, setBreakBefore, setDegree, setKeyAt, setTempoAt, setTimeAt, shiftOctave, splitMeasure,
-  pasteClip, type ClipItem, setDirectionText, setHarmony, setLyric, shiftSemitones, transposeScore, stepDegree, stepSemitone, setStep, degreeOfStep, anchorFifths, toggleAccidental, toggleDeco, toggleDot, toggleEnding, toggleJump, toggleSlur, toggleTie,
+  pasteClip, type ClipItem, setDirectionText, toggleTuplet, setHarmony, setLyric, shiftSemitones, transposeScore, stepDegree, stepSemitone, setStep, degreeOfStep, anchorFifths, toggleAccidental, toggleDeco, toggleDot, toggleEnding, toggleJump, toggleSlur, toggleTie,
 } from "../../model/edit";
 import { parseKeyInput, parseTempoInput, parseTimeInput } from "./measureinput";
 import { dropEmbeddedLayout, forgetNoteLayout } from "../../model/xmlsurface";
@@ -415,6 +415,7 @@ export function runModelAction(ctx: ModelActionCtx, a: VisualAction, key: string
       }
       return commit(ctx, (doc) => toggleSlur(doc, l[0]!, l[l.length - 1]!));
     }
+    case "tuplet.toggle": return need((doc, l) => toggleTuplet(doc, l, HOOKS));
     case "tie.toggle": return need((doc, l) => toggleTie(doc, l[0]!));
     case "deco.fermata": return need((doc, l) => toggleDeco(doc, l, "fermata"));
     case "deco.accent": return need((doc, l) => toggleDeco(doc, l, "accent"));

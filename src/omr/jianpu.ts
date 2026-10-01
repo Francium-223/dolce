@@ -1482,7 +1482,7 @@ function resolveDashLike(cls: Classified, rowCores: DigitCore[], numH: number): 
 }
 
 /** 各音在 buildJpNums 里收下的八度点（上/下），供 resolvePairOctaveDots 按声部组复核 */
-const octDotsOf = new WeakMap<JpNum, { up: Rect[]; down: Rect[] }>();
+const octDotsOf = new WeakMap<JpNum, { up: Rect[]; down: Rect[]; nearDown: Rect[] }>();
 
 /** 四声部谱两声部一组（S/A、T/B）上下挨着，夹在两组数字之间的一颗点，要么是上声部的低音点、要么是下声部的高音点，
  *  逐音按窗口收常被两边各收一次（上声部「数字 → 减时线 → 点」离得反而远，按「归更近的」也抢不回去）：
@@ -1505,7 +1505,7 @@ function resolvePairOctaveDots(rows: StaffRow[], numH: number): void {
       for (const n of [...upper.nums, ...lower.nums]) {
         const od = octDotsOf.get(n);
         if (!od) continue;
-        for (const kb of [...od.up, ...od.down]) {
+        for (const kb of [...od.up, ...od.down, ...od.nearDown]) {
           if (seen.has(kb)) continue;
           seen.add(kb);
           const u = aligned(upper.nums, kb), l = aligned(lower.nums, kb);
@@ -1513,7 +1513,9 @@ function resolvePairOctaveDots(rows: StaffRow[], numH: number): void {
           const uo = octDotsOf.get(u), lo = octDotsOf.get(l);
           if (!uo || !lo) continue;
           const uClaim = uo.down.includes(kb), lClaim = lo.up.includes(kb);
-          if (!uClaim && !lClaim) continue;
+          // 上声部只因「离下声部数字更近」没收、下声部也没收的点（下声部头上有上声部的减时线，按「上方有墨」挡掉了）：
+          // 两边都不要，原先直接跳过——四声部上声部 `5̣̲`、`7̣̲` 一排丢点多是这样（355 第 1 声部，点夹在本声部减时线与下声部数字之间）
+          if (!uClaim && !lClaim && !uo.nearDown.includes(kb)) continue;
           const uBase = u.octave + (uClaim ? 1 : 0), lBase = l.octave - (lClaim ? 1 : 0);
           // A：归上声部当低音点；B：归下声部当高音点
           let a = !uo.up.some((o) => o !== kb), b = !lo.down.some((o) => o !== kb);
@@ -1522,6 +1524,7 @@ function resolvePairOctaveDots(rows: StaffRow[], numH: number): void {
             if (pa !== pb) { a = pa; b = pb; }
           }
           if (a === b) continue;
+          if (!uClaim && !lClaim && !a) continue;                          // 两边都没收的只可能归上声部（下声部本有理由拒它）
           const nu = Math.max(-3, uBase - (a ? 1 : 0)), nl = Math.min(3, lBase + (b ? 1 : 0));
           if (nu !== u.octave || nl !== l.octave) probe("octave.pairResolve");
           u.octave = nu; l.octave = nl;
@@ -1581,6 +1584,7 @@ function buildJpNums(
     const augR = Math.min(next ? next.x : Number.POSITIVE_INFINITY, rightLimit);
     let octave = 0, dot = 0, augment = 0;
     const upDots: Rect[] = [], downDots: Rect[] = []; // 八度点候选（上/下），循环后按叠放规则裁决
+    const nearDown: Rect[] = [];
     // 数字先识别（附点判定要用到：休止 0 不接附点 —— 见下）。
     // "1" 是简谱唯一单竖笔，明显比其它数字窄：极窄块若被 OCR 误判成别的数字（淡印/碎裂的 "1"
     // 常被读成 4/7），按宽度纠回 1；不动休止 0（圆形、不窄）。
@@ -1764,8 +1768,9 @@ function buildJpNums(
       // 字顶笔画下方紧接着字的其余笔画。（先试过宽高比，但小字号图上真点只有 2×3 像素、比值不可靠，
       // 世上所有的民族的真低音点被误剔、音符 100→99.3。）
       } else if (gapBelow >= -1 && belowReach && (inkBelow(bin, kb, numH) < 0.12 || underOwnLine(kb) || overArc(kb) || aboveLyrics(kb)) &&
-          dotSized(kb) && !hasSideMate(kb) && !nearerOther(false) && !inTextLine(kb)) {
-        downDots.push(kb); }
+          dotSized(kb) && !hasSideMate(kb) && !inTextLine(kb)) {
+        // 只因「离别声部的数字更近」被拒的另记一笔，留给 resolvePairOctaveDots 按声部组裁决
+        if (!nearerOther(false)) downDots.push(kb); else nearDown.push(kb); }
     }
     // 八度点是**竖排叠放**的：第二、三个点各自摞在前一个点的正上/正下方——同一条竖线上、
     // 彼此紧挨着（间距不过一个点径）。只按「落在窗口内」计数，音符上方**并排**的两个墨块就被
@@ -1850,7 +1855,7 @@ function buildJpNums(
       prev = kb;
     }
     const jn: JpNum = { digit, bbox: d, dot, octave, div, augment, augmentRects };
-    octDotsOf.set(jn, { up: upDots, down: downDots });
+    octDotsOf.set(jn, { up: upDots, down: downDots, nearDown });
     out.push(jn);
   }
   recountUnderlines(bin, out, numH, cls, barlineXs, voiceMates);

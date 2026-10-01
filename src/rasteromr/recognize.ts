@@ -4557,8 +4557,17 @@ function extendKeyByStrokes(pg: SPage, ctx: Map<Staff, StaffContext>, bin: Binar
     }
     return { k: 0, m: 0 };
   };
-  const f = pick((r) => r.flats);
+  let f = pick((r) => r.flats);
   const sh = pick((r) => r.sharps);
+  // **只有一行数全的降号也认**：短歌只有两三个系统，各行淡得不一样，常常只有一行数得全（我要向山举目歌 4,1,0）。
+  // 降号的对位够严（肚子要逐个落在 B E A D… 的位置上；漏一根的容许也要后面跟着两个真的），三个以上一行就算数；
+  // 这种页行数少（四行以内），全页照它定。
+  let lone = false;
+  {
+    const best = rows.reduce((a, r) => Math.max(a, r.flats.length), 0);
+    // 已有两行数到三个以上的不让单行的盖过去：多出来的那一个是头一行拍号数字的竖笔（新年欢喜歌 4,3,3,3）
+    if (best >= 3 && best > f.k && f.k < 3 && rows.length <= 4 && !sh.k) (f = { k: best, m: 1 }), (lone = true);
+  }
   if (!f.k && !sh.k) return;
   // 升降两种都数出来时，取各行数出的总数多的那种
   const total = (of: (r: (typeof rows)[number]) => Rect[]) => rows.reduce((a, r) => a + of(r).length, 0);
@@ -4580,13 +4589,14 @@ function extendKeyByStrokes(pg: SPage, ctx: Map<Staff, StaffContext>, bin: Binar
   const longer = rows.filter((r) => countOf(r.c) > k);
   if (maxStroke <= k && longer.length && longer.length * 3 <= rows.length) for (const r of longer) r.c.key = r.c.key.filter((q) => q.code === code).slice(0, k);
   // **过半的行都数到 k**：全页照它定——混着别种记号的行（主恩更多歌头一行「♯♭」）、一个都没认出的行也补上
-  const strong = m >= 2 && m * 2 >= rows.length;
+  const strong = (m >= 2 && m * 2 >= rows.length) || lone;
   for (const r of rows) {
     const c = r.c;
     const got = strokesOf(r);
     const mixed = c.key.some((q) => q.code !== code);
     if (!mixed && countOf(c) >= k) continue;
-    if (mixed && !strong) continue;
+    // 混着别种记号的行：自己数到了 k（有福确据歌头一行按块读成一个降号、竖笔数出两个升号）或全页已定，才改
+    if (mixed && !strong && got.length < k) continue;
     if (got.length >= k) setKey(c, got.slice(0, k));
     else if (strong) {
       // 自己没数全：从谱号右边起按固定间距摆 k 个（下游只按个数算变音、取最右那个的右缘）

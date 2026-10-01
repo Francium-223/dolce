@@ -4675,12 +4675,13 @@ function extendKeyByStrokes(pg: SPage, ctx: Map<Staff, StaffContext>, bin: Binar
   const sh = pick((r) => r.sharps);
   // **只有一行数全的降号也认**：短歌只有两三个系统，各行淡得不一样，常常只有一行数得全（我要向山举目歌 4,1,0）。
   // 降号的对位够严（肚子要逐个落在 B E A D… 的位置上；漏一根的容许也要后面跟着两个真的），三个以上一行就算数；
-  // 这种页行数少（四行以内），全页照它定。
+  // 这种页行数少（六行以内），全页照它定。
   let lone = false;
   {
     const best = rows.reduce((a, r) => Math.max(a, r.flats.length), 0);
-    // 已有两行数到三个以上的不让单行的盖过去：多出来的那一个是头一行拍号数字的竖笔（新年欢喜歌 4,3,3,3）
-    if (best >= 3 && best > f.k && f.k < 3 && rows.length <= 4 && !sh.k) (f = { k: best, m: 1 }), (lone = true);
+    // 已有两行数到三个以上的不让单行的盖过去，只比两行作证的多一个的也不算：多出来的那一个是头一行拍号数字的竖笔
+    //（新年欢喜歌 4,3,3,3；夜晚觐主歌 3,2,2,2,2,2）
+    if (best >= 3 && best >= f.k + 2 && f.k < 3 && rows.length <= 6 && !sh.k) (f = { k: best, m: 1 }), (lone = true);
   }
   if (!f.k && !sh.k) return;
   // 升降两种都数出来时，取各行数出的总数多的那种

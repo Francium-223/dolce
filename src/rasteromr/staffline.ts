@@ -232,7 +232,10 @@ export function groupStaves(lines: StaffLineRun[]): StaffGroup[] {
     //（GT `C5 C6 C5 C6…` 被读成 `A4 A5 A4 A5…`）。
     // 真谱线从系统线起画，一个系统里五条的左缘几乎相同；加线从音符处才起。
     const spread = Math.max(...five.map((l) => l.left)) - Math.min(...five.map((l) => l.left));
-    if (dev <= 0.2 && right - left >= shortest * 0.8 && spread <= avg * LEFT_SPREAD) {
+    // 五条里不能有**零头**（不到最长那条的四分之一）：x 交集那道闸拿「最短那条的八成」当尺子，最短的只有三十像素时
+    // 交集二十几像素也算过——新编赞美诗 381 一行谱的第五线被一截 31px 的碎线顶替，后面按线长滤谱线时整行谱丢了
+    const longest = Math.max(...five.map((l) => l.right - l.left));
+    if (dev <= 0.2 && right - left >= shortest * 0.8 && shortest >= longest * 0.25 && spread <= avg * LEFT_SPREAD) {
       // 中心写回**原对象**：`completeStaffLines` 按对象认「已分组」，换成副本的话原来那几条
       // 被当成散线，又外推出一行错一条线的重复谱行
       if (usePeak)

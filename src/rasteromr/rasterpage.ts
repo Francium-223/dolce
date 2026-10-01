@@ -201,7 +201,7 @@ function completedAfterDeskew(bin: Binary): number {
   const straight = { ...bin, data: new Uint8Array(bin.data) };
   deskew(straight);
   const lines = findStaffLines(straight);
-  return completeStaffLines(straight, lines, groupStaves(lines)).groups.length;
+  return completeStaffLines(straight, lines, groupStaves(lines), false).groups.length;
 }
 
 /**

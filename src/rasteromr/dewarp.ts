@@ -113,7 +113,10 @@ export interface TrackCurve {
  * 一条轨迹合成五条线：逐条线的 y 取各列的中位数（页面这时已经推平），
  * 上下沿按实测线厚，左右端取轨迹的首尾列。
  */
-export function completeStaffLines(bin: Binary, lines: StaffLineRun[], groups: StaffGroup[]): { lines: StaffLineRun[]; groups: StaffGroup[] } {
+/** 散线凑谱行时，缺的线位沿整行验墨的下限（见 `completeStaffLines` 末段）。 */
+const LOOSE_INK = 0.7;
+
+export function completeStaffLines(bin: Binary, lines: StaffLineRun[], groups: StaffGroup[], loose = true): { lines: StaffLineRun[]; groups: StaffGroup[] } {
   const hits = columnHits(bin);
   const cols = Math.ceil(bin.w / COL_STEP);
   if (hits.length < 20) return { lines, groups };
@@ -193,12 +196,112 @@ export function completeStaffLines(bin: Binary, lines: StaffLineRun[], groups: S
       break;
     }
   }
-  // ── 五条等距、其中一两条只找出半截：**照整行的跨度补齐** ─────────────────
+  // ── 散线里凑谱行：**至少三条落在等距的线位上，缺的回图上验墨补** ─────────────
   //
-  // 页面局部微弯时，一条谱线的行投影在某一行只够半截（新编赞美诗 329 尊主为大歌第二系统高音谱表，
-  // 五线 y=1172/1193.5/1215.5/1237/1259，头一条只有右半 [975,2042]、第二条只有左边 [192,761]），
-  // `groupStaves` 的「x 交集」「左缘一致」两道闸过不去，整行谱没了，下一行低音谱表还被并进上一个系统。
-  // 五条等距（两成以内）、线距与已有谱行相当、至少三条跨满整行，就按那三条的跨度成组。
+  // 页面局部微斜、微弯时，一条谱线的行投影在某一行只够半截，甚至整条够不上闸：
+  //   · 新编赞美诗 329 尊主为大歌第二系统高音谱表，五线 y=1172/1193.5/1215.5/1237/1259，头一条只有右半 [975,2042]、
+  //     第二条只有左边 [192,761]，`groupStaves` 的「x 交集」「左缘一致」两道闸过不去；
+  //   · 322 信徒精兵歌第一行只找出三条（第三条还裂成上下差两像素的左右两截），后两条没有；
+  //   · 297 心中阳光歌两行各只有三四条半截线。
+  // 整行谱没了，下一行低音谱表还被并进上一个系统。做法：同一条线裂成的两截先并起来；以一条散线为基准，
+  // 把间距是线距整数倍（两成以内）的散线归到线位上，够三条、其中至少两条跨过半页的，试各种「基准是第几线」的摆法，
+  // 缺的线位在原图上沿整行验墨（上下容 0.3 格，页面斜着也量得到），都够 `LOOSE_INK` 的取墨最足的那种摆法成组。
+  // 五条都在、都跨满、只是左缘差得多（6 格以上）的不管——后面另有一路按实测线位接回去，
+  // 这里抢先成组反而用了不准的线位（我灵镇静末行左缘 124~320，音符 98.9 → 93.1）。
+  // `loose = false`：推平要不要采纳的那道自检（`rasterpage.ts::completedAfterDeskew`）不走这一段，走下面那段旧的简版
+  //（只认五条连着等距的）。那道自检量的是「推平前后各找得出几行」，凑行的本事一变，推平采不采纳就跟着变，
+  // 整页像素都不一样了：这一段全开或全关，天父加恩歌 95.7 → 88.5，三首短歌的调号也跟着错回去。
+  if (loose) {
+    const done = new Set(outGroups.flatMap((g) => g.lines));
+    const known = outGroups.map((g) => g.space).sort((a, b) => a - b);
+    const ref = known.length ? known[known.length >> 1] : 0;
+    const lenOf = (l: StaffLineRun) => l.right - l.left;
+    // 同一条线裂成的两截（y 差不到 0.3 格）并成一条，y 按长度加权
+    const loose: StaffLineRun[] = [];
+    for (const l of out.filter((q) => !done.has(q) && lenOf(q) >= bin.w * 0.15).sort((a, b) => a.y - b.y)) {
+      const p = loose[loose.length - 1];
+      if (ref && p && l.y - p.y <= ref * 0.3) {
+        const wa = lenOf(p);
+        const wb = lenOf(l);
+        const y = (p.y * wa + l.y * wb) / (wa + wb);
+        loose[loose.length - 1] = { y, y0: y - 1, y1: y + 1, left: Math.min(p.left, l.left), right: Math.max(p.right, l.right) };
+      } else loose.push(l);
+    }
+    const tol = Math.max(2, Math.round(ref * 0.3));
+    /** y 这一行上下 tol 像素里，[left, right] 每隔 4 列有墨的列占比 */
+    const inkTol = (y: number, left: number, right: number): number => {
+      let n = 0;
+      let hit = 0;
+      for (let x = Math.round(left); x <= right; x += 4) {
+        n++;
+        for (let d = -tol; d <= tol; d++) {
+          const yy = Math.round(y) + d;
+          if (yy >= 0 && yy < bin.h && bin.data[yy * bin.w + x]) {
+            hit++;
+            break;
+          }
+        }
+      }
+      return n ? hit / n : 0;
+    };
+    const used = new Set<StaffLineRun>();
+    for (let i = 0; ref && i < loose.length; i++) {
+      const a = loose[i];
+      if (used.has(a)) continue;
+      // 归线位：a 记 0 号，往下找间距是整数倍线距的
+      const slot = new Map<number, StaffLineRun>([[0, a]]);
+      for (const l of loose.slice(i + 1)) {
+        if (used.has(l)) continue;
+        const k = (l.y - a.y) / ref;
+        const r = Math.round(k);
+        if (r < 1 || r > 4) continue;
+        if (Math.abs(k - r) > 0.2) continue;
+        if (!slot.has(r) || lenOf(l) > lenOf(slot.get(r)!)) slot.set(r, l);
+      }
+      if (slot.size < 3) continue;
+      const mem = [...slot.values()];
+      const full = mem.filter((l) => lenOf(l) >= bin.w * 0.5);
+      if (full.length < 2) continue;
+      if (slot.size === 5 && full.length === 5 && Math.max(...mem.map((l) => l.left)) - Math.min(...mem.map((l) => l.left)) > ref * 6) continue;
+      const left = Math.min(...full.map((l) => l.left));
+      const right = Math.max(...full.map((l) => l.right));
+      const maxSlot = Math.max(...slot.keys());
+      // 线距照成员拟合（首尾两条的距离 / 线位差）
+      const avg = (slot.get(maxSlot)!.y - a.y) / maxSlot;
+      let best: { s: number; score: number } | null = null;
+      for (let s0 = 0; s0 + maxSlot <= 4; s0++) {
+        const ys = [0, 1, 2, 3, 4].map((k) => a.y + (k - s0) * avg);
+        if (outGroups.some((g) => ys[0] < g.lines[4].y + avg * 0.5 && ys[4] > g.lines[0].y - avg * 0.5)) continue;
+        let score = 0;
+        let ok = true;
+        for (let k = 0; k < 5; k++) {
+          if (slot.has(k - s0)) continue;
+          const v = inkTol(ys[k], left, right);
+          if (v < LOOSE_INK) ok = false;
+          score += v;
+        }
+        if (ok && (!best || score > best.score)) best = { s: s0, score };
+      }
+      if (!best) continue;
+      const five: StaffLineRun[] = [0, 1, 2, 3, 4].map((k) => {
+        const m = slot.get(k - best!.s);
+        const y = m ? m.y : a.y + (k - best!.s) * avg;
+        // 跨过半页的成员留着自己的跨度（天父加恩歌：都拉成同一个跨度反而差，95.7 → 88.5）；半截的、补出来的用整行的跨度
+        const own = m && lenOf(m) >= bin.w * 0.5;
+        return { y, y0: m ? m.y0 : y - 1, y1: m ? m.y1 : y + 1, left: own ? m!.left : left, right: own ? m!.right : right };
+      });
+      for (const l of mem) used.add(l);
+      // 成员的原线（连同裂成两截的那几条）从线表里摘掉，换成这五条：线表里一行谱只该有五条
+      for (let k = out.length - 1; k >= 0; k--) {
+        const l = out[k];
+        if (!done.has(l) && five.some((f) => Math.abs(f.y - l.y) <= ref * 0.3)) out.splice(k, 1);
+      }
+      out.push(...five);
+      for (const f of five) done.add(f);
+      outGroups.push({ lines: five, space: avg });
+    }
+  }
+  if (!loose)
   {
     const done = new Set(outGroups.flatMap((g) => g.lines));
     const loose = out.filter((l) => !done.has(l)).sort((a, b) => a.y - b.y);
@@ -226,6 +329,18 @@ export function completeStaffLines(bin: Binary, lines: StaffLineRun[], groups: S
       i += 4;
     }
   }
+  // 成了组的谱行里**只找出半截的线照别的线拉满**：后面建谱行时按线长滤候选（不到最长横线的三成五不要），
+  // 半截线被滤掉，这一行只剩四条、整行谱就没了（接受我心歌第四行第五线只有 [174,765]）。
+  if (loose)
+    for (const g of outGroups) {
+      const lens = g.lines.map((l) => l.right - l.left);
+      const longest = Math.max(...lens);
+      const ok = g.lines.filter((l) => l.right - l.left >= longest * 0.6);
+      if (ok.length === 5 || ok.length < 3) continue;
+      const left = Math.min(...ok.map((l) => l.left));
+      const right = Math.max(...ok.map((l) => l.right));
+      for (const l of g.lines) if (l.right - l.left < longest * 0.6) (l.left = Math.min(l.left, left)), (l.right = Math.max(l.right, right));
+    }
   outGroups.sort((a, b) => a.lines[0].y - b.lines[0].y);
   return { lines: out.sort((a, b) => a.y - b.y), groups: outGroups };
 }

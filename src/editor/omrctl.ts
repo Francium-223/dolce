@@ -21,7 +21,7 @@ import type { PlayPoint } from "./player";
 import type { DocFormatId } from "./formats";
 import { confirmDiscardEdits, type FormatOption, type FormatSource, type FormatSwitch } from "./formatswitch";
 import { reprojectRecognized, type Reprojected } from "../omr/reproject";
-import { baseImage } from "../omr/overlay";
+import { baseImage, doubtItems } from "../omr/overlay";
 import type { ProjectKind, ProjectSnapshot } from "./omrproject";
 
 /** 是否 PDF 字节（mime 或 `%PDF-` 魔数）。与 `omr/decode.ts` 里那份同判据。 */
@@ -782,6 +782,7 @@ export class OmrController implements FormatSource {
       if (this.btnEl) this.btnEl.textContent = "原图对照";
       this.host.reload(this.host.getText());
       this.syncSide(null); // 回到排版稿：并排原图（开着的话）铺回来
+      this.syncDoubtEl(0);
     } else {
       this.followSelection(null); // 核对视图本身就是原图，小窗收起
       this.host.setRecognizeMode(true);
@@ -844,7 +845,45 @@ export class OmrController implements FormatSource {
       pane.scrollTop = scroll.top;
       pane.scrollLeft = scroll.left;
     }
+    this.syncDoubtEl(doubtItems(score, this.shown?.lyricFixes ?? []).length);
     this.host.recognizeRendered();
+  }
+
+  // ---------------- 可疑项（复核标黄，`JpNum.doubt` / `lyricDoubt`） ----------------
+  private doubtEl: HTMLButtonElement | null = null;
+  /** 「下一处」上次跳到第几个 */
+  private doubtAt = -1;
+
+  setDoubtEl(el: HTMLButtonElement): void {
+    this.doubtEl = el;
+    el.addEventListener("click", () => this.nextDoubt());
+    this.syncDoubtEl(0);
+  }
+
+  private syncDoubtEl(n: number): void {
+    const el = this.doubtEl;
+    if (!el) return;
+    el.hidden = n === 0 || this.host.mode !== "recognize" || !!this.staffResult;
+    el.textContent = `${n} 处可疑`;
+  }
+
+  /** 跳到下一处标黄的音 / 字：选中它（同点命中框）并滚到眼前。 */
+  nextDoubt(): void {
+    const score = this.shown?.score ?? this.score;
+    if (!score) return;
+    const items = doubtItems(score, this.shown?.lyricFixes ?? []);
+    if (!items.length) return;
+    this.doubtAt = (this.doubtAt + 1) % items.length;
+    const it = items[this.doubtAt]!;
+    const sel = it.verse === null
+      ? `.omr-hits rect[data-kind="note"][data-i="${it.i}"]`
+      : `.omr-hits rect[data-kind="lyric"][data-i="${it.i}"][data-verse="${it.verse}"]`;
+    const hit = document.querySelector<SVGRectElement>(`#score-pane ${sel}`);
+    if (!hit) return;
+    hit.scrollIntoView({ block: "center", inline: "nearest" });
+    const r = hit.getBoundingClientRect();
+    hit.dispatchEvent(new MouseEvent("click", { bubbles: true, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 }));
+    this.host.setStatus(`第 ${this.doubtAt + 1} / ${items.length} 处可疑：${hit.closest("svg")?.querySelector(`.omr-doubt-box[data-i="${it.i}"]${it.verse === null ? ":not([data-verse])" : `[data-verse="${it.verse}"]`} title`)?.textContent ?? ""}`);
   }
 
   // ---------------- 五线谱识别的对照（位图路，`rasteromr/overlay.ts`） ----------------
@@ -1271,6 +1310,8 @@ export class OmrController implements FormatSource {
     this.host.setContextControl(this.pagesBtn, false);
     this.host.setContextControl(this.sideBtn, false);
     this.sideKey = null;
+    this.doubtAt = -1;
+    this.syncDoubtEl(0);
     this.host.setContextControl(this.kindField(), false);
     this.staffResult = null;
     this.sessionKind = null;

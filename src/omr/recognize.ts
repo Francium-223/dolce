@@ -13,7 +13,7 @@ export interface MusicppDetail {
 }
 
 /** musicpp 本地管线：图片字节 → 二值图 + RecognizedScore。完全本地（PaddleOCR PP-OCRv4）。 */
-export async function recognizeMusicppDetailed(bytes: Uint8Array, mime?: string, opts: { refLyrics?: string } = {}): Promise<MusicppDetail> {
+export async function recognizeMusicppDetailed(bytes: Uint8Array, mime?: string, opts: { refLyrics?: string; review?: boolean } = {}): Promise<MusicppDetail> {
   const _t0 = performance.now();
   const bin = await decodeToBinary(bytes, mime);
   const _tDecode = performance.now();

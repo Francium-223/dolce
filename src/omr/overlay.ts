@@ -525,9 +525,65 @@ export function renderRecognitionSvg(
     }
     svg.appendChild(g);
   }
+  const doubt = buildDoubtLayer(score, stats, edits?.lyricFixes ?? []);
+  if (doubt) svg.appendChild(doubt);
   svg.appendChild(buildHitLayer(score, stats, edits?.inserted));
   return svg;
 }
+
+/** 复核标黄（`JpNum.doubt` / `lyricDoubt`，识别时记下的「差一点」）：音框、歌词字各一个黄框。改过、删掉的音，改过的字不再标。
+ *  `data-i` / `data-verse` 同命中层，「下一处」按它找。 */
+export function doubtItems(score: RecognizedScore, lyricFixes: readonly { i: number; verse: number }[] = []): { i: number; verse: number | null }[] {
+  const out: { i: number; verse: number | null }[] = [];
+  const fixed = new Set(lyricFixes.map((f) => `${f.i}:${f.verse}`));
+  score.rows.flatMap((r) => r.nums).forEach((n, i) => {
+    const st = (n as { state?: string }).state;
+    if (n.doubt?.length && !st) out.push({ i, verse: null });
+    for (const v of n.lyricDoubt ?? []) if (!st && !fixed.has(`${i}:${v}`) && n.lyrics?.[v]) out.push({ i, verse: v });
+  });
+  return out;
+}
+
+function buildDoubtLayer(score: RecognizedScore, stats: Stats, lyricFixes: readonly { i: number; verse: number }[]): SVGGElement | null {
+  const items = doubtItems(score, lyricFixes);
+  if (!items.length) return null;
+  const g = document.createElementNS(SVG_NS, "g");
+  g.setAttribute("class", "omr-doubt");
+  const flat = score.rows.flatMap((r) => r.nums);
+  const lyr = lyricAnchors(score, stats);
+  const pad = stats.noteH * 0.3;
+  for (const it of items) {
+    let b: Rect | null = null;
+    if (it.verse === null) b = flat[it.i]!.bbox;
+    else {
+      const a = lyr(it.i, it.verse);
+      if (a) b = { x: a.x - stats.lyrH / 2, y: a.y - stats.lyrH / 2, w: stats.lyrH, h: stats.lyrH };
+    }
+    if (!b) continue;
+    const r = document.createElementNS(SVG_NS, "rect");
+    r.setAttribute("x", String(b.x - pad));
+    r.setAttribute("y", String(b.y - pad));
+    r.setAttribute("width", String(b.w + pad * 2));
+    r.setAttribute("height", String(b.h + pad * 2));
+    r.setAttribute("rx", String(pad));
+    r.setAttribute("class", "omr-doubt-box");
+    r.dataset.i = String(it.i);
+    if (it.verse !== null) r.dataset.verse = String(it.verse);
+    const t = document.createElementNS(SVG_NS, "title");
+    const reasons = it.verse === null ? flat[it.i]!.doubt ?? [] : [];
+    t.textContent = it.verse === null ? `可疑：${reasons.map((x) => DOUBT_TEXT[x] ?? x).join("；")}` : `可疑：第 ${it.verse + 1} 段这个字认得没把握`;
+    r.appendChild(t);
+    g.appendChild(r);
+  }
+  return g;
+}
+
+const DOUBT_TEXT: Record<string, string> = {
+  "note.offRow": "比同一行的音高出或低出一截，可能不是音（小字、附注）",
+  "oct.inkAbove": "正上方有像高音点的墨（粘在弧上），可能漏了高音点",
+  "oct.oddShape": "八度点形状不像点，可能把别的记号当成了八度点",
+  "oct.offCenter": "旁边有个偏了一点的点，可能漏了八度点",
+};
 
 /** 一行的竖向内容范围（含八度点 + 本行下方歌词带），供浮窗 viewBox 竖向裁剪。横向用整幅源图宽以便 1:1 对比。 */
 function rowContentExtent(score: RecognizedScore, stats: Stats, ri: number): { top: number; bottom: number } {

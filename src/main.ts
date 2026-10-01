@@ -244,6 +244,8 @@ async function boot() {
       app.saveSettings();
     });
   }
+  const doubtBtn = document.getElementById("btn-doubt") as HTMLButtonElement | null;
+  if (doubtBtn) app.omr.setDoubtEl(doubtBtn);
   const pagesBtn = document.getElementById("btn-src-pages") as HTMLButtonElement | null;
   if (pagesBtn) app.omr.setPagesBtn(pagesBtn);
   const sideBtn = document.getElementById("btn-src-side") as HTMLButtonElement | null;

@@ -41,6 +41,11 @@ export interface JpNum {
   div: number; // 下划线条数（每条时值减半）
   augment: number; // 增时线 '-' 数（延长拍）
   augmentRects?: Rect[]; // 增时线各横块源图 bbox（仅识别模式叠加按原位绘制用，不参与导出）
+  // 复核：判定「差一点」的地方（如 "oct.vetoUp" 八度点像点却被上下文规则否掉）。不改识别结果，
+  // 核对视图据此把这个音标黄、进「下一处」。
+  doubt?: string[];
+  // 复核：哪几段（0 基）的歌词字把握不大（OCR 候选第一名不是它，或第一名比第二名高不了多少）
+  lyricDoubt?: number[];
   lyrics?: string[]; // 歌词：按声部(verse)索引，lyrics[0]=第一段(W1)、lyrics[1]=第二段……
   // 段落标记（Intro/Verse/Chorus/Coda…，谱面上多印成方框）：标在该段起始音符上。
   // → `Chord.sectionWord`（123 写成 `"^…"`），下游供乐句排版按段落硬换行（见 score/phrase.ts）。

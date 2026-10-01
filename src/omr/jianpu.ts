@@ -11,7 +11,7 @@ import type { Binary, Component, JpNum, Rect, StaffRow, RecognizedScore } from "
 import { rright, rbottom, rcx, rcy, RHYTHM_DIGIT, REJOINED_ARC_ID, isRejoinedArc } from "./types";
 import { connectedComponents } from "./ccl";
 import type { OcrBackend } from "./ocr";
-import { recognizeLyrics } from "./lyrics";
+import { recognizeLyrics, type LyricCharRef, type LyricHooks } from "./lyrics";
 import { applyRefLyrics } from "./reflyrics";
 import { recognizeHeader } from "./header";
 import { recognizeTrailingStanzas } from "./stanzas";
@@ -1585,6 +1585,8 @@ function buildJpNums(
     let octave = 0, dot = 0, augment = 0;
     const upDots: Rect[] = [], downDots: Rect[] = []; // 八度点候选（上/下），循环后按叠放规则裁决
     const nearDown: Rect[] = [];
+    // 复核用（`JpNum.doubt`）：八度点判得「差一点」的情形——不改判定，只记下来给核对视图标黄
+    const doubts: string[] = [];
     // 数字先识别（附点判定要用到：休止 0 不接附点 —— 见下）。
     // "1" 是简谱唯一单竖笔，明显比其它数字窄：极窄块若被 OCR 误判成别的数字（淡印/碎裂的 "1"
     // 常被读成 4/7），按宽度纠回 1；不动休止 0（圆形、不窄）。
@@ -1657,7 +1659,13 @@ function buildJpNums(
       // 偏在两字之间、|dx| 0.3~0.39，旧阈值放它进来 → 凭空多出低八度点，若该音本就有高八度点还会
       // 被一加一减抵消（实测「主祢真伟大」Coda 的 `i`(为) 丢点、`7`(我) 平白多点）。
       // 声部行放到 0.35：新编赞美诗·四声部的低音点常印得偏左（78《马槽歌》Q2 `5̲̣` 点心偏 9px，字号 30）
-      if (Math.abs(rcx(kb) - dcx) > numH * (voiceMates.length ? 0.35 : 0.25)) continue;
+      const centerLimit = numH * (voiceMates.length ? 0.35 : 0.25);
+      if (Math.abs(rcx(kb) - dcx) > centerLimit) {
+        // 紧贴数字上下、只是水平偏了一点（不到门限的 1.3 倍）被剔掉的点
+        const g = Math.max(d.y - rbottom(kb), kb.y - rbottom(d));
+        if (Math.abs(rcx(kb) - dcx) <= centerLimit * 1.3 && g >= -1 && g < numH * 0.8) doubts.push("oct.offCenter");
+        continue;
+      }
       // 音符上方那一带偶尔印着别的字（段落名、上一行歌词的尾字），它的碎笔散成几个点大小的小块，
       // 尺寸与居中判据都拦不住（17《不失足》首音头顶那个「羔」字，`3.` 成了 `3̈.`）。
       // 分野在**左右**：八度点在数字正上/正下方孤零零一个，同高度上左右一个字距内不会再有小块
@@ -1761,7 +1769,9 @@ function buildJpNums(
           // 点还得在**弧端**（弧宽两头三成内）：弧正中下方一颗点是延长记号 ⌒·（四声部 10 行末 `1` 头上那个），照旧算墨挡掉
           arcs.filter((a) => a.bbox.w >= numH * 0.7 && a.bbox.h <= numH * 0.8 && a.bbox.h >= numH * 0.2 &&
             a.bbox.h > (a.area / a.bbox.w) * 2.2 && Math.abs(rcx(kb) - rcx(a.bbox)) >= a.bbox.w * 0.2).map((a) => a.bbox)) >= 0.12;
-        if (!isArcFoot && dotSized(kb) && !hasSideMate(kb) && !nearerOther(true) && !underText && !inTextLine(kb)) upDots.push(kb); // 上点 → 高八度（几点算几个八度见下面的裁决）
+        if (!isArcFoot && dotSized(kb) && !hasSideMate(kb) && !nearerOther(true) && !underText && !inTextLine(kb)) {
+          upDots.push(kb); // 上点 → 高八度（几点算几个八度见下面的裁决）
+        }
       // 下点 → 低八度。额外一道门专防**歌词字的顶部笔画**：歌词带紧接在数字下方，字顶的短竖/点
       // （如「主」字上方那一笔）正落在数字正下方、dx≈0、间隙也与「减时线下方的低音点」几乎同高
       // （14~15px vs 真点 3~13px），靠位置分不开。改看**它下方还有没有墨**：八度点孤立、下方留白，
@@ -1770,7 +1780,8 @@ function buildJpNums(
       } else if (gapBelow >= -1 && belowReach && (inkBelow(bin, kb, numH) < 0.12 || underOwnLine(kb) || overArc(kb) || aboveLyrics(kb)) &&
           dotSized(kb) && !hasSideMate(kb) && !inTextLine(kb)) {
         // 只因「离别声部的数字更近」被拒的另记一笔，留给 resolvePairOctaveDots 按声部组裁决
-        if (!nearerOther(false)) downDots.push(kb); else nearDown.push(kb); }
+        if (!nearerOther(false)) downDots.push(kb); else nearDown.push(kb);
+      }
     }
     // 八度点是**竖排叠放**的：第二、三个点各自摞在前一个点的正上/正下方——同一条竖线上、
     // 彼此紧挨着（间距不过一个点径）。只按「落在窗口内」计数，音符上方**并排**的两个墨块就被
@@ -1854,12 +1865,103 @@ function buildJpNums(
       div++;
       prev = kb;
     }
-    const jn: JpNum = { digit, bbox: d, dot, octave, div, augment, augmentRects };
+    // 收下的八度点形状不像点（不实、或一边长出一截）：小尖角、重音记号、字的笔画也会过尺寸与居中两道门
+    if ([...upDots, ...downDots].some((kb) => inkFill(bin, kb) < 0.55 || Math.max(kb.w, kb.h) > Math.min(kb.w, kb.h) * 1.7)) doubts.push("oct.oddShape");
+    // 高音点跟圆滑线的端头粘成了一块（剥弧时点被一起带走、没进点候选）：数字正上方紧挨着的那段墨像一个点
+    if (!upDots.length && dotInkAbove(bin, d, numH)) doubts.push("oct.inkAbove");
+    const jn: JpNum = { digit, bbox: d, dot, octave, div, augment, augmentRects, ...(doubts.length ? { doubt: doubts } : {}) };
     octDotsOf.set(jn, { up: upDots, down: downDots, nearDown });
     out.push(jn);
   }
   recountUnderlines(bin, out, numH, cls, barlineXs, voiceMates);
+  // 复核：纵向偏离本行的「音」（印在音符上方的小字替换音、段落附注里的数字也会被收成音）
+  if (out.length >= 4) {
+    const cys = out.map((n) => rcy(n.bbox)).sort((a, b) => a - b);
+    const mid = cys[cys.length >> 1]!;
+    for (const n of out) if (Math.abs(rcy(n.bbox) - mid) > numH * 0.45) n.doubt = [...(n.doubt ?? []), "note.offRow"];
+  }
   return out;
+}
+
+/** 复核歌词字（`JpNum.lyricDoubt`）：每个汉字取 OCR 候选，第一名不是识别结果（上层按上下文改过），
+ *  或第一名比第二名高不了 `LYRIC_DOUBT_MARGIN` 的，记下这一段。取不到候选的字（附段、参照歌词补的）不看。 */
+const LYRIC_DOUBT_MARGIN = 0.7;
+async function markLyricDoubts(rows: readonly StaffRow[], hooks: LyricHooks): Promise<void> {
+  const reqs: LyricCharRef[] = [];
+  for (const r of rows) for (const n of r.nums) (n.lyrics ?? []).forEach((text, verse) => {
+    [...(text ?? "")].forEach((ch, idx) => { if (/[\u3400-\u9fff]/.test(ch)) reqs.push({ n, verse, idx }); });
+  });
+  if (!reqs.length) return;
+  const alts = await hooks.rankAlts(reqs);
+  reqs.forEach((q, k) => {
+    const a = alts[k];
+    const ch = [...(q.n.lyrics?.[q.verse] ?? "")][q.idx];
+    if (!a || !a.alts.length || !ch) return;
+    const margin = (a.scores[0] ?? 1) - (a.scores[1] ?? 0);
+    if (a.alts[0] !== ch || margin < LYRIC_DOUBT_MARGIN) {
+      const set = new Set<number>(q.n.lyricDoubt ?? []);
+      set.add(q.verse);
+      q.n.lyricDoubt = [...set].sort((x, y) => x - y);
+    }
+  });
+}
+
+/** 数字 `d` 正上方（中间几列）离它最近的那段墨像不像一个点（离数字顶不到 0.8 字号）。只量像素、不看连通块——
+ *  点跟弧粘成一块时，块的分类认不出它。两种情形：
+ *  · 两旁有墨（点粘在弧上）：中间那段墨的高度至少是两旁弧身粗细的 1.8 倍、且不小于 0.2 字号——点就是弧上局部鼓起的一块；
+ *    最下面三成那几行横向宽 0.18~0.5 字号（陡的弧尾竖着量也长，但每行横着只有一笔粗）。
+ *  · 两旁没墨（孤立的块）：高 0.12~0.45 字号、宽不过 0.45 字号、最短边不小于 0.17 字号、实心（墨占六成以上）。 */
+function dotInkAbove(bin: Binary, d: Rect, numH: number): boolean {
+  const cx = Math.round(rcx(d));
+  const half = Math.max(1, Math.round(numH * 0.12));
+  const ink = (x: number, y: number): boolean => x >= 0 && x < bin.w && y >= 0 && y < bin.h && bin.data[y * bin.w + x] === 1;
+  const rowHas = (y: number): boolean => {
+    for (let x = cx - half; x <= cx + half; x++) if (ink(x, y)) return true;
+    return false;
+  };
+  const top = Math.max(0, Math.round(d.y - numH * 0.8));
+  let y = Math.round(d.y) - 1;
+  while (y >= top && !rowHas(y)) y--;
+  if (y < top) return false;
+  const bottom = y;
+  while (y >= 0 && rowHas(y)) y--;
+  const h = bottom - y;
+  if (h > numH * 0.6) return false;
+  // 两旁（中间窗口外、0.8 字号内）各列在这一带的墨厚：中位数当弧身粗细
+  const side: number[] = [];
+  for (let x = cx - Math.round(numH * 0.8); x <= cx + Math.round(numH * 0.8); x++) {
+    if (Math.abs(x - cx) <= half + 1) continue;
+    let n = 0;
+    for (let yy = y + 1 - Math.round(numH * 0.3); yy <= bottom + 2; yy++) if (ink(x, yy)) n++;
+    if (n > 0) side.push(n);
+  }
+  if (side.length >= numH * 0.3) {
+    side.sort((a, b) => a - b);
+    const stroke = side[side.length >> 1]!;
+    if (h < Math.max(numH * 0.2, stroke * 1.8)) return false;
+    // 较陡的弧尾竖着量也长，但每一行横着只有一笔粗；点在最下面几行横向有一定宽度
+    let widest = 0;
+    for (let yy = bottom - Math.max(1, Math.round(h * 0.3)); yy <= bottom; yy++) {
+      for (let x0 = cx - half; x0 <= cx + half; x0++) {
+        if (!ink(x0, yy)) continue;
+        let l = x0, r = x0;
+        while (ink(l - 1, yy) && x0 - l < numH) l--;
+        while (ink(r + 1, yy) && r - x0 < numH) r++;
+        widest = Math.max(widest, r - l + 1);
+      }
+    }
+    return widest >= numH * 0.18 && widest <= numH * 0.5;
+  }
+  if (h < numH * 0.12 || h > numH * 0.45) return false;
+  let l = cx, r = cx;
+  const colHas = (x: number): boolean => {
+    for (let yy = y + 1; yy <= bottom; yy++) if (ink(x, yy)) return true;
+    return false;
+  };
+  while (colHas(l - 1) && cx - l < numH) l--;
+  while (colHas(r + 1) && r - cx < numH) r++;
+  const w = r - l + 1;
+  return w <= numH * 0.45 && Math.min(w, h) >= Math.max(2, numH * 0.17) && inkFill(bin, { x: l, y: y + 1, w, h }) >= 0.6;
 }
 
 /** **补判减时线**：按横线块数出 0 条的音符，直接到像素里量。块分类那条路靠连通域，线跟数字、低音点、连接墨粘成一块时
@@ -2047,7 +2149,7 @@ function mergeBrokenHlines(comps: Component[], numH: number): Component[] {
 }
 
 /** `refLyrics`：同一首诗歌的歌词文本（已解码），给了就与识别歌词互证纠错（reflyrics.ts），结果在 `lyricCheck`。 */
-export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refLyrics?: string } = {}): Promise<RecognizedScore> {
+export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refLyrics?: string; review?: boolean } = {}): Promise<RecognizedScore> {
   // 去连通：把贯穿全高的小节线（常像"桥"把弧/增时线粘成一团）从像素上擦掉重做连通域，
   // 让弧/小节线/数字各自独立、以干净连通块流入下面的 classify 与 detectSlurs。
   const raw = connectedComponents(bin, 4);
@@ -3441,6 +3543,8 @@ export async function recognizeJianpu(bin: Binary, ocr: OcrBackend, opts: { refL
     }
     // 弧配音两可的（整体右偏的弧），等各段歌词都落位后按一字多音的形裁决。
     resolveSlurRefits(slurRefits);
+    // 复核歌词字（再跑一遍逐字候选，费时）：`review: false` 时不做（批量回归、只要文本的命令行）
+    if (opts.review !== false) await markLyricDoubts(useRows, lr.hooks);
   }
   {
     const verses = Math.max(0, ...useRows.flatMap((r) => r.nums.map((n) => n.lyrics?.length ?? 0)));

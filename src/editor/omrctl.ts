@@ -11,7 +11,7 @@ import { recognizedBeatIssues, type RecognizedBeatIssue } from "../omr/beats";
 import { EditorSelection } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 import {
-  recognizeMusicppDetailed, renderRecognitionSvg, renderRowPopup, renderHeaderPopup,
+  recognizeMusicppDetailed, renderRecognitionSvg, renderRowPopup, renderHeaderPopup, renderRowSource,
   OMR_EMITTERS, DEFAULT_OMR_FORMAT, isOmrFormat, omrEmitter,
   type OmrFormat, type RecogView,
 } from "../omr";
@@ -20,6 +20,7 @@ import type { ElementId, ScoreDoc } from "../model/doc";
 import type { PlayPoint } from "./player";
 import type { DocFormatId } from "./formats";
 import { confirmDiscardEdits, type FormatOption, type FormatSource, type FormatSwitch } from "./formatswitch";
+import { reprojectRecognized, type Reprojected } from "../omr/reproject";
 
 /** 是否 PDF 字节（mime 或 `%PDF-` 魔数）。与 `omr/decode.ts` 里那份同判据。 */
 function isPdfBytes(bytes: Uint8Array, mime?: string): boolean {
@@ -41,6 +42,8 @@ export interface OmrHost {
   stopPlayback(): void;
   /** 点中识别框：停止中记为起播点，播放中跳过去。 */
   seekPlayback(point: PlayPoint): void;
+  /** 正在试听（播放或暂停中）：点音符让给跳播 */
+  playbackActive(): boolean;
   /** 当前文本解析出的模型（试听播的就是它；播放高亮按它的元素 id 找识别框）。 */
   currentScoreDoc(): ScoreDoc | null;
   /** 重新解析并排版（退出识别模式时回到排版稿）。 */
@@ -79,6 +82,13 @@ export interface OmrHost {
   /** 上下文相关控件的显隐（工具条）。 */
   setContextControl(el: Element | null, on: boolean): void;
   syncContextGroup(el: Element | null | undefined): void;
+  /** 核对视图里能不能可视化编辑（有代码区、有点选映射）。能就把点击交给它 */
+  visualEnabled(): boolean;
+  /** 核对视图上的单击 / 双击交给可视化编辑（选中、落光标、改字） */
+  visualClick(ev: MouseEvent): void;
+  visualDblClick(ev: MouseEvent): void;
+  /** 核对视图重画完了：App 按新的命中框重绑索引条目、重画光标 */
+  recognizeRendered(): void;
 }
 
 export class OmrController implements FormatSource {
@@ -102,6 +112,10 @@ export class OmrController implements FormatSource {
   private idMap: { doc: ScoreDoc; meta: JpwMeta; toI: Map<ElementId, number>; toId: ElementId[] } | null = null;
   /** 试听的竖直播放线（`rect.omr-playhead`，见 highlightPlaying）。 */
   private playingEl: SVGRectElement | null = null;
+  /** 最近一次画的重投影（核对时改过的值，见 `omr/reproject.ts`）；浮窗用同一份 */
+  private shown: Reprojected | null = null;
+  /** 第几次重画（浮窗按它判断要不要重建） */
+  private renderSeq = 0;
 
   constructor(private host: OmrHost) {}
 
@@ -111,8 +125,73 @@ export class OmrController implements FormatSource {
   }
 
   // ---------------- 持久化 ----------------
-  loadSettings(s: { omrFormat?: unknown; recogView?: unknown }): void {
+  loadSettings(s: { omrFormat?: unknown; recogView?: unknown; omrFollow?: unknown }): void {
     if (isOmrFormat(s.omrFormat)) this.format = s.omrFormat;
+    if (typeof s.omrFollow === "boolean") this.follow = s.omrFollow;
+    this.syncFollowBtn();
+  }
+
+  // ---------------- 原图片段跟随 ----------------
+  /** 排版稿（简谱 / 五线谱 / 混排档）里选中音符时，右下角小窗显示原图上那一行并框出这个音。持久化 */
+  follow = false;
+  private followBtn: HTMLButtonElement | null = null;
+  private followEl: HTMLElement | null = null;
+
+  setFollowBtn(btn: HTMLButtonElement, box: HTMLElement | null): void {
+    this.followBtn = btn;
+    this.followEl = box;
+    this.host.setContextControl(btn, false);
+    btn.addEventListener("click", () => {
+      this.follow = !this.follow;
+      this.host.saveSettings();
+      this.syncFollowBtn();
+      if (!this.follow) this.followSelection(null);
+    });
+    this.syncFollowBtn();
+  }
+
+  private syncFollowBtn(): void {
+    this.followBtn?.classList.toggle("active", this.follow);
+    this.followBtn?.setAttribute("aria-pressed", String(this.follow));
+  }
+
+  /** 排版稿里选中了元素 `id`（源模型的 id）：小窗换到它那一行；null / 关着 / 没有识别结果 / 对不上框 → 收起。 */
+  followSelection(id: ElementId | null): void {
+    const box = this.followEl;
+    if (!box) return;
+    const i = id !== null && this.follow && this.bin && this.score && this.host.mode !== "recognize"
+      ? this.idMapOf(this.host.currentScoreDoc())?.toI.get(id)
+      : undefined;
+    if (i === undefined || !this.bin || !this.score) {
+      box.hidden = true;
+      box.replaceChildren();
+      return;
+    }
+    const ri = this.rowIndexOfFlat(i);
+    const svg = renderRowSource(this.bin, this.score, ri);
+    // 框出这个音（坐标就是源图像素，与浮窗同一坐标系）
+    const flat = this.score.rows.flatMap((r) => r.nums);
+    const b = flat[i]?.bbox;
+    if (b) {
+      const pad = Math.max(3, b.h * 0.25);
+      const r = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+      r.setAttribute("class", "omr-follow-hit");
+      r.setAttribute("x", String(b.x - pad));
+      r.setAttribute("y", String(b.y - pad));
+      r.setAttribute("width", String(b.w + pad * 2));
+      r.setAttribute("height", String(b.h + pad * 2));
+      r.setAttribute("rx", String(pad));
+      svg.appendChild(r);
+    }
+    // 以这个音为中心横向裁一段（约 8 个行高宽），整行太宽缩下来字就看不清了
+    const vb = svg.getAttribute("viewBox")?.split(/\s+/).map(Number);
+    if (b && vb && vb.length === 4) {
+      const w = Math.min(this.bin.w, vb[3]! * 8);
+      const x = Math.max(0, Math.min(this.bin.w - w, b.x + b.w / 2 - w / 2));
+      svg.setAttribute("viewBox", `${x} ${vb[1]} ${w} ${vb[3]}`);
+    }
+    box.replaceChildren(svg);
+    box.hidden = false;
   }
 
   /** 编辑器改动时同步代码区间映射（CodeMirror 的 changes 映射）。 */
@@ -258,6 +337,7 @@ export class OmrController implements FormatSource {
     this.emitted = this.host.getText();
     if (this.btnEl) this.btnEl.textContent = "原图对照";
     this.host.setContextControl(this.btnEl, true);
+    this.host.setContextControl(this.followBtn, true);
     this.host.formats.use(this);
     this.host.syncViewModes();
   }
@@ -273,6 +353,7 @@ export class OmrController implements FormatSource {
       if (this.btnEl) this.btnEl.textContent = "原图对照";
       this.host.reload(this.host.getText());
     } else {
+      this.followSelection(null); // 核对视图本身就是原图，小窗收起
       this.host.setRecognizeMode(true);
       this.setLayout(true);
       if (this.btnEl) this.btnEl.textContent = "返回排版稿";
@@ -297,18 +378,73 @@ export class OmrController implements FormatSource {
 
   /** 渲染识别视图：二值图 + 识别结果 → 一张 SVG，沿用 score-page-wrap + zoom 容器。 */
   renderPages(): void {
+    // 核对时改一下就整张重画：保住滚动位置（清空谱面会把它归零）
+    const pane = document.getElementById("score-pane");
+    const scroll = pane ? { top: pane.scrollTop, left: pane.scrollLeft } : null;
     this.host.clearPages();
     this.popupEl = null;
     this.playingEl = null;
     if (!this.bin || !this.score) return;
     const bin = this.bin;
-    const score = this.score;
-    this.host.renderPagesWith(1, () => renderRecognitionSvg(bin, score, this.view, this.beatMarks), {
+    // 代码区改过：把当前模型投回原识别框（改过的标蓝、删掉的划灰、新插的插值定位）
+    const doc = this.host.currentScoreDoc();
+    const map = this.idMapOf(doc);
+    this.shown = doc && map ? reprojectRecognized(this.score, doc, map.toI) : null;
+    this.renderSeq++;
+    const score = this.shown?.score ?? this.score;
+    // 可视化编辑开着时拍数红框由它按当前模型画（随改随变）；识别完那一份只在不能编辑时画
+    const marks = this.host.visualEnabled() ? [] : this.beatMarks;
+    this.host.renderPagesWith(1, () => renderRecognitionSvg(bin, score, this.view, marks, this.shown ?? undefined), {
       aspectRatio: () => `${bin.w} / ${bin.h}`,
       position: "relative", // 浮窗绝对定位相对此容器
       onPage: (svg, wrap) => this.wireInteraction(svg, wrap),
-      resetPageIndex: true,
+      resetPageIndex: false,
     });
+    if (pane && scroll) {
+      pane.scrollTop = scroll.top;
+      pane.scrollLeft = scroll.left;
+    }
+    this.host.recognizeRendered();
+  }
+
+  /** 这份结果有没有点选映射（123 / 文本谱产物有，`.jpwabc` / ABC 没有）。 */
+  get hasMeta(): boolean {
+    return this.meta !== null;
+  }
+
+  /** 索引条目 → 核对视图上的命中框：音符按框序（新插的按元素 id）、歌词按框序与段、页眉另认（`headerHits`）。 */
+  hitFor(kind: "note" | "lyric", id: ElementId, verse = 0): SVGGraphicsElement | null {
+    const pane = document.getElementById("score-pane");
+    const i = this.idMapOf(this.host.currentScoreDoc())?.toI.get(id);
+    if (kind === "lyric") {
+      return i === undefined ? null : pane?.querySelector<SVGRectElement>(`.omr-hits rect[data-kind="lyric"][data-i="${i}"][data-verse="${verse}"]`) ?? null;
+    }
+    if (i !== undefined) return pane?.querySelector<SVGRectElement>(`.omr-hits rect[data-kind="note"][data-i="${i}"]`) ?? null;
+    return pane?.querySelector<SVGRectElement>(`.omr-hits rect[data-kind="note"][data-id="${id}"]`) ?? null;
+  }
+
+  /** 页眉命中框（标题、著作者），按字对上索引里的页眉条目（同 `App._bindHeader`）。 */
+  headerHits(): { el: SVGGraphicsElement; text: string; role: "text" }[] {
+    const pane = document.getElementById("score-pane");
+    const out: { el: SVGGraphicsElement; text: string; role: "text" }[] = [];
+    for (const r of pane?.querySelectorAll<SVGRectElement>('.omr-hits rect[data-kind="title"], .omr-hits rect[data-kind="author"]') ?? []) {
+      const text = r.getAttribute("data-kind") === "title" ? (this.score?.title ?? "") : (r.getAttribute("data-text") ?? "");
+      out.push({ el: r, text, role: "text" });
+    }
+    return out;
+  }
+
+  /** 元素所在谱行的竖向范围（源图像素 = 核对 SVG 的用户坐标）：插入光标照这一行的高度画。 */
+  rowBand(id: ElementId): { svg: SVGSVGElement; y: number; h: number } | null {
+    const score = this.score;
+    const el = this.hitFor("note", id);
+    const svg = el?.ownerSVGElement;
+    if (!score || !el || !svg) return null;
+    const i = this.idMapOf(this.host.currentScoreDoc())?.toI.get(id);
+    const row = i !== undefined ? score.rows[this.rowIndexOfFlat(i)] : this.shown?.inserted.find((x) => x.id === id) && score.rows[this.shown.inserted.find((x) => x.id === id)!.row];
+    if (!row) return null;
+    const pad = (row.bottomY - row.topY) * 0.15;
+    return { svg, y: row.topY - pad, h: row.bottomY - row.topY + pad * 2 };
   }
 
   /** 识别 SVG 交互：点选命中对象→选中对应代码；悬停高亮；floating 视图弹行/页眉浮窗。 */
@@ -325,6 +461,18 @@ export class OmrController implements FormatSource {
     };
 
     svg.addEventListener("click", (e) => {
+      // 能编辑：点选交给可视化编辑（选中、落光标、拍数红框透过）；播放中点音符仍让给跳播
+      if (this.host.visualEnabled()) {
+        const r0 = hitOf(e.target);
+        const i0 = r0?.getAttribute("data-kind") === "note" ? r0.getAttribute("data-i") : null;
+        if (i0 !== null && i0 !== undefined && this.host.playbackActive()) {
+          const id = this.idOfNote(Number(i0));
+          if (id !== undefined) this.host.seekPlayback({ id, pass: 1 });
+          return;
+        }
+        this.host.visualClick(e);
+        return;
+      }
       const r = hitOf(e.target);
       if (!r) return;
       const range = this.rangeOfHit(r);
@@ -337,6 +485,9 @@ export class OmrController implements FormatSource {
       }
     });
 
+    svg.addEventListener("dblclick", (e) => {
+      if (this.host.visualEnabled()) this.host.visualDblClick(e);
+    });
     svg.addEventListener("mousemove", (e) => {
       const r = hitOf(e.target);
       setHover(r);
@@ -483,11 +634,13 @@ export class OmrController implements FormatSource {
       r2 = renderHeaderPopup(bin, score);
     } else {
       const i = Number(r.getAttribute("data-i"));
-      const ri = this.rowIndexOfFlat(i);
+      const id = r.getAttribute("data-id");
+      const ri = id !== null ? (this.shown?.inserted.find((x) => String(x.id) === id)?.row ?? 0) : this.rowIndexOfFlat(i);
       key = "row" + ri;
-      r2 = renderRowPopup(bin, score, ri);
+      r2 = renderRowPopup(bin, this.shown?.score ?? score, ri, this.shown ?? undefined);
     }
-    // 同一行/页眉不重复重建。
+    // 同一行/页眉不重复重建（改过谱就换一份 key，重画）
+    key += `@${this.renderSeq}`;
     if (this.popupEl?.dataset.key !== key) {
       this.showPopup(r2.svg, key, wrap, bin, r2.srcTop, r2.srcBottom);
     }
@@ -546,6 +699,8 @@ export class OmrController implements FormatSource {
     this.hidePopup();
     if (this.btnEl) this.btnEl.textContent = "原图对照";
     this.host.setContextControl(this.btnEl, false);
+    this.host.setContextControl(this.followBtn, false);
+    this.followSelection(null);
     if (this.host.mode === "recognize") {
       this.host.setRecognizeMode(false);
       this.setLayout(false);

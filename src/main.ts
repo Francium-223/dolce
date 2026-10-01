@@ -212,6 +212,8 @@ async function boot() {
     app.omr.setRecognizeBtn(recognizeBtn);
     recognizeBtn.addEventListener("click", () => void app.omr.toggle());
   }
+  const followBtn = document.getElementById("btn-src-follow") as HTMLButtonElement | null;
+  if (followBtn) app.omr.setFollowBtn(followBtn, document.getElementById("omr-follow"));
   const recogViewSel = document.getElementById("sel-recog-view") as HTMLSelectElement | null;
   if (recogViewSel) {
     app.omr.setRecogViewSelect(recogViewSel);

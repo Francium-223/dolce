@@ -26,6 +26,8 @@ export interface PersistedSettings {
   playSpeed?: unknown;
   /** 交 OmrController 自己校验 */
   omrFormat?: unknown;
+  /** 排版稿里跟随选中显示原图片段（同上） */
+  omrFollow?: unknown;
   /** 当前排版输出（展开 / 原样），两种格式各记一个：简谱 normal|pptx、文本谱 print|slide（slide = 展开）。 */
   jpProfile?: "normal" | "pptx";
   originalProfile?: "print" | "slide";

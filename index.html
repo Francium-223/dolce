@@ -211,6 +211,7 @@
         <div id="recognition-tools" class="tool-group context-tool-group" hidden>
           <span class="tool-label">核对</span>
           <button id="btn-recognize" data-context-control title="将识别结果与上传原图进行对照" hidden>原图对照</button>
+          <button id="btn-src-follow" data-context-control aria-pressed="false" title="在排版稿里选中音符时，右下角小窗显示原图上对应的那一行并框出这个音" hidden>原图片段</button>
           <label id="recog-view-field" class="toolbar-select-field" data-context-control hidden>
             <span class="sr-only">原图对照方式</span>
             <select id="sel-recog-view" title="原图对照方式" aria-label="原图对照方式">
@@ -295,6 +296,7 @@
           </div>
           <div id="visual-palette" class="visual-palette" aria-label="记号面板" hidden></div>
           <div id="score-pane"></div>
+          <div id="omr-follow" class="omr-follow" hidden></div>
         </section>
 
         <section id="start-screen" aria-labelledby="start-title">

@@ -39,7 +39,7 @@ export interface VisualHost {
   /** 此刻能不能可视化编辑：有代码区、在简谱档或五线谱/混排档、不在识别核对 */
   visualEnabled(): boolean;
   /** 谱面是哪一路画的。减时线、附点、token 里的增时线靠简谱字形的几何命中，只有 `jianpu` 那一路有 */
-  surfaceKind(): "jianpu" | "staff";
+  surfaceKind(): "jianpu" | "staff" | "recognize";
   /** 光标竖线的纵向范围（页面 SVG 用户坐标）：五线谱取这个音所在系统的谱表带；null = 按元素框（简谱） */
   caretBand(entry: SyncEntry): { svg: SVGSVGElement; y: number; h: number } | null;
   /** 条目在谱面上的 `<g>`（增时线、记号借宿主音符的） */
@@ -289,7 +289,8 @@ export class VisualEditController {
   }
 
   private get pages(): SVGSVGElement[] {
-    return [...this.host.scorePane.querySelectorAll<SVGSVGElement>("svg.score-page")];
+    // 排版稿是 `svg.score-page`，识别核对视图是 `svg.omr-recognize`
+    return [...this.host.scorePane.querySelectorAll<SVGSVGElement>("svg.score-page, svg.omr-recognize")];
   }
 
   /** 按原文顺序、方向键能停的条目。 */
@@ -469,8 +470,8 @@ export class VisualEditController {
     const nb = next && next.kind !== "break" ? this.boxOf(next) : null;
     const brokeBetween = prev?.kind === "break";
     const gap = (b: Box): number => Math.min(b.h, b.w * 2) * 0.12;
-    const staff = this.host.surfaceKind() === "staff";
-    // 五线谱：同一行的两个音之间，光标画在正中（贴着符头右缘会压在符干、符尾上）
+    const staff = this.host.surfaceKind() !== "jianpu";
+    // 五线谱 / 识别核对：同一行的两个音之间，光标画在正中（贴着符头右缘会压在符干、符尾上；核对框又紧）
     if (staff && pb && nb && !brokeBetween && nb.svg === pb.svg && sameRow(pb.box, nb.box) && nb.box.x > pb.box.x) {
       drawCaret(pb.svg, (pb.box.x + pb.box.w + nb.box.x) / 2, this.caretBox(prev!, pb));
       return;
@@ -814,7 +815,7 @@ export class VisualEditController {
     pane.addEventListener("pointerdown", (ev) => {
       if (ev.pointerType !== "mouse" || ev.button !== 0 || ev.shiftKey || !this.host.visualEnabled()) return;
       const t = hitThroughOverlay(ev);
-      if (!(t instanceof Element) || !t.closest("svg.score-page")) return;
+      if (!(t instanceof Element) || !t.closest("svg.score-page, svg.omr-recognize")) return;
       if (this.host.entryAtTarget(t) || t.closest(".vis-break")) return;
       start = { x: ev.clientX, y: ev.clientY, id: ev.pointerId };
     });

@@ -24,7 +24,7 @@ export type { MusicppDetail } from "./recognize";
 export { buildStrip } from "./lyrics";
 export { createSurface, surfaceFromBinary, blit } from "./surface";
 export type { Surface } from "./surface";
-export { renderRecognitionSvg, renderRowPopup, renderHeaderPopup } from "./overlay";
+export { renderRecognitionSvg, renderRowPopup, renderHeaderPopup, renderRowSource } from "./overlay";
 export type { RecogView } from "./overlay";
 
 export { setOmrRuntime } from "./runtime";

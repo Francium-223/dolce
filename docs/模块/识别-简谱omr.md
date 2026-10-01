@@ -25,7 +25,8 @@
 | `src/omr/todoc.ts` | → 简谱形状的 `ScoreDoc`：123 / JPWABC / ABC / 文本谱都由它写出（文本谱走 `model/topu.ts::emitPu`）；四声部时第 3、4 声部（男高、男低）标八度谱号 `treble-8`（按高八度记，试听低八度） |
 | `src/omr/meta.ts` | 点选映射：重解析写出的 123 / 文本谱，按元素序取源区间（`metaFrom123` / `metaFromPu`） |
 | `src/omr/vector.ts` / `inventory.ts` / `glyphdict.ts` | 矢量 PDF 对象层、归类、形状字典 |
-| `src/editor/omrctl.ts` | 编辑器侧控制器（识别 → 出文本 → 叠加核对 → 点选定位；核对视图试听时按 `meta` 源区间把播放的音对回识别框，见 [播放](播放.md)） |
+| `src/editor/omrctl.ts` | 编辑器侧控制器（识别 → 出文本 → 叠加核对 → 点选定位；核对视图试听时按 `meta` 源区间把播放的音对回识别框，见 [播放](播放.md)）；核对视图里可视化编辑、排版稿的「原图片段」跟随小窗 |
+| `src/omr/reproject.ts` | 核对视图随编辑重画：当前模型投回原识别框（改过 / 删掉 / 新插、改过的歌词） |
 
 ## 吃什么吐什么
 
@@ -35,6 +36,12 @@
 ```
 
 ## 关键判据
+- **核对视图可编辑**（`reproject.ts`）：框 ↔ 当前模型元素靠随编辑迁移的 `meta` 原文区间（`OmrController.idMapOf`），**框序不变**——命中层 `data-i`、
+  试听高亮照旧；只换框里显示的值（唱名、八度、升降号、减时线、附点、增时线、延长号），与原识别不同的标 `edited`；对不上元素的框标 `deleted`；
+  模型里有、框里没有的（新插的音）按同一声部前后两个有框的音插值定位，命中层另带 `data-id`。改过的歌词在原位盖白底新字。
+  核对模式下 `App.reload` 不排版、只重建索引并重画叠加层（底图 PNG data URL 按二值图缓存，免得每按一键重编码；保住滚动位置）。
+  拍数红框在可编辑时由可视化编辑按当前模型画，识别完那一份只在不能编辑（JPWABC / ABC 产物，没有 `meta`）时画。
+- **原图片段跟随**：排版稿里选中音符，按同一份映射找到框、取原图那一行（`renderRowSource`，只画原图不叠识别结果），以这个音为中心裁约 8 个行高宽放进右下角小窗。
 
 - **`src/omr/vector.ts` 及其 import 链不得触碰 canvas / OffscreenCanvas / document**——Node CLI 要 import 它。
 - PDF 栅格化**必须**用 `getDocument({wasmUrl})`。

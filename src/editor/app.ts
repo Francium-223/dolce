@@ -657,6 +657,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
       browserBookSheet: this._browserBookSheet,
       playSpeed: this.playback.speed,
       omrFormat: this.omr.format,
+      omrFollow: this.omr.follow,
       jpProfile: this.jpProfile,
       originalProfile: this.originalProfile,
       showFormatMarks: this.visual.showFormatMarks,
@@ -749,8 +750,14 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
 
   /** parse -> import -> layout -> render. Returns false on parse failure (text kept). */
   reload(text: string): boolean {
-    // 识别模式：谱面区是核对视图，编辑文本不重排冲掉它。
-    if (this.mode === "recognize") return true;
+    // 识别模式：谱面区是核对视图，不重排成排版稿；但索引跟着原文重建、叠加层按当前模型重画（改过的标出来）
+    if (this.mode === "recognize") {
+      if (this.adapter.caps.layout === "jpwabc") this._refreshJpwDoc(text);
+      const doc = this.adapter.caps.layout === "jpwabc" ? this._jpwDoc : this.currentScoreDoc();
+      if (doc && this.adapter.caps.textEditor) this._buildSyncIndex(doc);
+      this.omr.renderPages();
+      return true;
+    }
     if (this.mode === "mixed") {
       // `.musicxml`：原文（模型那一路改的、撤销回来的）变了就重读；索引同步建，谱面异步排
       if (this.docFormat === "musicxml") {
@@ -1106,6 +1113,13 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
     this._syncElOf.clear();
     this._syncHeaderEls.clear();
     this._syncMarked = [];
+    if (this.mode === "recognize") {
+      this._bindRecognizeEls();
+      this._bindHeader();
+      this._syncCursorToScore();
+      this.visual.afterRebuild();
+      return;
+    }
     if (this.mode === "mixed") {
       this._bindStaffEls();
       this._bindHeader();
@@ -1138,6 +1152,8 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
   }
 
   visualEnabled(): boolean {
+    // 识别核对：要有点选映射（123 / 文本谱产物）才认得出框对着哪个元素
+    if (this.mode === "recognize") return this.adapter.caps.textEditor && this.omr.hasMeta && this._sync.size > 0;
     return (this.mode === "jp" || this.mode === "mixed") && this._visualSource() && this._sync.size > 0;
   }
 
@@ -1170,12 +1186,13 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
   }
 
   /** 谱面是哪一路画的：简谱（简谱引擎 / 原样文档）还是五线谱 / 混排。几何命中（减时线、附点）只有简谱那一路有。 */
-  surfaceKind(): "jianpu" | "staff" {
-    return this.mode === "mixed" ? "staff" : "jianpu";
+  surfaceKind(): "jianpu" | "staff" | "recognize" {
+    return this.mode === "mixed" ? "staff" : this.mode === "recognize" ? "recognize" : "jianpu";
   }
 
   /** 五线谱 / 混排：光标竖线的高度取这个音所在系统的谱表带；简谱那一路为 null（按元素框）。 */
   caretBand(entry: SyncEntry): { svg: SVGSVGElement; y: number; h: number } | null {
+    if (this.mode === "recognize") return this.omr.rowBand(entry.id);
     if (this.mode !== "mixed") return null;
     const m = this._mixedIds(entry.id)[0];
     return m === undefined ? null : this.painter.staffBand(m);
@@ -1211,6 +1228,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
   }
 
   noteEl(id: ElementId): SVGGraphicsElement | null {
+    if (this.mode === "recognize") return this.omr.hitFor("note", id);
     if (this.mode === "mixed") {
       const m = this._mixedIds(id)[0];
       return m === undefined ? null : this.painter.staffChordEls(m)[0] ?? null;
@@ -1220,26 +1238,28 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
 
   // 五线谱 / 混排上：附点、增时线不是单独的图元（附点是符头旁的点、增时线并进时值），小节线与弧走带身份的叶子
   augDotEls(id: ElementId): SVGGraphicsElement[] {
-    return this.mode === "mixed" ? [] : this.painter.partEls(id, "aug-dot");
+    return this.mode !== "jp" ? [] : this.painter.partEls(id, "aug-dot");
   }
 
   barlineEl(entry: SyncEntry): SVGGraphicsElement | null {
+    if (this.mode === "recognize") return null;
     if (this.mode === "mixed") return this._staffElsOf(entry)[0] ?? null;
     return this.painter.barlineEl(entry.id, entry.edge ?? "after");
   }
 
   sustainEl(entry: SyncEntry): SVGGraphicsElement | null {
-    if (this.mode === "mixed") return null;
+    if (this.mode !== "jp") return null;
     return this.painter.sustainEl(entry.id, entry.ord ?? 0, entry.own, entry.verse ?? 0);
   }
 
   slurEl(entry: SyncEntry): SVGGraphicsElement | null {
+    if (this.mode === "recognize") return null;
     if (this.mode === "mixed") return this._staffElsOf(entry)[0] ?? null;
     return entry.end === undefined ? null : this.painter.slurEl(entry.id, entry.end);
   }
 
   inlineSustainEls(id: ElementId): SVGGraphicsElement[] {
-    return this.mode === "mixed" ? [] : this.painter.sustainCellEls(id);
+    return this.mode !== "jp" ? [] : this.painter.sustainCellEls(id);
   }
 
   /** 一个条目对应的谱面 `<g>`：按元素 id 问排版器（歌词按段取那一个字）。
@@ -1247,6 +1267,7 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
    *  取到了就归它们自己，点击才落得到它们头上；取不到退回宿主音符（旧行为）。 */
   private _syncGroupEl(entry: SyncEntry): SVGGraphicsElement | null {
     if (this.mode === "mixed") return this._staffElsOf(entry)[0] ?? null;
+    if (this.mode === "recognize") return this._recognizeElOf(entry);
     if (entry.kind === "mark") {
       // 弧有自己的图元（`(` 与 `)` 两条都指向同一条弧）；其余记号按类名在音符格里认
       if (entry.markKind === "slur") {
@@ -1273,6 +1294,42 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
       if (els.length > 1) this._syncHeaderEls.set(entry, els);
       for (const el of els) if (!this._syncEls.has(el)) this._syncEls.set(el, entry);
     }
+  }
+
+  /** 识别核对（简谱识别结果）：音符、歌词对到核对视图的命中框（`OmrController.hitFor`），页眉按字对（`headerHits`）。 */
+  private _bindRecognizeEls(): void {
+    for (const entry of this._sync.all()) {
+      const el = this._recognizeElOf(entry);
+      if (!el) continue;
+      this._syncElOf.set(entry, el);
+      if (!this._syncEls.has(el)) this._syncEls.set(el, entry);
+    }
+  }
+
+  private _recognizeElOf(entry: SyncEntry): SVGGraphicsElement | null {
+    if (entry.kind === "note") return this.omr.hitFor("note", entry.id);
+    if (entry.kind === "lyric") return this.omr.hitFor("lyric", entry.id, entry.verse ?? 0);
+    return null;
+  }
+
+  // ---- OmrHost：核对视图里的可视化编辑 ----
+  playbackActive(): boolean {
+    return this.playback.active;
+  }
+
+  visualClick(ev: MouseEvent): void {
+    const target = hitThroughOverlay(ev);
+    const entry = this._syncEntryAt(target);
+    if (this.visual.handleClick(ev, entry)) return;
+    if (entry) this._syncScoreToCursor(entry);
+  }
+
+  visualDblClick(ev: MouseEvent): void {
+    this.visual.handleDoubleClick(ev, this._syncEntryAt(hitThroughOverlay(ev)));
+  }
+
+  recognizeRendered(): void {
+    if (this.mode === "recognize" && this._visualSource() && this._syncDoc) this._bindSyncEls();
   }
 
   private _staffElsOf(entry: SyncEntry): SVGGraphicsElement[] {
@@ -1311,7 +1368,8 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
   private _bindHeader(): void {
     const entries = this._sync.ordered().filter((e) => e.kind === "header");
     if (entries.length === 0) return;
-    const parts = this.painter.headerParts();
+    // 页眉项：排版器画的那一份；核对视图是识别命中层里的标题、著作者框
+    const parts = this.mode === "recognize" ? this.omr.headerHits() : this.painter.headerParts();
     const norm = (t: string): string => t.replace(/\s+/g, "");
     const bind = (e: SyncEntry, el: SVGGraphicsElement): void => {
       const list = this._syncHeaderEls.get(e) ?? [];
@@ -1397,6 +1455,8 @@ export class App implements OmrHost, PlaybackHost, FormatHost, FormatSwitchHost,
       if (this._syncMarked.length) return;
     }
     const entries = this._sync.range(sel.from, sel.to);
+    // 识别过的谱：排版稿里选中音符时右下角小窗跟着显示原图那一行（`OmrController.followSelection`）
+    if (this.mode !== "recognize") this.omr.followSelection(entries.find((e) => e.kind === "note" || e.kind === "lyric")?.id ?? null);
     if (entries.length === 0) return;
     // 选中音符只亮音符，选中歌词只亮那一段的那个字（不连带别的段）
     for (const entry of entries) {

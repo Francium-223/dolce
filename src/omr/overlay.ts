@@ -3,6 +3,7 @@
 // 附点/增时线/小节线/歌词，供用户逐音核对识别准确度。坐标与二值图同空间，直接用。
 
 import type { Binary, RecognizedScore, JpNum, Rect } from "./types";
+import type { Reprojected, ShownNum } from "./reproject";
 import { rcx, rcy, rright, RHYTHM_DIGIT } from "./types";
 import { surfaceFromBinary } from "./surface";
 import { clusterRectsByY, median } from "./geom";
@@ -24,8 +25,19 @@ function digitFontSize(targetInkH: number): number {
   return targetInkH * _emPerInk;
 }
 
+/** 二值图 → PNG dataURL 的缓存：核对视图里改一个音就重画整张叠加层，底图不变，别每次重编码 PNG。 */
+const binUrlCache = new WeakMap<Binary, string>();
+
 /** 二值图 → PNG dataURL（黑字白底，作叠加背景）。 */
 function binDataUrl(bin: Binary): string {
+  const hit = binUrlCache.get(bin);
+  if (hit) return hit;
+  const url = binDataUrlRaw(bin);
+  binUrlCache.set(bin, url);
+  return url;
+}
+
+function binDataUrlRaw(bin: Binary): string {
   const surf = surfaceFromBinary(bin); // 黑字白底
   const cv = document.createElement("canvas");
   cv.width = bin.w;
@@ -299,7 +311,7 @@ function computeStats(score: RecognizedScore): Stats {
 function buildOverlayGroup(
   score: RecognizedScore,
   stats: Stats,
-  opts?: { rows?: number[]; header?: boolean; lyrics?: boolean },
+  opts?: { rows?: number[]; header?: boolean; lyrics?: boolean; edits?: Pick<Reprojected, "inserted" | "lyricFixes"> },
 ): SVGGElement {
   const g = document.createElementNS(SVG_NS, "g");
   g.setAttribute("class", "omr-overlay");
@@ -333,15 +345,81 @@ function buildOverlayGroup(
       g.appendChild(line(mk.x - size * 0.45, cy, mk.x + size * 0.45, cy, Math.max(1, barW * 0.8)));
       g.appendChild(text(mk.x, cy + size * 0.6, String(mk.beatType), size));
     }
-    for (const n of row.nums) renderNum(g, n, noteH, fit(rcx(n.bbox)), dotR);
+    for (const n of row.nums) renderShown(g, n as ShownNum, noteH, fit(rcx(n.bbox)), dotR);
   });
   renderSlursTies(g, score, rowFits, noteH, rowSet ?? undefined);
+  // 核对时改过的东西（`reproject.ts`）：新插的音按插值位置画，改过的歌词在原位另盖一层
+  if (opts?.edits) {
+    for (const ins of opts.edits.inserted) {
+      if (rowSet && !rowSet.has(ins.row)) continue;
+      const fit = rowFits[ins.row];
+      if (fit) renderShown(g, { ...ins.num, state: undefined }, noteH, fit(rcx(ins.num.bbox)), dotR, "omr-num-inserted");
+    }
+    if (opts.lyrics !== false) {
+      const anchors = lyricAnchors(score, stats);
+      for (const f of opts.edits.lyricFixes) {
+        const a = anchors(f.i, f.verse);
+        if (!a || (rowSet && !rowSet.has(a.ri))) continue;
+        const mask = document.createElementNS(SVG_NS, "rect");
+        mask.setAttribute("class", "omr-lyric-mask");
+        mask.setAttribute("x", String(a.x - lyrH * 0.6));
+        mask.setAttribute("y", String(a.y - lyrH * 0.6));
+        mask.setAttribute("width", String(lyrH * 1.2));
+        mask.setAttribute("height", String(lyrH * 1.2));
+        g.appendChild(mask);
+        const t = text(a.x, a.y, f.text, lyrH);
+        t.setAttribute("class", "omr-lyric omr-lyric-fixed");
+        g.appendChild(t);
+      }
+    }
+  }
   return g;
+}
+
+/** 画一个显示用的框：按状态包一层组（改过的标蓝、删掉的划灰、新插的标蓝虚框）。 */
+function renderShown(g: SVGGElement, n: ShownNum, noteH: number, cy: number, dotR: number, extraCls = ""): void {
+  if (!n.state && !extraCls) {
+    renderNum(g, n, noteH, cy, dotR);
+    return;
+  }
+  const sub = document.createElementNS(SVG_NS, "g");
+  sub.setAttribute("class", ["omr-num", n.state ? `omr-num-${n.state}` : "", extraCls].filter(Boolean).join(" "));
+  renderNum(sub, n, noteH, cy, dotR);
+  if (n.state === "deleted") {
+    const b = n.bbox;
+    sub.appendChild(line(b.x - noteH * 0.2, cy + noteH * 0.35, rright(b) + noteH * 0.2, cy - noteH * 0.35, Math.max(2, noteH * 0.09), "omr-strike"));
+  }
+  if (extraCls) {
+    const b = n.bbox;
+    const r = document.createElementNS(SVG_NS, "rect");
+    r.setAttribute("class", "omr-inserted-box");
+    r.setAttribute("x", String(b.x - noteH * 0.15));
+    r.setAttribute("y", String(cy - noteH * 0.65));
+    r.setAttribute("width", String(b.w + noteH * 0.3));
+    r.setAttribute("height", String(noteH * 1.3));
+    sub.appendChild(r);
+  }
+  g.appendChild(sub);
+}
+
+/** 第 `i` 个框第 `v` 段歌词在源图上的位置（与命中层同一算法：横向音符中心，竖向本行下方第 v 条歌词带的中心）。 */
+function lyricAnchors(score: RecognizedScore, stats: Stats): (i: number, v: number) => { x: number; y: number; ri: number } | null {
+  const flat = score.rows.flatMap((row, ri) => row.nums.map((n) => ({ n, ri })));
+  const allLyr = score.lyricRegions ?? [];
+  const bands = score.rows.map((row, ri) => {
+    const nextTop = ri + 1 < score.rows.length ? score.rows[ri + 1]!.topY : Infinity;
+    return verseBands(allLyr.filter((r) => rcy(r.bbox) > row.bottomY && rcy(r.bbox) < nextTop), stats.lyrH);
+  });
+  return (i, v) => {
+    const f = flat[i];
+    const y = f ? bands[f.ri]?.[v] : undefined;
+    return f && y !== undefined ? { x: rcx(f.n.bbox), y, ri: f.ri } : null;
+  };
 }
 
 /** 透明命中层 `<g.omr-hits>`：每个可点选对象一个透明 rect，带 data 属性供 app 定位到 jpwabc 代码。
  *  音符 data-i=第i个音符（== flatten 顺序 == JpwMeta 索引）；歌词 data-i/data-verse；页眉 data-kind=title/author。 */
-function buildHitLayer(score: RecognizedScore, stats: Stats): SVGGElement {
+function buildHitLayer(score: RecognizedScore, stats: Stats, inserted: Reprojected["inserted"] = []): SVGGElement {
   const g = document.createElementNS(SVG_NS, "g");
   g.setAttribute("class", "omr-hits");
   const flat = score.rows.flatMap((row, ri) => row.nums.map((n) => ({ n, ri })));
@@ -380,6 +458,9 @@ function buildHitLayer(score: RecognizedScore, stats: Stats): SVGGElement {
     }
   });
 
+  // 新插的音（核对时插的，框是插值出来的）：按元素 id 认
+  for (const ins of inserted) hit(ins.num.bbox, { "data-kind": "note", "data-id": String(ins.id), class: "omr-hit" });
+
   const title = (score.title ?? "").trim();
   for (const r of score.headerRegions ?? []) {
     const isTitle = title.length > 0 && r.text.trim() === title;
@@ -410,6 +491,8 @@ export function renderRecognitionSvg(
   bin: Binary, score: RecognizedScore, view: RecogView = "inplace",
   /** 小节时值自检报出的小节（`omr/beats.ts`）：各视图都标出，悬停显示说明 */
   beatMarks: readonly { boxes: readonly Rect[]; text: string }[] = [],
+  /** 核对时改过的东西（`reproject.ts`）：`score` 已是重投影过的那份，这里给新插的音与改过的歌词 */
+  edits?: Pick<Reprojected, "inserted" | "lyricFixes">,
 ): SVGSVGElement {
   const svg = document.createElementNS(SVG_NS, "svg");
   svg.setAttribute("class", "omr-recognize");
@@ -420,7 +503,7 @@ export function renderRecognitionSvg(
   svg.appendChild(baseImage(bin));
 
   const stats = computeStats(score);
-  if (view === "inplace") svg.appendChild(buildOverlayGroup(score, stats));
+  if (view === "inplace") svg.appendChild(buildOverlayGroup(score, stats, edits ? { edits } : undefined));
   if (beatMarks.length) {
     const g = document.createElementNS(SVG_NS, "g");
     g.setAttribute("class", "omr-beat");
@@ -441,7 +524,7 @@ export function renderRecognitionSvg(
     }
     svg.appendChild(g);
   }
-  svg.appendChild(buildHitLayer(score, stats));
+  svg.appendChild(buildHitLayer(score, stats, edits?.inserted));
   return svg;
 }
 
@@ -476,12 +559,28 @@ function popupSvg(bin: Binary, vb: { x: number; y: number; w: number; h: number 
 
 /** 浮窗：单行识别数据（干净渲染）。横向用整幅源图宽（列与源图对齐），竖向裁到该行+其下方歌词带。
  *  返回 svg 及该行内容在源图的竖向范围（srcTop/srcBottom），供 app 定位到当前 system 之下（不盖歌词）。 */
-export function renderRowPopup(bin: Binary, score: RecognizedScore, rowIndex: number): { svg: SVGSVGElement; srcTop: number; srcBottom: number } {
+export function renderRowPopup(
+  bin: Binary, score: RecognizedScore, rowIndex: number, edits?: Pick<Reprojected, "inserted" | "lyricFixes">,
+): { svg: SVGSVGElement; srcTop: number; srcBottom: number } {
   const stats = computeStats(score);
-  const g = buildOverlayGroup(score, stats, { rows: [rowIndex], header: false, lyrics: true });
+  const g = buildOverlayGroup(score, stats, { rows: [rowIndex], header: false, lyrics: true, ...(edits ? { edits } : {}) });
   const ext = rowContentExtent(score, stats, rowIndex);
   const vb = { x: 0, y: ext.top, w: bin.w, h: ext.bottom - ext.top };
   return { svg: popupSvg(bin, vb, g, true), srcTop: ext.top, srcBottom: ext.bottom };
+}
+
+/** 原图的一行（不叠识别结果）：排版稿里「原图片段跟随」的小窗用——那里要看的是原谱本来的样子。 */
+export function renderRowSource(bin: Binary, score: RecognizedScore, rowIndex: number): SVGSVGElement {
+  const stats = computeStats(score);
+  const ext = rowContentExtent(score, stats, rowIndex);
+  const svg = document.createElementNS(SVG_NS, "svg");
+  svg.setAttribute("class", "omr-recognize");
+  svg.setAttribute("viewBox", `0 ${ext.top} ${bin.w} ${ext.bottom - ext.top}`);
+  svg.style.width = "100%";
+  svg.style.height = "auto";
+  svg.style.display = "block";
+  svg.appendChild(baseImage(bin));
+  return svg;
 }
 
 /** 浮窗：整块页眉信息（干净渲染，整幅宽，返回竖向范围供 app 定位到页眉之下）。 */

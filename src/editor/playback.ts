@@ -201,6 +201,8 @@ export class PlaybackController {
     const paused = p.state === "paused";
     const src = this.host.playable();
     if (!src) return;
+    // 循环段是秒数：换了速度要按新速度重算
+    p.setLoop(this.loop ? this.loopRange() : null);
     void this.run(() => p.play(src, this.options(), at, paused));
   }
 

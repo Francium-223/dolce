@@ -6,7 +6,7 @@
 
 import { labeled, showFormDialog } from "../dialogs";
 import { transposeFifths } from "../../model/edit";
-import { type EditCtx, type EditOutcome, noteCtx } from "./ops";
+import { type EditCtx, type EditOutcome, noteCtx, rewriteToken } from "./ops";
 
 const LETTER_PC: Record<string, number> = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
 const ACC_OF: Record<string, number> = { "": 0, "#": 1, "♯": 1, b: -1, "♭": -1 };
@@ -64,15 +64,21 @@ export function transposeText(ctx: EditCtx, n: number): EditOutcome {
     if (nv !== v) changes.push({ from: f.from, to: f.to, insert: nv });
   }
   if (!keys) return { error: "这份谱里没找到能换的调号" };
+  const tonicMidi = ctx.dialect.tonicMidi;
   for (const e of ctx.sync.ordered()) {
     if (e.kind !== "note") continue;
     const src = text.slice(e.from, e.to);
     const nc = noteCtx(ctx, e.from);
-    const t = ctx.dialect.parseNote(src, nc);
-    if (!t) continue;
-    const out = ctx.dialect.printNote(t, { ...nc, fifths: transposeFifths(nc.fifths, n) });
-    if (out !== src) changes.push({ from: e.from, to: e.to, insert: out });
+    const nf = transposeFifths(nc.fifths, n);
+    // 音名绝对的格式：唱名不变、换了主音，主音所在八度另有约定（`wrOf`）——按实际音高差补八度，往下移就是往下
+    const oct = tonicMidi ? Math.round((n - (tonicMidi(nf) - tonicMidi(nc.fifths))) / 12) : 0;
+    const out = rewriteToken({ ...ctx.dialect, printNote: (t, c) => ctx.dialect.printNote(t, { ...c, fifths: nf }) }, src, nc, (t) => {
+      if (t.degree !== 0) t.octave += oct;
+      return t;
+    });
+    if (typeof out === "string" && out !== src) changes.push({ from: e.from, to: e.to, insert: out });
   }
+  if (!changes.length) return { error: "移了整八度：简谱唱名不变、调号也不变。要整体移八度，全选后按 ' 或 ," };
   changes.sort((a, b) => a.from - b.from);
   const cs = ctx.state.changes(changes);
   const sel = ctx.state.selection.main;

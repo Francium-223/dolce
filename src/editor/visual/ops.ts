@@ -6,6 +6,7 @@
 
 import type { ChangeSpec, EditorState } from "@codemirror/state";
 import type { ScoreDoc } from "../../model/doc";
+import { locate } from "../../model/edit";
 import type { SyncEntry, SyncIndex } from "../sync";
 import { type DecoKind, type EditDialect, keyFifthsAt, type NoteCtx, type NoteDuration, type NoteToken } from "./dialect";
 
@@ -95,6 +96,40 @@ export function groupEnd(ctx: EditCtx, note: SyncEntry): number {
 // ───────────────────────── 改音符 ─────────────────────────
 
 /** 对选中的每个音符 token 做一次改写。`fn` 返回 null = 这个音符不改；返回字符串 = 出错说明。 */
+/** 改一个音符 token：`fn` 改 token，写回原文。方括号和弦（ABC `[CEG]2`）逐个音改、括号与外面的时值照旧。
+ *  返回新原文；`fn` 给 null（不改）为 null；出错为 `{ error }`。 */
+export function rewriteToken(
+  dialect: EditCtx["dialect"], src: string, nc: NoteCtx, fn: (t: NoteToken) => NoteToken | null | string,
+): string | null | { error: string } {
+  const one = (s: string): string | null | { error: string } => {
+    const t = dialect.parseNote(s, nc);
+    if (!t) return { error: `看不懂这个音符的写法：${s}` };
+    const r = fn({ ...t });
+    if (typeof r === "string") return { error: r };
+    if (!r) return null;
+    const bad = dialect.validate?.(r);
+    if (bad) return { error: bad };
+    return dialect.printNote(r, nc);
+  };
+  const chord = dialect.bracketChords ? /^\[([^\]]*)\](.*)$/s.exec(src) : null;
+  if (!chord) return one(src);
+  let err: { error: string } | null = null;
+  let changed = false;
+  const inner = chord[1]!.replace(/(\^\^|__|\^|_|=)?[A-Ga-g][',]*\d*\/*\d*/g, (n) => {
+    if (err) return n;
+    const r = one(n);
+    if (r && typeof r === "object") {
+      err = r;
+      return n;
+    }
+    if (r === null) return n;
+    changed = true;
+    return r;
+  });
+  if (err) return err;
+  return changed ? `[${inner}]${chord[2]}` : null;
+}
+
 function rewriteNotes(
   ctx: EditCtx, from: number, to: number,
   fn: (t: NoteToken, e: SyncEntry) => NoteToken | null | string,
@@ -107,14 +142,9 @@ function rewriteNotes(
   for (const e of notes) {
     const src = text.sliceString(e.from, e.to);
     const nc = noteCtx(ctx, e.from);
-    const t = ctx.dialect.parseNote(src, nc);
-    if (!t) return { error: `看不懂这个音符的写法：${src}` };
-    const r = fn({ ...t }, e);
-    if (typeof r === "string") return { error: r };
-    if (!r) continue;
-    const bad = ctx.dialect.validate?.(r);
-    if (bad) return { error: bad };
-    const out = ctx.dialect.printNote(r, nc);
+    const out = rewriteToken(ctx.dialect, src, nc, (t) => fn(t, e));
+    if (out && typeof out === "object") return out;
+    if (out === null) continue;
     single = out;
     if (out !== src) changes.push({ from: e.from, to: e.to, insert: out });
   }
@@ -381,6 +411,7 @@ export function chordNameOf(ctx: EditCtx, e: SyncEntry): string {
 export function setChordName(ctx: EditCtx, note: SyncEntry, name: string): EditOutcome {
   const write = ctx.dialect.chordText;
   if (!write) return { error: "这种格式的和弦名请在源码里改" };
+  if (name.includes('"')) return { error: "和弦名里不能有英文双引号" };
   const sel = ctx.state.selection.main;
   const done = (changes: EditResult["changes"]): EditOutcome => {
     const map = mapper(ctx.state, changes);
@@ -414,6 +445,8 @@ function attachedEntry(ctx: EditCtx, note: SyncEntry, kind: "annotation" | "dyna
 export function setAttachedText(ctx: EditCtx, note: SyncEntry, kind: "annotation" | "dynamic", value: string): EditOutcome {
   const write = kind === "annotation" ? ctx.dialect.annotationText : ctx.dialect.dynamicText;
   if (!write) return { error: kind === "annotation" ? "这种格式的文字请在源码里改" : "这种格式的力度请在源码里改" };
+  // 原文里文字写在 `"…"`、力度写在 `!…!` 里：同样的符号会把后面整段读乱
+  if (/["\n]/.test(value) || (kind === "dynamic" && value.includes("!"))) return { error: kind === "annotation" ? "文字里不能有英文双引号（可用中文引号）" : "力度里不能有 ! 或引号" };
   const sel = ctx.state.selection.main;
   const done = (changes: EditResult["changes"]): EditOutcome => {
     const map = mapper(ctx.state, changes);
@@ -451,6 +484,12 @@ export function toggleTupletText(ctx: EditCtx, from: number, to: number): EditOu
   const tail = tp.close ? /^\s*\)/.exec(doc.sliceString(end, Math.min(doc.length, end + 8))) : null;
   const sel = ctx.state.selection.main;
   let changes: EditResult["changes"];
+  // 只选了一组连音里的几个：拆不了也不能再套一层（123 会嵌出 `(2: …)`，ABC 的头只认个数）
+  const grouped = ctx.doc ? notes.filter((e) => locate(ctx.doc!, e.id)?.chord.duration?.timeMod).length : 0;
+  const n = head ? Number(/\d+/.exec(head[0])?.[0]) : 0;
+  if (head && (tp.close === null || tail) ? n !== notes.length : grouped > 0) {
+    return { error: "选中的音一部分在连音里：选中整组连音再按可拆回" };
+  }
   if (head && (tp.close === null || tail)) {
     changes = [{ from: start - head[0].length, to: start, insert: "" }];
     if (tail) changes.push({ from: end, to: end + tail[0].length, insert: "" });

@@ -94,6 +94,10 @@ export interface EditDialect {
   /** 连音怎么写：`open` 写在组前、`close` 写在组后（没有收尾符号的格式为 null，按个数收）；没有 = 请在源码里改。
    *  `openRe` 认组前已有的连音头（拆回去用，锚在串尾） */
   tuplet?: { open(n: number): string; close: string | null; openRe: RegExp };
+  /** 方括号和弦（ABC 的 `[CEG]2`）：改音高、时值时逐个音改。缺省 = 没有这种写法 */
+  bracketChords?: boolean;
+  /** 音名是绝对的格式（ABC）：唱名 1、八度 0 在这个调里的实际音高（MIDI）。全曲移调据此补八度 */
+  tonicMidi?(fifths: number): number;
   /** 延音线另有写法（ABC 的 `-` 紧跟前一个音）；缺省 = 与圆滑线同形（括号） */
   tie?: string;
   /** 圆滑线能不能嵌套、交叠。文本谱的 `)` 按队列配对（先开的先闭），加一条与已有的交叠的弧会把配对全打乱 */

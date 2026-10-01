@@ -211,7 +211,12 @@ export function buildTimeline(src: PlaySource): Timeline {
       if (time) {
         const compound = time.beatType === 8 && time.beats % 3 === 0 && time.beats > 3;
         const beat = (4 / time.beatType) * (compound ? 3 : 1);
-        for (let k = Math.ceil(startOffset / beat - 1e-9); k * beat < len - 1e-9; k++) clicks.push({ t: pos + k * beat - startOffset, down: k === 0 });
+        // 曲首弱起小节（不满一整小节）是一小节的**后半截**：拍点从整小节的哪儿数起要往后挪，重拍不落在它头上
+        const full = (time.beats * 4) / time.beatType;
+        const shift = mid === 0 && len < full - 1e-9 ? full - len : 0;
+        for (let k = Math.ceil((shift + startOffset) / beat - 1e-9); k * beat < shift + len - 1e-9; k++) {
+          clicks.push({ t: pos + k * beat - shift - startOffset, down: k === 0 });
+        }
       }
       pos += len - startOffset;
     }

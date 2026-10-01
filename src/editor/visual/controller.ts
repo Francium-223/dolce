@@ -9,7 +9,7 @@
 import { redo, undo } from "@codemirror/commands";
 import { type ChangeSpec, ChangeSet } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
-import type { ElementId, ScoreDoc } from "../../model/doc";
+import type { ElementId, Part, ScoreDoc, Song } from "../../model/doc";
 import { type BeatIssue, checkMeasureDurations, describeBeatIssue } from "../../model/beatcheck";
 import type { BreakMark, SyncEntry, SyncIndex } from "../sync";
 import { deleteBreak, insertBreak } from "./breaks";
@@ -23,7 +23,7 @@ import {
 } from "./ops";
 import { keyHit, VISUAL_ACTIONS, type VisualAction, type VisualMode } from "./keys";
 import { type Clip, clipFor, itemsToText, setClip } from "./clipboard";
-import { clipOfChords, directionTextOf, locate } from "../../model/edit";
+import { clipOfChords, directionTextOf, locate, measureCtx } from "../../model/edit";
 import { harmonyText } from "../../model/jianpu";
 import { showTransposeDialog, transposeText } from "./transpose";
 import { lyricTextOf, setLyricText } from "./lyrics";
@@ -177,6 +177,13 @@ export class VisualEditController {
     pane.addEventListener("copy", (ev) => this.onClipboardEvent(ev, "copy"));
     pane.addEventListener("cut", (ev) => this.onClipboardEvent(ev, "cut"));
     pane.addEventListener("paste", (ev) => this.onClipboardEvent(ev, "paste"));
+    // WebKit（Safari、macOS 桌面版的 WKWebView）：焦点不在可编辑区、又没有文字选区时，复制粘贴菜单项是灰的、事件不发；
+    // `before*` 里 preventDefault 就是告诉它「这里能复制 / 粘贴」
+    for (const t of ["beforecopy", "beforecut", "beforepaste"]) {
+      pane.addEventListener(t, (ev) => {
+        if (this.host.visualEnabled() && !inlineEditing()) ev.preventDefault();
+      });
+    }
     pane.addEventListener("focus", () => this.setFocus(true));
     pane.addEventListener("blur", () => this.setFocus(false));
     // 点谱面就把焦点给谱面（SVG 里的点击不会自己聚焦到容器上）
@@ -1473,6 +1480,9 @@ export class VisualEditController {
     return this.navigable().filter((e) => {
       if (e.kind !== "note" || seen.has(e.id)) return false;
       seen.add(e.id);
+      // 与对位格同口径（`isLyricSlot`）：倚音、延续半截、第二声线不配字
+      const ch = doc ? locate(doc, e.id)?.chord : undefined;
+      if (ch && (ch.grace || ch.continued || ch.voice > 1)) return false;
       if (c) return (c.dialect.parseNote(c.state.doc.sliceString(e.from, e.to), noteCtx(c, e.from))?.degree ?? 1) !== 0;
       return !(doc && locate(doc, e.id)?.chord.rest);
     });
@@ -1749,8 +1759,8 @@ export class VisualEditController {
   /** 跳到第 `n` 小节（按模型的小节数，从 1 数；多声部时在选区所在声部里数）。 */
   private gotoMeasure(n: number): boolean {
     const doc = this.host.syncDoc();
-    if (!doc || !Number.isInteger(n) || n < 1) {
-      this.host.setStatus("小节号要是正整数");
+    if (!doc || !Number.isInteger(n) || n < 0) {
+      this.host.setStatus("小节号要是整数");
       return true;
     }
     const nav = this.navigable();
@@ -1758,14 +1768,21 @@ export class VisualEditController {
     for (const e of nav) if (e.kind === "note" && !byId.has(e.id)) byId.set(e.id, e);
     const sel = this.host.view.state.selection.main;
     const here = this.selectedEntries()[0] ?? [...nav].reverse().find((e) => e.to <= sel.head) ?? nav[0];
+    // 选区所在那首、那个声部先找（多曲文档里第 n 小节按当前这首数）
+    let si0 = 0;
     let pi0 = 0;
-    for (const song of doc.songs) {
-      song.parts.forEach((part, pi) => {
-        if (here && part.measures.some((m) => m.elements.some((el) => el.id === here.id))) pi0 = pi;
-      });
-    }
-    for (const song of doc.songs) {
-      const m = song.parts[pi0]?.measures[n - 1];
+    doc.songs.forEach((song, si) => song.parts.forEach((part, pi) => {
+      if (here && part.measures.some((m) => m.elements.some((el) => el.id === here.id))) [si0, pi0] = [si, pi];
+    }));
+    const order = [si0, ...doc.songs.map((_, si) => si).filter((si) => si !== si0)];
+    for (const si of order) {
+      const song = doc.songs[si]!;
+      const part = song.parts[pi0] ?? song.parts[0];
+      if (!part) continue;
+      // 曲首弱起小节（不满一小节）是第 0 小节，之后从 1 数（同打谱软件）
+      const pickup = isPickup(song, part);
+      if (n === 0 && !pickup) continue;
+      const m = part.measures[pickup ? n : n - 1];
       const hit = m?.elements.map((el) => byId.get(el.id)).find((e): e is SyncEntry => !!e);
       if (!hit) continue;
       if (sel.empty) this.select(hit.from, hit.from);
@@ -2131,4 +2148,16 @@ export function markLabel(e: SyncEntry): string {
     case "slur": return "圆滑线/延音线";
     default: return `记号 ${e.name ?? ""}`;
   }
+}
+
+/** 第一小节是弱起（第一声线的时值不满拍号的一小节）。 */
+function isPickup(song: Song, part: Part): boolean {
+  const m = part.measures[0];
+  if (!m) return false;
+  if (m.implicit) return true;
+  const { time, dpq } = measureCtx(song, part, 0);
+  if (!time) return false;
+  const v1 = m.elements.filter((e) => e.kind === "chord" && e.voice === (m.elements.find((x) => x.kind === "chord")?.voice ?? 1) && !e.grace);
+  const len = v1.reduce((a, e) => a + (e.kind === "chord" ? (e.duration?.divisions ?? 0) : 0), 0) / dpq;
+  return len > 0 && len < (time.beats * 4) / time.beatType - 1e-6;
 }

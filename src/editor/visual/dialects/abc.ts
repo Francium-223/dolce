@@ -15,6 +15,7 @@ import { type EditDialect, keyFifthsAt, type NoteCtx, type NoteDuration, type No
 import { colonFields } from "../header";
 import { abcFamilyMeasure } from "../measureops";
 import { keyTonic } from "../measureinput";
+import { tupletNormal } from "../../../model/edit";
 
 const STEPS = "CDEFGAB";
 const ACC_OF: Record<string, Accidental> = { "^^": "double-sharp", __: "double-flat", "^": "sharp", _: "flat", "=": "natural" };
@@ -160,5 +161,12 @@ export const DIALECT_ABC: EditDialect = {
   chordText: (name) => `"${name}"`,
   annotationText: (t) => `"^${t}"`,
   dynamicText: (n) => `!${n}!`,
-  tuplet: { open: (n) => `(${n}`, close: null, openRe: /\(\d+(?::\d*){0,2}\s*$/ },
+  // `(5` `(6` `(7` 在 ABC 里缺省占 2（复拍子 3），模型与 123 是占 4：不是 2、3、4 连音就把占几写明
+  tuplet: { open: (n) => (n <= 4 ? `(${n}` : `(${n}:${tupletNormal(n)}`), close: null, openRe: /\(\d+(?::\d*){0,2}\s*$/ },
+  bracketChords: true,
+  tonicMidi(fifths: number): number {
+    const wr = wrOf(1, 0, fifths);
+    const step = ((wr % 7) + 7) % 7;
+    return 12 * (Math.floor(wr / 7) + 1) + [0, 2, 4, 5, 7, 9, 11][step]! + keyAlter(step, fifths);
+  },
 };

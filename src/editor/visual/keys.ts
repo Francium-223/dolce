@@ -218,6 +218,8 @@ export function keyHit(ev: KeyboardEvent): { action: VisualAction; key: string }
     for (const k of keysOf(a)) {
       if (k.code) continue;
       if (k.alt !== undefined && k.alt !== ev.altKey) continue;
+      // 没写 alt 的字母键、方向键等不认 Alt 组合（Alt+C 不是改音名 C）；符号键放过——有的键盘布局要 AltGr / Option 才打得出
+      if (k.alt === undefined && ev.altKey && (k.key.length > 1 || /[a-z]/i.test(k.key))) continue;
       if (k.key.toLowerCase() !== key.toLowerCase()) continue;
       if (!!k.mod !== mod) continue;
       // 符号键（`#`、`(`、`|`）本身就要按 Shift 才打得出，不看 Shift

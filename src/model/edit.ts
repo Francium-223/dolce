@@ -1242,6 +1242,26 @@ function prevChord(l: ChordLoc): Chord | null {
   return null;
 }
 
+function nextChord(l: ChordLoc): Chord | null {
+  for (let mi = l.mi; mi < l.part.measures.length; mi++) {
+    const els = l.part.measures[mi]!.elements;
+    for (let i = mi === l.mi ? l.index + 1 : 0; i < els.length; i++) {
+      const e = els[i]!;
+      if (e.kind === "chord" && e.voice === l.chord.voice && !e.grace) return e;
+    }
+  }
+  return null;
+}
+
+type LyricOf = NonNullable<Chord["lyrics"]>[number];
+const hyphenAfter = (ly: LyricOf | undefined): boolean => ly?.syllabic === "begin" || ly?.syllabic === "middle";
+/** 前面那个字接不接连字符变了：这个字的 syllabic 跟着改（自己后面接不接不变） */
+function relinkSyllabic(ly: LyricOf | undefined, joinedBefore: boolean): void {
+  if (!ly) return;
+  const hy = hyphenAfter(ly);
+  ly.syllabic = joinedBefore ? (hy ? "middle" : "end") : hy ? "begin" : "single";
+}
+
 /**
  * 歌词录入：和弦 `id` 第 `verse` 段的字写成 `text`（空串 = 去掉这一段的字）。`hyphen` = 后面接连字符（`<syllabic>` 按前一个字推：
  * 前一个字后面带连字符的这个是 middle / end，否则 begin / single）；`extend` = 一字多音的续线。
@@ -1251,13 +1271,18 @@ export function setLyric(doc: ScoreDoc, id: ElementId, verse: number, text: stri
   if (!l) return { error: "找不到这个音" };
   const ch = l.chord;
   const rest = (ch.lyrics ?? []).filter((x) => x.number !== verse);
+  const prev = prevChord(l)?.lyrics?.find((x) => x.number === verse);
+  const next = nextChord(l)?.lyrics?.find((x) => x.number === verse);
   if (text === "") {
     ch.lyrics = rest;
     if (!ch.lyrics.length) delete ch.lyrics;
+    // 字去掉了：前一个字不再连到这儿、后一个字也不再接着这个字（Hal-le-lu 去掉 le → Hal、lu 各自成字）
+    if (prev && hyphenAfter(prev)) prev.syllabic = prev.syllabic === "middle" ? "end" : "single";
+    relinkSyllabic(next, false);
     return { select: [ch] };
   }
-  const prev = prevChord(l)?.lyrics?.find((x) => x.number === verse);
-  const joined = prev?.syllabic === "begin" || prev?.syllabic === "middle";
+  const joined = hyphenAfter(prev);
+  relinkSyllabic(next, hyphen);
   const old = ch.lyrics?.find((x) => x.number === verse);
   const ly = { ...(old ?? {}), number: verse, text, syllabic: (joined ? (hyphen ? "middle" : "end") : hyphen ? "begin" : "single") as NonNullable<typeof old>["syllabic"] };
   if (extend) ly.extend = true;

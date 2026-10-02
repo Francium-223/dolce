@@ -28,6 +28,8 @@ import type { JChord, JMeasure, JNote, JScore } from "../layout/input";
 import type { ScoreDoc } from "./doc";
 import { jianpuInputOfDoc, jianpuInputOfJpw } from "./jianpuinput";
 import { DYNAMICS } from "../pu/glyph";
+import { Fraction } from "../common/fraction";
+import { harmonyToChordToken, wholeToDuration } from "./jlychords";
 import { GlyphCodes } from "../smufl/smufl";
 
 /** 导出结果：文本 + 装不下的东西（调用方拿去提示）。 */
@@ -290,6 +292,42 @@ function planJly(measures: readonly JMeasure[], warnings: Set<string>): JlyPlan 
   return { slurOpen, slurClose, slots, verses, at };
 }
 
+/** 一行和弦符号（`chords=c2. g:7 c`）：上游把它原样塞进 `\new ChordNames { \chordmode { … } }`，
+ *  所以 token 是 LilyPond 和弦语法 + 时值；时值按"持续到下一个和弦"算（最后一个到曲末）。
+ *  一个都写不出就返回 null（不占一行）。 */
+function chordLine(measures: readonly JMeasure[], warnings: Set<string>): string | null {
+  const chords: { text: string; position: Fraction; duration: Fraction }[] = [];
+  for (const m of measures) for (const e of m.entries) {
+    if (e.kind !== "chord") continue;
+    const c = e as JChord;
+    if (!c.harmony || isRestToken(c)) continue;
+    chords.push({ text: c.harmony, position: m.position.plus(c.position), duration: c.duration ?? new Fraction(1, 4) });
+  }
+  if (!chords.length) return null;
+  // 曲末：最后一小节最后一音之后
+  let end = chords[chords.length - 1]!.position.plus(chords[chords.length - 1]!.duration);
+  for (const m of measures) for (const e of m.entries) {
+    if (e.kind !== "chord") continue;
+    const stop = m.position.plus(e.position).plus((e as JChord).duration ?? new Fraction(0));
+    if (stop.toFloat() > end.toFloat()) end = stop;
+  }
+  const toks: string[] = [];
+  chords.forEach((c, i) => {
+    const next = chords[i + 1]?.position ?? end;
+    // ⚠ 引擎输入里的时值/位置以**四分音符为 1**（`score/ast.ts::elementQuarters` 的口径），
+    //   而 `chords=` 的时值是"几个全音符"—— 不除 4 会写出 `1...` 这种离谱时值（踩过）。
+    const whole = Math.max(1 / 64, next.minus(c.position).toFloat() / 4);
+    const tok = harmonyToChordToken(c.text, whole);
+    if (tok) {
+      toks.push(tok);
+      if (!wholeToDuration(whole).exact) warnings.add("和弦时值不是规整时值，已按最接近的写出（" + c.text + "）");
+    } else {
+      warnings.add("和弦符号写不出（上游用 LilyPond 和弦语法，认不出的后缀没法写）：" + c.text);
+    }
+  });
+  return toks.length ? "chords=" + toks.join(" ") : null;
+}
+
 /** 逐段收集歌词。位置对不齐就全错（见上面的四条口径），所以这里只做"逐位置填字或填占位"。 */
 function lyricLines(plan: JlyPlan, warnings: Set<string>): string[] {
   const out: string[] = [];
@@ -331,6 +369,9 @@ function lyricLines(plan: JlyPlan, warnings: Set<string>): string[] {
 export function emitJlyOfScore(score: JScore, warnings: Set<string> = new Set()): string {
   const measures = score.parts[0]?.measures ?? [];
   const lines: string[] = headerLines(score, measures[0] ?? null);
+  // 和弦符号行紧跟谱头（上游就这么写）。
+  const chordRow = chordLine(measures, warnings);
+  if (chordRow) lines.push(chordRow);
   // 歌词位置与圆滑线写法要**先算**：音乐行里写 `(` 还是 `\(` 由它定，歌词行也按它填占位。
   const plan = planJly(measures, warnings);
 
@@ -360,8 +401,7 @@ export function emitJlyOfScore(score: JScore, warnings: Set<string> = new Set())
       if (e.kind === "chord") {
         const c = e as JChord;
         if (c.beams >= BEAM_LETTER.length) warnings.add("有超过 4 条减时线（64 分）的时值，已按 64 分写出");
-        if (c.harmony) warnings.add("和弦符号（`chords=` 行）尚未导出");
-       const dots = ".".repeat(c.dot || 0);
+      const dots = ".".repeat(c.dot || 0);
         tokens.push(ornamentsBefore(c) + chordBody(c, BEAM_LETTER[c.beams] ?? "", dots) + sustainOf(c) + ornamentsAfter(c, plan, warnings));
         if (c.notes.some((n) => n.tieStart)) tokens.push("~");       // 延音线写在两音之间
       } else if (e.kind === "break") {

@@ -33,6 +33,7 @@ import {
 import { emptyDoc, emptySong, IdGen } from "./helpers";
 import { BARE_DIRECTION } from "./tojly";
 import { DYNAMICS } from "../pu/glyph";
+import { lyPitchToText, lySuffixToText, parseChordToken } from "./jlychords";
 
 // ───────────────────────── 词法 ─────────────────────────
 
@@ -415,6 +416,8 @@ export function parseJly(text: string): JlyParse {
   let pendingTie = false;
   /** 没写段号的歌词行按出现顺序编号（跨 `L:`/`H:` 共用，上游也只是一条条往下叠）。 */
   let autoVerse = 0;
+  /** `chords=` 行里的和弦符号（按乐章分开，装到那个时间上的音上；见解析循环里那段注释）。 */
+  const chordTokens: { song: number; text: string; whole: number | null }[] = [];
   // 歌词位置：**发音**的和弦。休止不占（LilyPond 的 `\lyricsto` 跳过休止，实测连带梁休止也跳），
   // 圆滑线 `(` … `)` 里的音也不占（那是"一字多音"：`slurMelismaBusy`，实测 `1 ( 2 ) 3 4`
   // 配 `L: A B C D` 时 B 会跳到第 3 个音上）。乐句线 `\(` `\)` 不吞音节，所以不算在里面。
@@ -492,8 +495,10 @@ export function parseJly(text: string): JlyParse {
       continue;
     }
 
-    // 页头字段
-    const mHead = /^([A-Za-z][A-Za-z0-9]*)=(.*)$/.exec(line);
+    // 页头字段。⚠ `chords=…` 也长得像页头（`key=value`），所以这里先把它排除掉 ——
+    //    否则它会被当成"页头字段 chords="报掉，下面那段和弦行永远进不来（踩过）。
+    const isChordRow = /^chords\s*=/i.test(line);
+    const mHead = isChordRow ? null : /^([A-Za-z][A-Za-z0-9]*)=(.*)$/.exec(line);
     if (mHead) {
       const key = mHead[1]!.toLowerCase();
       const value = mHead[2]!.trim();
@@ -523,8 +528,43 @@ export function parseJly(text: string): JlyParse {
     const mTempo = /^\d+(?:\.\d+)?=(\d+)$/.exec(line);
     if (mTempo) { song.tempos = [Number(mTempo[1])]; advance(); continue; }
 
-    if (line === "NextScore") {
-      song = emptySong(); doc.songs.push(song);
+    // 和弦符号行：`chords=c2. g:7 c`，token 是 **LilyPond 和弦语法**（上游原样塞进 `\chordmode`）。
+    // 时值走 LilyPond 的口径（没写就沿用上一个，第一个默认四分），整行的时值就是从曲首起的时间线；
+    // 谱上印的文字按 `jlychords.ts` 那两张表转回来，模型里存成 `Chord.harmony`（与 123 的 `"Am"` 同落点）。
+    const mChords = /^chords\s*=\s*(.*)$/i.exec(line);
+    if (mChords) {
+      const head = spanOf(indent, line.length);
+      let body = mChords[1] ?? "";
+      if (!body) {
+        const parts: string[] = [];
+        while (li + 1 < rows.length) {
+          const nxt = rows[li + 1]!;
+          const t = nxt.raw.trim();
+          if (!t || t.startsWith("%")) break;
+          parts.push(t);
+          li++;
+          lineNo++;
+          lineOffset += nxt.raw.length + nxt.sep.length;
+        }
+        body = parts.join(" ");
+      }
+      for (const tok of body.split(/\s+/).filter(Boolean)) {
+        const parsed = parseChordToken(tok);
+        if (!parsed) { loss.add("和弦符号行里读不动的 token", tok, head); continue; }
+        const root = lyPitchToText(parsed.pitch);
+        if (root === null) { loss.add("和弦符号行里读不动的音名", tok, head); continue; }
+        const bass = parsed.bass ? lyPitchToText(parsed.bass) : null;
+        chordTokens.push({
+          song: doc.songs.length - 1,
+          text: root + lySuffixToText(parsed.suffix) + (bass ? "/" + bass : ""),
+          whole: parsed.whole,
+        });
+      }
+      advance();
+      continue;
+    }
+
+    if (line === "NextScore") {      song = emptySong(); doc.songs.push(song);
       part = { id: "P1", measures: [] }; song.parts.push(part);
       cur = null; slots.length = 0; melismaOpen = 0; pendingMelisma = 0; advance(); continue;
     }
@@ -681,6 +721,35 @@ export function parseJly(text: string): JlyParse {
       }
     }
     advance();
+  }
+
+  // 和弦符号行是一条**时间线**（整音符为单位、从本乐章曲首起，divisions 48 = 四分）：
+  // 逐个落到"起点 ≤ 该时刻"的最后一个音上（对不齐时往左靠 —— LilyPond 的 `\chordmode` 也是这么对的）。
+  for (const songIdx of new Set(chordTokens.map((c) => c.song))) {
+    const song = doc.songs[songIdx];
+    if (!song) continue;
+    const at: { chord: Chord; whole: number }[] = [];
+    let acc = 0;
+    for (const p of song.parts) for (const m of p.measures) for (const el of m.elements) {
+      if (el.kind !== "chord") continue;
+      at.push({ chord: el, whole: acc / (SIMPLE_DIVISIONS * 4) });
+      acc += el.duration.divisions;
+    }
+    if (!at.length) continue;
+    const total = acc / (SIMPLE_DIVISIONS * 4);
+    let t = 0;
+    let carried = 0.25;                                 // LilyPond：没写时值就沿用上一个，第一个默认四分
+    for (const c of chordTokens.filter((x) => x.song === songIdx)) {
+      const whole = c.whole ?? carried;
+      carried = whole;
+      let pick = at[0]!.chord;
+      for (const e of at) { if (e.whole <= t + 1e-6) pick = e.chord; else break; }
+      pick.harmony = { root: { step: "C", alter: 0 }, kind: "", text: c.text };
+      t += whole;
+    }
+    if (t > total + 1e-6) {
+      loss.add(`和弦符号行比曲子长（超出 ${(t - total).toFixed(2)} 个全音符）`, chordTokens.filter((x) => x.song === songIdx).slice(-1)[0]!.text, undefined);
+    }
   }
 
   // 歌词按顺序、逐段挂到已读出的音上。**逐位置推进**：这一格没字（占位）也要往下走一格，

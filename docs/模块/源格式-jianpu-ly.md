@@ -9,6 +9,7 @@
 |---|---|
 | `src/model/fromjly.ts` | **读入**：`scanWord` / `scanMusicLine` / `isJlyMusicLine`（词法）、`syllablesOf`（歌词音节，含占位与连写）、`parseJly`（装配成 `ScoreDoc`）、`rewrapJlyText`（曲行重断） |
 | `src/model/tojly.ts` | **写出**：`planJly`（歌词位置 + 圆滑线分组）、`ornamentsBefore` / `ornamentsAfter` / `chordBody` / `sustainOf`、`lyricLines`、`emitJlyOfScore`、`emitJly(doc)` |
+| `src/model/jlychords.ts` | **和弦符号**两个方向的转换：LilyPond 和弦语法 ↔ 谱上印的文字（`c2.:m7/bes` ↔ `Cm7/Bb`），以及整音符分数 ↔ LilyPond 时值串 |
 | `src/editor/visual/dialects/jly.ts` | **可视化编辑方言**（`DIALECT_JLY`）：顺序无关的 `scan`、规范 `printNote`、`deco`/`annotationText`/`dynamicText`、`tuplet`、`slurNesting`、`lineBreak` |
 | `src/editor/formats.ts` | 适配器 `JLY`：`defaultExt ".jly"`、`caps`、`reload → host.reloadJly`、`toScoreDoc → parseJly`、`relayoutText → rewrapJlyText`、`editDialect` |
 | `src/common/filetypes.ts` | `.jly` 进 `DOC_EXT` 白名单（`JLY_EXT`、`isJlyFile`） |
@@ -32,6 +33,7 @@
 | `^"文字"` | `Chord.sectionWord` —— 与 123 的 `"^渐慢"` 同一个落点 |
 | `\fermata` | `Chord.notations.fermata` |
 | `Fine` `DC` `DS` `Segno` `ToCoda` | `Barline.ornaments` 上的短名（`fine`/`dc`/`ds`/`hs`/`ty`）—— 与 123 的 `!fine!` 同一个落点 |
+| `chords=c2. g:7 c` | `Chord.harmony`（`{ root, kind: "", text }`）—— 与 123 的 `"Am7"` 同一个落点；读的时候 token 的**时值**是一条时间线，落到"起点 ≤ 该时刻"的最后一个音上 |
 | 页头 / `1=X` / `4/4` / `4=85` | `Song.work` / `Song.key` / `Song.time` / `Song.tempos` |
 | `NextScore` / `NextPart` | 新的 `Song` / 新的 `Part` |
 

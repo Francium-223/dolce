@@ -40,6 +40,7 @@
 | `4/4`（`4/4,8` 弱起） | 拍号 | ✅ | ✅ |
 | `4/4,8` 里的弱起音符时值 | 弱起（逗号后那个分母） | ⚠ 只报（拍号本身读得进，弱起长度丢） | — |
 | `1=Bb` / `6=F#` | 调号（大调 / 小调） | ✅ | ✅ |
+| `chords=c2. g:7 c` | 吉他和弦符号（单独一行，或 `=` 之后换行、空行结束）：token 是 **LilyPond 和弦语法 + 时值**，时值就是一条时间线 | ✅ | ✅ |
 | `4=85` | 速度 | ✅ | ✅ |
 | `title=` `subtitle=` `composer=` `poet=` `arranger=` `copyright=` `opus=` | 页头 | ✅ | ✅ |
 | `L: …` | 拉丁歌词；**每一条 `L:` 行各是一段**（上游各自变成一个 `\new Lyrics` 往下叠） | ✅ | ✅ |
@@ -79,7 +80,7 @@
 `R{ } A{ }`（反复跳跃 / 小节反复）、`R*8`（多小节休止）、**倚音和弦** `g[1&3&5]`（引擎输入里一个倚音只有一个音高）、
 `4/4,8` 里的**弱起长度**（拍号本身读得进）、`LP:` / `LPH:`（原样 LilyPond 代码块）、布局开关（`NoBarNums` `NoIndent` `OnePage` `RaggedLast`
 `SeparateTimesig` `angka` `WithStaff` `PartMidi` `RepeatAccidentals` `NormalAccidentals`）、
-`chords=` / `frets=` / `instrument=`（和弦符号 / 指板图 / 乐器）、`arpUp` `arpDown` `arp`、二胡符号
+`frets=` / `instrument=`（指板图 / 乐器）、`arpUp` `arpDown` `arp`、二胡符号
 （`Fr=` `slide` `souyin` `harmonic` `bend`）、排练记号 / 滑音 / 泛音（`letterA` `glis` `Harm:`）、
 基准八度切换 `<>`、`8` `9` 八度快捷键、`x`（打击乐）、其余 `\…` 指令。
 

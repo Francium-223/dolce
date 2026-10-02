@@ -382,7 +382,8 @@ export function parseJly(text: string): JlyParse {
   return { doc, losses: loss.list(), unknown: [...new Set(unknown)] };
 }
 
-/** 打开文件时判方言用：像不像 jianpu-ly（上游那套页头 / 拍号 / `1=X` 行）。 */
-export function looksLikeJly(text: string): boolean {
-  return /^\s*title=/m.test(text) || /^\s*\d+\/\d+\s*$/m.test(text) || /^\s*[1-7]=[A-Ga-g][#b]?\s*$/m.test(text);
-}
+// 上游**没有**任何决定性标记可以拿来判"这段文本是不是 jianpu-ly"：没有版本行（不像 ABC 的 `%abc-2.1`
+// 或本项目的 `%123-1.0`）、没有签名、也没有必需项 —— 它 README 第一句就是"普通文本文件**以空格分隔**的"，
+// `title=` / `4/4` / `1=Bb` 都只是 token，能不能独占一行是**排版偏好**，不是语法。
+// 所以这里**不做**内容嗅探（曾经写过 `looksLikeJly`，那只是特征猜测，已删）：
+// 判据只有一个 —— 扩展名 `.jly`（那是它自己 `--export-jly` 写出来的后缀，见 README 命令行选项）。

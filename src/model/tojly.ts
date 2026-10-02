@@ -218,6 +218,10 @@ export function emitJly(doc: ScoreDoc): JlyExport {
   if (score.parts.length > 1) {
     warnings.add("多声部：jianpu-ly 导出只写第一声部（共 " + score.parts.length + " 个）");
   }
+  // 多曲（上游 `NextScore`）：本版只写第一首 —— 也必须报出来，别静默丢。
+  if (doc.songs.length > 1) {
+    warnings.add("多曲：jianpu-ly 导出只写第一首（共 " + doc.songs.length + " 首）");
+  }
   // ⚠ 同一 part 里的多声部**不能靠投影结果判**：`jianpuInputOfDoc` 在读每个小节时就
   //   `voice <= 1` 过滤掉了（`jianpuinput.ts` 的「读完一小节」那步），投影出来恒为单声部。
   //   所以回到 `ScoreDoc` 上数，否则第 2 及以后的声部会被**静默丢掉**。

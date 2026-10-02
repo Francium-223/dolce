@@ -176,7 +176,10 @@ export async function exportMusicXml(app: App): Promise<void> {
  *  **单向**：不承诺能再读回编辑器（回读要另加方言，见 `docs/模块/导出.md`）。
  *  **装不下的东西写在文件里当 `%` 注释**（`tojly.ts` 的 warnings），随文件走，不静默丢。 */
 export async function exportJly(app: App): Promise<void> {
-  const doc = app.currentScoreDoc();
+  // ⚠ 这里必须是 `app.scoreDoc()`（它认 `.jpwabc`，会自己解析原文），**不能**用 `app.currentScoreDoc()`：
+  //   JPWABC 适配器没有 `toScoreDoc`，那个访问器对 `.jpwabc` 恒返回 null →
+  //   导出直接抛"没有曲行"（用户在「导出 → jianpu-ly」实测踩到）。另存为那条路走的是 `scoreDoc()`，所以没事。
+  const doc = app.scoreDoc();
   if (!doc) throw new Error(t("export.noLines"));
   const { text } = emitJly(doc);
   await saveBytes(new TextEncoder().encode(text), `${baseName(app)}.jly`, "text/plain");
@@ -325,7 +328,12 @@ function saveAsItems(app: App): ExportItem[] {
     items.push({ label: t("export.project"), available: () => true, run: async (a) => void (await a.saveProject(true)) });
   }
   items.push({
-    label: t("export.currentFormat", { format: app.docFormat === "musicxml" ? "MusicXML" : app.adapter.defaultExt.replace(/^\./, "").toUpperCase() }),
+    label: t("export.currentFormat", {
+      // 扩展名大写当名字："123"/"JPWABC"/"ABC" 恰好就是名字，但 `.jly` 会变成难看的 "JLY" —— 用它自己的名。
+      format: app.docFormat === "musicxml" ? "MusicXML"
+        : app.docFormat === "jly" ? t("fmt.target.jly")
+        : app.adapter.defaultExt.replace(/^\./, "").toUpperCase(),
+    }),
     available: () => true,
     run: (a) => a.saveFileAs(),
   });

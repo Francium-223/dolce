@@ -40,6 +40,7 @@ import type { Dialect } from "./dialect";
 import { projectForJianpu } from "../model/jianpuproject";
 import { decoKey } from "../model/deconames";
 import { quarterTempos } from "../model/jianpu";
+import { MusicCommon } from "../score/jppitch";
 import type {
   Barline,
   Chord,
@@ -518,6 +519,9 @@ function toMetadata(song: Song): Metadata {
   if (song.key) {
     if (song.key.display !== undefined) meta.mode = song.key.display;
     else if (song.key.spelling && song.key.spelling !== "none") meta.mode = song.key.spelling;
+    // ⚠ 只有 `fifths` 的文档（有的读入端只写它）也要把调号带过去，否则引擎输入按 C 算 ——
+    //   实测：JP-Word 的 `1=D` 谱导出成 jianpu-ly 写成 `1=C`。
+    else if (song.key.spelling !== "none") meta.mode = MusicCommon.keys[song.key.fifths + 7];
     if (song.key.tonicDegree && song.key.tonicDegree !== "1") meta.tonic = song.key.tonicDegree;
   }
   for (const t of [song.time, ...(song.extraTimes ?? [])]) {

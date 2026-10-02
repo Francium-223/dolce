@@ -383,10 +383,17 @@ function lyricLines(plan: JlyPlan, warnings: Set<string>): string[] {
       if (l.length) lastLatin = i;
       if (h.length) lastHan = i;
     });
-    const label = numbered ? v + ". " : "";
+    // 段号：多段才印（上游多段时写 `2. `）。⚠ 模型里第一格的字**自己就可能带着段号**
+    //   （JP-Word 的 `{1.[圣]}哉…` 读进来就是 `1.圣`），那就别再叠一个 —— 实测出过 `H: 1. 1.圣 哉…`。
+    const already = (arr: readonly string[]): boolean => {
+      const first = arr.find((t) => t !== "");
+      // `1.圣` 这种（JP-Word 读进来就是带点不带空格的）也算已经带了段号
+      return !!first && (first.startsWith(v + ". ") || first.startsWith(v + "."));
+    };
+    const label = (arr: readonly string[]): string => (numbered && !already(arr) ? v + ". " : "");
     // 尾巴上的空位不用写（上游导出时也会把尾部的空音节剪掉）。
-    if (lastLatin >= 0) out.push("L: " + label + latin.slice(0, lastLatin + 1).join(" "));
-    if (lastHan >= 0) out.push("H: " + label + han.slice(0, lastHan + 1).join(" "));
+    if (lastLatin >= 0) out.push("L: " + label(latin) + latin.slice(0, lastLatin + 1).join(" "));
+    if (lastHan >= 0) out.push("H: " + label(han) + han.slice(0, lastHan + 1).join(" "));
   }
   // 引擎输入的 `JLyric` **不带 `syllabic`**（那个字段只在模型层），所以拉丁歌词只能按空格分音节写；
   // `L:` 的连字符（上游的 `syl- la- bles`）这一版表达不出来，报出来别静默丢。

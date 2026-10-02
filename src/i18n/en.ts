@@ -148,6 +148,7 @@ export const en: Record<MsgKey, string> = {
   "fmt.target.abc": "ABC",
   "fmt.target.tomato": "Fanqie jianpu",
   "fmt.target.shige": "Shigeben text jianpu",
+  "fmt.target.jly": "jianpu-ly (.jly)",
   "fmt.pu.label": "Text jianpu",
   "fmt.pu.labelWith": "Text jianpu · {dialect}",
   "fmt.short.tomato": "Fanqie",

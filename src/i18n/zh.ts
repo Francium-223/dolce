@@ -147,6 +147,7 @@ export const zh = {
   "fmt.target.abc": "ABC",
   "fmt.target.tomato": "番茄简谱",
   "fmt.target.shige": "诗歌本文本谱",
+  "fmt.target.jly": "jianpu-ly 文本（.jly）",
   "fmt.pu.label": "文本谱",
   "fmt.pu.labelWith": "文本谱·{dialect}",
   "fmt.short.tomato": "番茄",

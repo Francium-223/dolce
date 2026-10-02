@@ -63,6 +63,7 @@ export type JlyToken =
   | { kind: "fermata" }
   | { kind: "grace"; notes: JlyGraceNote[] }
   | { kind: "repeat-open" } | { kind: "alt-open" } | { kind: "repeat-close" }
+  | { kind: "multirest"; n: number }
   | { kind: "header"; key: string; value: string }
   | { kind: "loss"; what: string };
 
@@ -124,7 +125,6 @@ export class JlyLosses {
 const NOT_YET: readonly (readonly [RegExp, string])[] = [
   [/^x$/, "打击乐 `x`（与 dolce 的不可见休止语义不同）"],
   [/^(R\d*\{|\}|A\{)/, "反复跳跃 / 小节反复（`R{ } A{ }`）"],
-  [/^R\*\d+$/, "多小节休止（`R*8`）"],
   [/^(LP:|:LP|LPH:|:LPH)$/, "原样 LilyPond 代码块（`LP: … :LP`）"],
   [/^(KeepLength|ChordsRoman|NoBarNums|NoIndent|OnePage|RaggedLast|SeparateTimesig|angka|WithStaff|PartMidi|RepeatAccidentals|NormalAccidentals)$/, "布局 / 结构开关"],
   [/^(chords|frets|instrument)=/, "和弦符号 / 指板图 / 乐器"],
@@ -189,6 +189,7 @@ export function scanWord(word: string, loss: JlyLosses, span?: SourceSpan): JlyT
   if (word === "\\fermata") return { kind: "fermata" };
   // 反复跳跃：`R{ 第一遍 } A{ 第二遍 }`（上游自己的 MusicXML 导入端就是这么做出来的：
   //   `<repeat forward>` → `R{`、`<repeat backward>` → `}`、`<ending start>` → `A{`）。
+  if (/^R\*\d+$/.test(word)) return { kind: "multirest", n: Number(word.slice(2)) };   // 多小节休止：R*8 = 8 个小节
   if (word === "R{") return { kind: "repeat-open" };
   if (word === "A{") return { kind: "alt-open" };
   if (word === "}") return { kind: "repeat-close" };
@@ -631,6 +632,24 @@ export function parseJly(text: string): JlyParse {
           break;
         }
         case "jump": addJump(JUMP_SHORT[tk.text] ?? "fine"); break;
+        case "multirest": {
+          // `R*8` = 8 个整小节休止：**展开成 8 个小节**（上游只是把它压缩着画，音乐本来就是 8 小节）。
+          // 模型里没有"N 小节休止"这种字段，但小节的个数是真实的，展开一样东西都不丢；
+          // 写出端会把连着的整小节休止再压回 `R*N`（见 tojly.ts::multirestOf）。
+          const beats = (song.time?.beats ?? 4) * (SIMPLE_DIVISIONS * 4 / (song.time?.beatType ?? 4));
+          for (let k = 0; k < tk.n; k++) {
+            const m = openMeasure(spanAt(i));
+            (m.barlines ??= []).push({ location: "right", style: "regular", source: spanAt(i) });
+            m.elements.push({
+              kind: "chord", id: ids.next(), notes: [],
+              duration: { divisions: Math.round(beats), dots: 0, type: "whole" },
+              rest: { measure: true }, voice: 1, staff: 1,
+              source: spanAt(i),
+            });
+            cur = null;
+          }
+          break;
+        }
         case "repeat-open": {
           // `R{` = 反复开始：落在**当前这一小节**的左线上（还没有小节就开一个）
           if (!cur) cur = openMeasure(spanAt(i));

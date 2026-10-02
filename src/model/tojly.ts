@@ -356,6 +356,11 @@ function endingMarks(measures: readonly JMeasure[], warnings: Set<string>): { be
   return { before, after };
 }
 
+/** ⚠ 试过把写出的整小节休止也压成 `R*N`（`skipBars`），**退回去了**：语料里大量"写满的休止小节"
+ *  并不是压缩记号，压了就是替用户改记谱 —— 实测 29 份真语料里有 18 份的导出随之变了。
+ *  现在只**读**（`R*8` 展开成 8 个真实小节，音乐不丢），写出一律写成 `0 0 0 0`（音乐一样）。
+ *  （哪天模型里真有了"N 小节休止"这种字段，再回头做双向压缩。） */
+
 /** 逐段收集歌词。位置对不齐就全错（见上面的四条口径），所以这里只做"逐位置填字或填占位"。 */
 function lyricLines(plan: JlyPlan, warnings: Set<string>): string[] {
   const out: string[] = [];
@@ -416,8 +421,8 @@ export function emitJlyOfScore(score: JScore, warnings: Set<string> = new Set())
   // 歌词连成一串）。4 小节一行是简谱的常规版面，源谱"一行四小节"也正是这个数。
   let sinceBreak = 0;
   const marks = endingMarks(measures, warnings);
-  for (const m of measures) {
-    const mIdx = measures.indexOf(m);
+  for (let mIdx = 0; mIdx < measures.length; mIdx++) {
+    const m = measures[mIdx]!;
     if (marks.before.has(mIdx)) { flush(); tokens.push(marks.before.get(mIdx)!); }
     // 拍号/调号变更各占一行（jianpu-ly 里它们本来就是行内 token）——
     // ⚠ 只有**真的**变更才 flush，别写成 `if (m.index > 0) { flush(); … }`：

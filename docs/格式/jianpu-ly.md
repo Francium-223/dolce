@@ -41,6 +41,7 @@
 | `4/4,8` 里的弱起音符时值 | 弱起（逗号后那个分母） | ⚠ 只报（拍号本身读得进，弱起长度丢） | — |
 | `1=Bb` / `6=F#` | 调号（大调 / 小调） | ✅ | ✅ |
 | `chords=c2. g:7 c` | 吉他和弦符号（单独一行，或 `=` 之后换行、空行结束）：token 是 **LilyPond 和弦语法 + 时值**，时值就是一条时间线 | ✅ | ✅ |
+| `R*8` | 多小节休止（读：展开成 8 个真实小节；写：写成 8 个 `0 0 0 0` 小节 —— 模型里没有「N 小节休止」这种字段，音乐一样、只是不压缩着画） | ✅ | ⚠ 不压缩 |
 | `R{ … } A{ … }` | 反复跳跃（`R{` = 反复体、`A{` = 第二房；上游自己的生成规则就是 `<repeat forward>`→`R{`、`<repeat backward>`→`}`、`<ending start>`→`A{`） | ✅ | ✅（只能两房） |
 | `4=85` | 速度 | ✅ | ✅ |
 | `title=` `subtitle=` `composer=` `poet=` `arranger=` `copyright=` `opus=` | 页头 | ✅ | ✅ |
@@ -78,7 +79,7 @@
 
 ## 本版不收的写法（认得出、报得出，不硬读）
 
-`R*8`（多小节休止：模型里没有"N 小节休止"这种字段，拆成 N 个空小节是改结构、不能干）、**倚音和弦** `g[1&3&5]`（引擎输入里一个倚音只有一个音高）、
+**倚音和弦** `g[1&3&5]`（引擎输入里一个倚音只有一个音高）、
 `4/4,8` 里的**弱起长度**（拍号本身读得进）、`LP:` / `LPH:`（原样 LilyPond 代码块）、布局开关（`NoBarNums` `NoIndent` `OnePage` `RaggedLast`
 `SeparateTimesig` `angka` `WithStaff` `PartMidi` `RepeatAccidentals` `NormalAccidentals`）、
 `frets=` / `instrument=`（指板图 / 乐器）、`arpUp` `arpDown` `arp`、二胡符号

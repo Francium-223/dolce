@@ -21,6 +21,7 @@
 
 import {
   SIMPLE_DIVISIONS,
+  type Barline,
   type Chord,
   type Diagnostic,
   type Lyric,
@@ -270,6 +271,8 @@ export function parseJly(text: string): JlyParse {
   let cur: Measure | null = null;
   let openTuplet: number | null = null;
   let pendingTie = false;
+  /** 没写段号的歌词行按出现顺序编号（跨 `L:`/`H:` 共用，上游也只是一条条往下叠）。 */
+  let autoVerse = 0;
   // 歌词位置：**发音**的和弦。休止不占（LilyPond 的 `\lyricsto` 跳过休止，实测连带梁休止也跳），
   // 圆滑线 `(` … `)` 里的音也不占（那是"一字多音"：`slurMelismaBusy`，实测 `1 ( 2 ) 3 4`
   // 配 `L: A B C D` 时 B 会跳到第 3 个音上）。乐句线 `\(` `\)` 不吞音节，所以不算在里面。
@@ -324,12 +327,24 @@ export function parseJly(text: string): JlyParse {
         }
         body = parts.join(" ");
       }
-      let verse = "1";
+      let verse = "";
       const mv = /^(\d+)\.\s*(.*)$/.exec(body);
-      if (mv) { verse = mv[1]!; body = mv[2] ?? ""; }
+      if (mv) { verse = mv[1]!; body = mv[2] ?? ""; autoVerse = Math.max(autoVerse, Number(verse)); }
+      else {
+        // 没写段号：**每一条歌词行各自是一段**（上游把每条 `L:`/`H:` 行变成一个 `\new Lyrics` 叠下去，
+        // 就是这么排的）。原来一律塞进第 1 段，于是"两行词"会连成一行、后面的字还挤到后面的音上
+        // ——用户截图里 `L: do re …` 和第二条 `L: …` 连成 `…do是是是的的` 就是这个。
+        verse = String(++autoVerse);
+      }
       const key = verse + (han ? "H" : "L");
+      const syls = syllablesOf(body, han);
+      // 上游的 `L:` 行**不拆汉字**（只有 `H:` 行会逐字自动分开），所以一串汉字会被当成一个音节，
+      // 排出来是"好几个字挤在一个音下面"。这不改读法（要跟真工具一致），但要说清楚怎么写。
+      if (!han && syls.some((s) => s && [...s.text].filter((c) => /[\u3400-\u9fff]/.test(c)).length > 1)) {
+        loss.add("拉丁歌词行（`L:`）里的连续汉字：上游把整串当一个音节，要逐字分开请写成 `H:`", body, head);
+      }
       const slot = verses.get(key) ?? { han, syllables: [], span: head };
-      slot.syllables.push(...syllablesOf(body, han));
+      slot.syllables.push(...syls);
       verses.set(key, slot);
       advance();
       continue;
@@ -384,7 +399,21 @@ export function parseJly(text: string): JlyParse {
       const tk = tokens[i]!;
       switch (tk.kind) {
         case "loss": case "header": case "text": break;
-        case "bar": cur = null; break;
+        case "bar": {
+          // ⚠ 小节线要**记进模型**，不能只把当前小节收掉就算了：投影成排版输入时，
+          //   小节结构（以及曲行怎么断）全是从 `Measure.barlines` 长出来的。原来这里只写 `cur = null`，
+          //   于是整首歌在谱面上是**一根没有小节线的长行**——音符与歌词挤成一团（用户截图就是这个）。
+          //   口径与 123 一致：小节里已经有音就是**收尾线**，还没有音就是行首的**左线**。
+          const bl: Barline = { location: "right", style: "regular", source: spanAt(i) };
+          if (cur && cur.elements.length) {
+            (cur.barlines ??= []).push(bl);
+            cur = null;
+          } else {
+            if (!cur) cur = openMeasure(spanAt(i));
+            (cur.barlines ??= []).push({ ...bl, location: "left" });
+          }
+          break;
+        }
         case "slur-open":
           // 弧算在**哪个音**头上要看它写在哪儿：jianpu-ly 原样透传，于是
           //   `1 ( 2 3 ) 4` → `c4 ( d4 e4 )`：LilyPond 把 `(` 当**前一个音**的后置事件，弧从 `1` 起，

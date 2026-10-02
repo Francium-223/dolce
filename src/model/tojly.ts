@@ -39,6 +39,9 @@ export interface JlyExport {
 /** 减时线条数 → 时值字母（0 条即四分音符，不写字母）。 */
 const BEAM_LETTER: readonly string[] = ["", "q", "s", "d", "h"];
 
+/** 模型没给换行时，一行写几个小节（简谱的常规版面，见 `emitJlyOfScore` 里的说明）。 */
+const MEASURES_PER_LINE = 4;
+
 /** 调号 `fifths` → 大调主音名（jianpu-ly 的 `1=<名>`）。 */
 const MAJOR_BY_FIFTHS: Readonly<Record<number, string>> = {
   [-7]: "Cb", [-6]: "Gb", [-5]: "Db", [-4]: "Ab", [-3]: "Eb", [-2]: "Bb", [-1]: "F",
@@ -300,14 +303,19 @@ export function emitJlyOfScore(score: JScore, warnings: Set<string> = new Set())
   let tokens: string[] = [];
   const flush = (): void => { if (tokens.length) { lines.push(tokens.join(" ")); tokens = []; } };
 
+  // 一行放几个小节：模型自己带了换行（`JBreak`）就听模型的；没有就**每 4 小节收一行**。
+  // 为什么不能一行到底：上游不看行（行只是排版偏好），可 **dolce 自己要看** —— `.jly` 打开后是按
+  // 文件里的行排版的，整首挤成一行时音符和歌词会叠成一团（用户截图上就是那样：34 个音挤在 850px 里，
+  // 歌词连成一串）。4 小节一行是简谱的常规版面，源谱"一行四小节"也正是这个数。
+  let sinceBreak = 0;
   for (const m of measures) {
     // 拍号/调号变更各占一行（jianpu-ly 里它们本来就是行内 token）——
     // ⚠ 只有**真的**变更才 flush，别写成 `if (m.index > 0) { flush(); … }`：
     //   那等于每小节都换行，源谱"一行四小节"就被拆散了（第三处、也是最后一处同类错误）。
-    if (m.timeChange) { flush(); lines.push(m.time.beats + "/" + m.time.beatType); }
+    if (m.timeChange) { flush(); lines.push(m.time.beats + "/" + m.time.beatType); sinceBreak = 0; }
     if (m.keyChange) {
       const tonic = MAJOR_BY_FIFTHS[m.key.fifths];
-      if (tonic) { flush(); lines.push("1=" + tonic); }
+      if (tonic) { flush(); lines.push("1=" + tonic); sinceBreak = 0; }
     }
     if (m.repeatForward) { flush(); tokens.push('\\bar ".|:"'); }
     for (const e of m.entries) {
@@ -321,11 +329,13 @@ export function emitJlyOfScore(score: JScore, warnings: Set<string> = new Set())
         if (c.notes.some((n) => n.tieStart)) tokens.push("~");       // 延音线写在两音之间
       } else if (e.kind === "break") {
         flush();                                                     // 源谱的换行就是 jianpu-ly 的行
+        sinceBreak = 0;
         if ((e as { newPage?: boolean }).newPage) lines.push("\\pageBreak");
       }
     }
     if (m.endingNum && m.endingNum.size) warnings.add("反复跳跃（`R{ } A{ }`）尚未导出，已退化为普通小节线");
     tokens.push(m.repeatBackward ? '\\bar ":|."' : "|");
+    if (++sinceBreak >= MEASURES_PER_LINE) { flush(); sinceBreak = 0; }
   }
   flush();                                                           // 收尾那一行
 

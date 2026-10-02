@@ -60,8 +60,18 @@ export type JlyToken =
   | { kind: "jump"; text: string }
   | { kind: "dynamic"; name: string }
   | { kind: "fermata" }
+  | { kind: "grace"; notes: JlyGraceNote[] }
   | { kind: "header"; key: string; value: string }
   | { kind: "loss"; what: string };
+
+/** 一个倚音（`g[#45]` 里的一个音）：时值字母可选（未记按八分画一条减时线），八度与附点照音符那一套。 */
+export interface JlyGraceNote {
+  degree: number;
+  alter: string;
+  octave: number;
+  dots: number;
+  beams: number;
+}
 
 /** 一个 token 在**本行**里的列号与长度（0 基）。 */
 export interface JlyPos { col: number; len: number }
@@ -110,7 +120,6 @@ export class JlyLosses {
 
 /** 本版不收的写法：先认出来、报出去，别当音符硬读。 */
 const NOT_YET: readonly (readonly [RegExp, string])[] = [
-  [/^g\[/, "倚音（`g[…]`）"],
   [/^x$/, "打击乐 `x`（与 dolce 的不可见休止语义不同）"],
   [/^(R\d*\{|\}|A\{)/, "反复跳跃 / 小节反复（`R{ } A{ }`）"],
   [/^R\*\d+$/, "多小节休止（`R*8`）"],
@@ -124,6 +133,34 @@ const NOT_YET: readonly (readonly [RegExp, string])[] = [
   [/^[89]$/, "八度快捷键（`8`=`1'`）"],
   [/^\\/, "LilyPond 指令"],
 ];
+
+/** `g[#45]` / `g[d4d5s6]` 里的音。**倚音和弦**（`g[1&3&5]`）本版不收（引擎输入里一个倚音只有一个音高）。 */
+function parseGrace(inner: string, loss: JlyLosses, span?: SourceSpan): JlyGraceNote[] | null {
+  if (inner.includes("&")) { loss.add("倚音和弦（`g[1&3&5]`）", inner, span); return null; }
+  const out: JlyGraceNote[] = [];
+  let i = 0;
+  while (i < inner.length) {
+    let beams = 1;                                  // 未记时值 = 八分（与引擎输入那边的默认一致）
+    if (LETTER_BEAMS[inner[i]!] !== undefined) { beams = LETTER_BEAMS[inner[i]!]!; i++; }
+    let alter = "";
+    const two = inner.slice(i, i + 2);
+    if (ACC[two]) { alter = two; i += 2; }
+    else if (ACC[inner[i]!]) { alter = inner[i]!; i++; }
+    if (!/[0-7]/.test(inner[i] ?? "")) { loss.add("倚音组里读不动的写法", inner, span); return null; }
+    const degree = Number(inner[i]!);
+    i++;
+    let octave = 0;
+    let dots = 0;
+    while (i < inner.length && (inner[i] === "'" || inner[i] === "," || inner[i] === ".")) {
+      if (inner[i] === "'") octave++;
+      else if (inner[i] === ",") octave--;
+      else dots++;
+      i++;
+    }
+    out.push({ degree, alter, octave, dots, beams });
+  }
+  return out.length ? out : null;
+}
 
 /**
  * 一个词（空格分隔）→ token。**顺序无关**：先把词里所有记号认出来，再判断合不合法。
@@ -148,6 +185,10 @@ export function scanWord(word: string, loss: JlyLosses, span?: SourceSpan): JlyT
   if (BARE_DIRECTION.test(word)) return { kind: "jump", text: canonicalJump(word) };
   if (DYNAMIC_COMMAND.test(word)) return { kind: "dynamic", name: word.slice(1) };
   if (word === "\\fermata") return { kind: "fermata" };
+  if (/^g\[.*\]$/.test(word)) {
+    const notes = parseGrace(word.slice(2, -1), loss, span);
+    return notes ? { kind: "grace", notes } : { kind: "loss", what: "倚音" };
+  }
   for (const [re, what] of NOT_YET) {
     if (re.test(word)) { loss.add(what, word, span); return { kind: "loss", what }; }
   }
@@ -344,6 +385,10 @@ const FIFTHS: Readonly<Record<string, number>> = {
 
 const CREDIT_KEYS = new Set(["composer", "poet", "lyricist", "arranger", "copyright", "opus"]);
 const dotFactor = (dots: number): number => (dots === 0 ? 1 : 2 - Math.pow(2, -dots));
+/** 倚音的减时线条数 → 符号时值：0 条四分、1 条八分（未记的默认）、2 条十六、3 条三十二、4 条六十四。 */
+const GRACE_TYPES = ["quarter", "eighth", "16th", "32nd", "64th"] as const;
+const graceTypeOf = (beams: number): NonNullable<Chord["duration"]["type"]> =>
+  GRACE_TYPES[Math.max(0, Math.min(4, Math.round(beams)))]!;
 /** `n[ … ]` 里 n 个音占几个（README 的表：3→2、5/6/7→4，其余取小于 n 的最大 2 的幂）。 */
 const tupletNormal = (n: number): number => { let p = 1; while (p * 2 < n) p *= 2; return p; };
 
@@ -538,6 +583,25 @@ export function parseJly(text: string): JlyParse {
           break;
         }
         case "jump": addJump(JUMP_SHORT[tk.text] ?? "fine"); break;
+        case "grace": {
+          // 倚音在模型里是**独立元素**（`Chord.grace`），时值 0；投影时会被收进后一个音的 `graceNotes`。
+          // 口径与 123 一致（`{…}` 也这么存）。
+          if (!cur) cur = openMeasure(spanAt(i));
+          for (const g of tk.notes) {
+            const note: Note = { degree: { number: g.degree, octaveShift: g.octave } };
+            if (g.alter && ACC[g.alter]) {
+              note.accidental = ACC[g.alter] as Note["accidental"];
+              note.degree!.accidental = note.accidental;
+            }
+            cur.elements.push({
+              kind: "chord", id: ids.next(), notes: [note],
+              duration: { divisions: 0, dots: g.dots, type: graceTypeOf(g.beams) },
+              grace: {}, voice: 1, staff: 1,
+              source: spanAt(i),
+            });
+          }
+          break;
+        }
         case "bar": {
           // ⚠ 小节线要**记进模型**，不能只把当前小节收掉就算了：投影成排版输入时，
           //   小节结构（以及曲行怎么断）全是从 `Measure.barlines` 长出来的。原来这里只写 `cur = null`，
@@ -608,8 +672,8 @@ export function parseJly(text: string): JlyParse {
             ch.notes.push(note);
           }
           cur.elements.push(ch);
-          // 本音是不是一个歌词位置：休止不算；已经在圆滑线里（一字多音）的也不算。
-          if (tk.degree !== 0 && melismaOpen === 0) slots.push(ch);
+          // 本音是不是一个歌词位置：启音（倚音）不算、休止不算、已经在圆滑线里（一字多音）的也不算。
+          if (tk.degree !== 0 && !ch.grace && melismaOpen === 0) slots.push(ch);
           melismaOpen += pendingMelisma;      // 本音开的弧线，从下一个音起才吞音节
           pendingMelisma = 0;
           break;

@@ -87,7 +87,9 @@ function ornamentsBefore(c: JChord): string {
   if (c.graceNotes.length) {
     // ⚠ 倚音组内**不能有空格**：上游是 `g[#45] 1`（连写）。我第一版写成 `g[#4 b5]`，
     //    真 jianpu-ly 直接报 `Unrecognised command g[#4`。这条是拿真工具跑出来的，不是猜的。
-    out += "g[" + c.graceNotes.map((g) => alterOf(g.jpAlter) + g.number + octaveMarks(g.jpOctave)).join("") + "] ";
+    // 时值：未记（八分）不写字母，十六/三十二分写 `s` / `d`（读写对称，见 fromjly.ts::parseGrace）。
+    const letter = (dur: number | undefined): string => (dur === 16 ? "s" : dur === 32 ? "d" : dur === 64 ? "h" : "");
+    out += "g[" + c.graceNotes.map((g) => letter(g.duration) + alterOf(g.jpAlter) + g.number + octaveMarks(g.jpOctave)).join("") + "] ";
   }
   return out;
 }

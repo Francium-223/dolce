@@ -29,7 +29,7 @@
 | `\|` | 小节线 | ✅ | ✅ |
 | `~` | 延音线（写在两音之间） | ✅ | ✅ |
 | `3[ q1 q1 q1 ]` | 连音成组（`n[` … `]`，`[` 后要有空格） | ✅ | ✅ |
-| `g[#45] 1` | 前倚音（**组内不能有空格**，否则上游报 `Unrecognised command`） | ⚠ 只报 | ✅ |
+| `g[#45] 1` | 前倚音（**组内不能有空格**，否则上游报 `Unrecognised command`）；时值可带字母 `g[d4d5s6]` | ✅ | ✅ |
 | `( 2 3 )` | 圆滑线（一字多音，见下） | ✅ | ✅ |
 | `\( 2 3 \)` | LilyPond 的**乐句线**（画弧但不吞音节） | ✅ | ✅ |
 | `^"文字"` `_"文字"` | 音符上/下方的文字（模型里与 123 的 `"^…"` 同落点：`Chord.sectionWord`） | ✅ | ✅ |
@@ -76,7 +76,7 @@
 
 ## 本版不收的写法（认得出、报得出，不硬读）
 
-`R{ } A{ }`（反复跳跃 / 小节反复）、`R*8`（多小节休止）、
+`R{ } A{ }`（反复跳跃 / 小节反复）、`R*8`（多小节休止）、**倚音和弦** `g[1&3&5]`（引擎输入里一个倚音只有一个音高）、
 `4/4,8` 里的**弱起长度**（拍号本身读得进）、`LP:` / `LPH:`（原样 LilyPond 代码块）、布局开关（`NoBarNums` `NoIndent` `OnePage` `RaggedLast`
 `SeparateTimesig` `angka` `WithStaff` `PartMidi` `RepeatAccidentals` `NormalAccidentals`）、
 `chords=` / `frets=` / `instrument=`（和弦符号 / 指板图 / 乐器）、`arpUp` `arpDown` `arp`、二胡符号

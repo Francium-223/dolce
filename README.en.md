@@ -113,7 +113,7 @@ The interface is available in **English and Chinese**: it follows your browser l
 - **Autosave.** Unsaved changes are kept as a local draft after a few seconds; after an unexpected close or reload
   you are offered to restore it.
 - **Export** depends on the view:
-  - Jianpu views: **vector PPTX**, **MIDI** and **MusicXML**.
+  - Jianpu views: **vector PPTX**, **MIDI**, **MusicXML** and **jianpu-ly text** (`.jly`).
   - Staff and mixed views: **PNG**, **PDF**, **MIDI** and **MusicXML**.
 
 ## The 123 format
@@ -155,6 +155,7 @@ In the lyrics, CJK characters take one note each and need no spaces. Latin words
 | ABC | `.abc` | ✅ | ✅ | ✅ | Voices, repeats, endings, chords, ornaments… |
 | MusicXML | `.xml` `.musicxml` | ✅ | ✅ (directly on the score) | ✅ | Notes, measures, lyrics and titles can be edited on the score in every view; a single-voice score can also be converted to 123 etc. for text editing |
 | Image / PDF | `.png` `.jpg` `.webp` `.pdf` | OMR | — | — | Jianpu images and scanned PDFs; staff PDFs, scanned or photographed staff notation |
+| jianpu-ly | `.jly` | — | — | Export only | Feed upstream [jianpu-ly](https://github.com/ssb22/jianpu-ly) to produce LilyPond (`.ly`) for typesetting; one-way export, not read back |
 | Recognition project | `.dolce` | ✅ | ✅ | ✅ | Source images + recognition result + the score being edited; reopens without recognizing again |
 
 ## Install

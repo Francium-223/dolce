@@ -51,7 +51,7 @@ export type JlyToken =
   | { kind: "sustain" }
   | { kind: "bar" }
   | { kind: "tie" }
-  | { kind: "slur-open" } | { kind: "slur-close" }
+  | { kind: "slur-open"; melisma: boolean } | { kind: "slur-close"; melisma: boolean }
   | { kind: "tuplet-open"; n: number } | { kind: "tuplet-close" }
   | { kind: "text" }
   | { kind: "header"; key: string; value: string }
@@ -111,8 +111,13 @@ const NOT_YET: readonly (readonly [RegExp, string])[] = [
 export function scanWord(word: string, loss: JlyLosses, span?: SourceSpan): JlyToken | null {
   if (word === "-") return { kind: "sustain" };
   if (word === "~") return { kind: "tie" };
-  if (word === "(") return { kind: "slur-open" };
-  if (word === ")") return { kind: "slur-close" };
+  // 圆滑线两种写法**语义不同**，不能一律当同一种：`(` 是 jianpu-ly 的圆滑线，落到 LilyPond 上会被
+  // 当成"一字多音"（`melismaBusyProperties` 默认含 `slurMelismaBusy`），弧线里的音**不吃音节**；
+  // `\(` 是 LilyPond 的乐句线，照样画弧线但不吞音节。所以歌词对位要按它区分（实测，见 `tojly.ts`）。
+  if (word === "(") return { kind: "slur-open", melisma: true };
+  if (word === ")") return { kind: "slur-close", melisma: true };
+  if (word === "\\(") return { kind: "slur-open", melisma: false };
+  if (word === "\\)") return { kind: "slur-close", melisma: false };
   if (word === "]") return { kind: "tuplet-close" };
   if (/^\|+$/.test(word)) return { kind: "bar" };
   if (/^\d+\[$/.test(word)) return { kind: "tuplet-open", n: Number(word.slice(0, -1)) };
@@ -174,6 +179,57 @@ export function scanMusicLine(
   return { tokens, pos, unknown };
 }
 
+/** 歌词里的一个音节。`null`（列表里）表示**占位**——这个音上没词，别把后面的字往前挪。 */
+interface JlySyllable { text: string; /** 词内断音节（上游写 `syl-`，模型里是 `syllabic: "begin"`） */ begin?: boolean }
+
+/**
+ * 一行歌词正文 → 音节列表。三种"占位"记号都收成 `null`（都是上游自己的写法）：
+ *   `""`   —— 上游 MusicXML 导入端给"这个音没词"写的就是空串；
+ *   孤立的 `_`（拉丁行）—— 上游给 melisma 的续音写它；
+ *   `\skip 1` —— LilyPond 原生的跳过。
+ * **汉字行**里的 `_` 不是跳过，是连写（`一_三` = 一个字两个汉字，仍只占一格）；
+ * 行尾的 `-` 是词内断音节（上游把 `syl- la- bles` 译成 ` -- `），跟 123 读法一致收成 `syllabic: "begin"`。
+ * 位置感由调用方按"哪些和弦算歌词位置"决定（见 `parseJly` 里 `slots`）。
+ */
+function syllablesOf(body: string, han: boolean): (JlySyllable | null)[] {
+  const out: (JlySyllable | null)[] = [];
+  /** LilyPond 的字符串音节：`"do"` 就是一个字（`""` 是空 = 占位）。写出端**一律**这么写拉丁歌词，
+   *  因为不加引号的 `4` / `s0` 会被 LilyPond 当成时值（实测直接报错）。 */
+  const unquote = (w: string): string | null => {
+    if (w.length < 2 || !w.startsWith('"') || !w.endsWith('"')) return w;
+    const inner = w.slice(1, -1).replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+    return inner === "" ? null : inner;
+  };
+  const push = (raw: string): void => {
+    const text = unquote(raw);
+    if (text === null) { if (raw === "") return; out.push(null); return; }
+    if (text === "") return;
+    if (text.endsWith("-")) out.push({ text: text.slice(0, -1), begin: true });
+    else out.push({ text });
+  };
+  if (han) {
+    // 汉字行：空白分音节，`_` 是**连写**（`一_三` 仍是一个音节），引号包住的整串也算一个音节。
+    for (const w of body.split(/\s+/).filter(Boolean)) {
+      if (w.length >= 2 && w.startsWith('"') && w.endsWith('"')) { push(w); continue; }
+      const text = w.split("_").join("");
+      if (text) push(text);
+    }
+    return out;
+  }
+  const words = body.split(/\s+/).filter(Boolean);
+  for (let i = 0; i < words.length; i++) {
+    const w = words[i]!;
+    if (w === "_") { out.push(null); continue; }
+    if (/^\\skip\d*$/.test(w)) {                     // `\skip 1` / `\skip1`
+      out.push(null);
+      if (w === "\\skip" && /^\d+$/.test(words[i + 1] ?? "")) i++;
+      continue;
+    }
+    push(w);
+  }
+  return out;
+}
+
 // ───────────────────────── 装配：token → ScoreDoc ─────────────────────────
 
 export interface JlyParse {
@@ -214,8 +270,13 @@ export function parseJly(text: string): JlyParse {
   let cur: Measure | null = null;
   let openTuplet: number | null = null;
   let pendingTie = false;
-  const sung: Chord[] = [];
-  const verses = new Map<string, { han: boolean; syllables: string[]; span?: SourceSpan }>();
+  // 歌词位置：**发音**的和弦。休止不占（LilyPond 的 `\lyricsto` 跳过休止，实测连带梁休止也跳），
+  // 圆滑线 `(` … `)` 里的音也不占（那是"一字多音"：`slurMelismaBusy`，实测 `1 ( 2 ) 3 4`
+  // 配 `L: A B C D` 时 B 会跳到第 3 个音上）。乐句线 `\(` `\)` 不吞音节，所以不算在里面。
+  const slots: Chord[] = [];
+  let melismaOpen = 0;                   // 已经从**前面**的音开始的圆滑线（本音不吃音节）
+  let pendingMelisma = 0;                // 本音自己开的圆滑线：从**下一个**音起才吞
+  const verses = new Map<string, { han: boolean; syllables: (JlySyllable | null)[]; span?: SourceSpan }>();
 
   /** 开一小节；`source` 落在这一小节的第一个 token 上（编辑器按它定位小节）。 */
   const openMeasure = (source?: SourceSpan): Measure => {
@@ -229,10 +290,12 @@ export function parseJly(text: string): JlyParse {
   let lineOffset = 0;                    // 本行起点的全文偏移
   // ⚠ 必须按**实际分隔符**推进偏移：CRLF 是两个字符，按 `+1` 累加会让每行少 1，
   //   偏移一路漂走（实测 6606 个 span 里错了 6242 个，切片指向别的行）。
-  for (const lm of text.matchAll(/([^\r\n]*)(\r\n|\n|\r|$)/g)) {
-    const raw = lm[1]!;
-    const sep = lm[2] ?? "";
-    if (raw === "" && sep === "") break;
+  //   先把行拆出来（而不是边扫边 `advance`），是为了歌词的**多行写法**能往后吃掉几行。
+  const rows = [...text.matchAll(/([^\r\n]*)(\r\n|\n|\r|$)/g)]
+    .map((m) => ({ raw: m[1]!, sep: m[2] ?? "" }))
+    .filter((r, i, all) => !(i === all.length - 1 && r.raw === "" && r.sep === ""));
+  for (let li = 0; li < rows.length; li++) {
+    const { raw, sep } = rows[li]!;
     const indent = raw.length - raw.trimStart().length;
     const spanOf = (col: number, len: number): SourceSpan =>
       ({ line: lineNo, column: indent + col, offset: lineOffset + indent + col, length: len });
@@ -241,18 +304,32 @@ export function parseJly(text: string): JlyParse {
     const line = raw.trim();
     if (!line || line.startsWith("%")) { advance(); continue; }
 
-    // 歌词行：整行当音节串（汉字逐字、拉丁按空白）
+    // 歌词行。音节串可以只写一行，也可以 `L:` 之后换行、分几行写、以**空行**结束
+    // （上游 README：「在:之后换行输入，并以2个空行结束」；它自己也是先把这几行合成一行再解析）。
     const mLyric = /^([LH]):\s*(.*)$/.exec(line);
     if (mLyric) {
       const han = mLyric[1] === "H";
+      const head = spanOf(indent, line.length);
       let body = mLyric[2] ?? "";
+      if (!body) {
+        const parts: string[] = [];
+        while (li + 1 < rows.length) {
+          const nxt = rows[li + 1]!;
+          const t = nxt.raw.trim();
+          if (!t || t.startsWith("%")) break;              // 空行结束（`%` 注释也当结束）
+          parts.push(t);
+          li++;
+          lineNo++;
+          lineOffset += nxt.raw.length + nxt.sep.length;   // 吃掉的行也要推进偏移，否则后面的 span 全漂
+        }
+        body = parts.join(" ");
+      }
       let verse = "1";
       const mv = /^(\d+)\.\s*(.*)$/.exec(body);
       if (mv) { verse = mv[1]!; body = mv[2] ?? ""; }
-      const syllables = han ? [...body.replace(/\s+/g, "")] : body.split(/\s+/).filter(Boolean);
       const key = verse + (han ? "H" : "L");
-      const slot = verses.get(key) ?? { han, syllables: [], span: spanOf(indent, line.length) };
-      slot.syllables.push(...syllables);
+      const slot = verses.get(key) ?? { han, syllables: [], span: head };
+      slot.syllables.push(...syllablesOf(body, han));
       verses.set(key, slot);
       advance();
       continue;
@@ -292,7 +369,7 @@ export function parseJly(text: string): JlyParse {
     if (line === "NextScore") {
       song = emptySong(); doc.songs.push(song);
       part = { id: "P1", measures: [] }; song.parts.push(part);
-      cur = null; sung.length = 0; advance(); continue;
+      cur = null; slots.length = 0; melismaOpen = 0; pendingMelisma = 0; advance(); continue;
     }
     if (line === "NextPart") {
       part = { id: "P" + (song.parts.length + 1), measures: [] }; song.parts.push(part);
@@ -308,7 +385,21 @@ export function parseJly(text: string): JlyParse {
       switch (tk.kind) {
         case "loss": case "header": case "text": break;
         case "bar": cur = null; break;
-        case "slur-open": case "slur-close": loss.add("圆滑线 `( )`", "(", spanAt(i)); break;
+        case "slur-open":
+          // 弧算在**哪个音**头上要看它写在哪儿：jianpu-ly 原样透传，于是
+          //   `1 ( 2 3 ) 4` → `c4 ( d4 e4 )`：LilyPond 把 `(` 当**前一个音**的后置事件，弧从 `1` 起，
+          //   弧内（`2` `3`，到 `)` 那个音为止）不吃音节 —— 实测 A→1、B→4；
+          //   而弧写在最前面（`( 1 2 ) 3 4`）时它算在**下一个音**头上 —— 实测 A→1、B→3、C→4。
+          //   两种都要跟：前一个 token 是音就立刻生效，否则等这个音读完再生效（组首自己是吃音节的）。
+          if (tk.melisma) {
+            if (tokens[i - 1]?.kind === "note") melismaOpen++;
+            else pendingMelisma++;
+          }
+          loss.add(tk.melisma ? "圆滑线 `( )`" : "乐句线 `\\( \\)`", tk.melisma ? "(" : "\\(", spanAt(i));
+          break;
+        case "slur-close":
+          if (tk.melisma) melismaOpen = Math.max(0, melismaOpen - 1);
+          break;
         case "tuplet-open": openTuplet = tk.n; break;
         case "tuplet-close": openTuplet = null; break;
         case "tie": pendingTie = true; break;
@@ -349,7 +440,10 @@ export function parseJly(text: string): JlyParse {
             ch.notes.push(note);
           }
           cur.elements.push(ch);
-          sung.push(ch);
+          // 本音是不是一个歌词位置：休止不算；已经在圆滑线里（一字多音）的也不算。
+          if (tk.degree !== 0 && melismaOpen === 0) slots.push(ch);
+          melismaOpen += pendingMelisma;      // 本音开的弧线，从下一个音起才吞音节
+          pendingMelisma = 0;
           break;
         }
       }
@@ -357,22 +451,24 @@ export function parseJly(text: string): JlyParse {
     advance();
   }
 
-  // 歌词按顺序、逐段挂到已读出的音上（挂不满只挂得上多少算多少，差额报出来）
+  // 歌词按顺序、逐段挂到已读出的音上。**逐位置推进**：这一格没字（占位）也要往下走一格，
+  // 否则后面的字会整体前移（上游 README 的"对位"就是这么算的）。挂不满的差额报出来。
   for (const [key, slot] of verses) {
     const verse = Number(key.replace(/[HL]$/, ""));
     let i = 0;
-    for (const ch of sung) {
+    for (const ch of slots) {
       if (i >= slot.syllables.length) break;
-      const text = slot.syllables[i++]!;
-      if (!text) continue;
-      const lyric: Lyric = { number: verse, text };
+      const syl = slot.syllables[i++]!;
+      if (!syl) continue;
+      const lyric: Lyric = { number: verse, text: syl.text };
+      if (syl.begin) lyric.syllabic = "begin";
       if (slot.span) lyric.source = slot.span;
       ch.lyrics = [...(ch.lyrics ?? []), lyric];
     }
-    if (slot.syllables.length > sung.length) {
+    if (slot.syllables.length > slots.length) {
       loss.add(
-        `歌词第 ${verse} 段多出 ${slot.syllables.length - sung.length} 个音节`,
-        slot.syllables.slice(sung.length, sung.length + 3).join(" "),
+        `歌词第 ${verse} 段多出 ${slot.syllables.length - slots.length} 个音节`,
+        slot.syllables.slice(slots.length).map((s) => s?.text ?? '""').slice(0, 3).join(" "),
         slot.span,
       );
     }

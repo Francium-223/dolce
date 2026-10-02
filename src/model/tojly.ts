@@ -5,9 +5,9 @@
 //   音符 `1`–`7`、八度 `'`/`,`（`1' 1'' 1, 1,,`）、变音 `#1 b2 n3`、
 //   时值 `s`=16分 `q`=8分 无字母=4分 `d`=32分 `h`=64分、附点 `.`、
 //   **半音符及以上写增时线** `1 -`（附点二分 `1 - -`、全音符 `1 - - -`）、休止 `0`、
-//   连音 `3[ q1 q1 q1 ]`、前倚音 `g[#45] 1`、圆滑线 `( )`、延音线 `~`、
-//   文字 `^"上方"`、LilyPond 指令 `\fermata`/`\bar "||"`/`\pageBreak` 原样透传、
-//   拍号 `4/4`、调号 `1=Bb`（大调）、歌词 `L:`（拉丁音节）/`H:`（汉字）、注释 `%`。
+//   连音 `3[ q1 q1 q1 ]`、前倚音 `g[#45] 1`、圆滑线 `( )`（一字多音）/ 乐句线 `\( \)`（其余，见下）、
+//   延音线 `~`、文字 `^"上方"`、LilyPond 指令 `\fermata`/`\bar "||"`/`\pageBreak` 原样透传、
+//   拍号 `4/4`、调号 `1=Bb`（大调）、歌词 `L:`（拉丁音节）/`H:`（汉字，含空位占位 `""`）、注释 `%`。
 //
 // ⚠ **不要混淆方言**：jianpu-db（语料站）的曲谱文件只是 jianpu-ly 的**一种方言** ——
 //   它多出 `%<文件名>`、`status=`、`source=`、`%--`、`subtitle=`、以及**收尾的 `%END`**。
@@ -58,9 +58,13 @@ const pitchOf = (n: JNote): string => alterOf(n.jpAlter) + n.number + octaveMark
 /** 时值字母 + 音高 + 附点（README 的写法：`s1.`）。 */
 const noteOf = (n: JNote, letter: string, dots: string): string => letter + pitchOf(n) + dots;
 
+/** 一个和弦会不会被写成 `0`（休止）。**歌词位置也算它**——两处口径必须同一份，
+ *  不然"算不算一个音"在谱面和歌词上会各说各话。 */
+const isRestToken = (c: JChord): boolean => c.rest || c.notes.length === 0;
+
 /** 休止或和弦。和弦按 README 的 `,135'` 写法：`,` 起头。 */
 function chordBody(c: JChord, letter: string, dots: string): string {
-  if (c.rest || c.notes.length === 0) return letter + "0" + dots;
+  if (isRestToken(c)) return letter + "0" + dots;
   if (c.notes.length === 1) return noteOf(c.notes[0]!, letter, dots);
   const inner = c.notes.map((n) => alterOf(n.jpAlter) + n.number + octaveMarks(n.jpOctave)).join("");
   return "," + inner + dots;
@@ -80,16 +84,19 @@ function ornamentsBefore(c: JChord): string {
     //    真 jianpu-ly 直接报 `Unrecognised command g[#4`。这条是拿真工具跑出来的，不是猜的。
     out += "g[" + c.graceNotes.map((g) => alterOf(g.jpAlter) + g.number + octaveMarks(g.jpOctave)).join("") + "] ";
   }
-  if (c.slurStart) out += "( ";
   return out;
 }
 
 /** 跳转记号用 jianpu-ly 的**裸词**（`Fine`/`DC`/`Segno`/`ToCoda`/`DS`），其余当谱上文字。 */
 const BARE_DIRECTION = /^(Fine|D\.?C\.?|Segno|ToCoda|D\.?S\.?)$/i;
 
-function ornamentsAfter(c: JChord): string {
-  let out = "";
-  for (let i = 0; i < (c.slurEnds || 0); i++) out += " )";
+function ornamentsAfter(c: JChord, plan: JlyPlan): string {
+  // 圆滑线**一律后置**（贴在起音的数字后面），不能写在它前面：实测 `1 ( 2 3 ) 4` 里 LilyPond 把 `(` 算在
+  // **前一个音**头上（弧从那儿起，弧内的音到 `)` 那个音为止都不吃音节）。写成前置的话，弧会往前挪一个音
+  // ——把本该吃音节的起音也吞掉，后面每个音节都错位一格（随机谱面测出来的）。
+  // 先收（内层先收）、再开；同一个音既收又开时就是这个顺序。
+  let out = plan.slurClose.get(c) ?? "";
+  out += plan.slurOpen.get(c) ?? "";
   if (c.notes.some((n) => n.tupletEnd)) out += " ]";
   if (c.fermata) out += " \\fermata";
   for (const d of c.directions) {
@@ -120,37 +127,162 @@ function headerLines(score: JScore, first: JMeasure | null): string[] {
   return out;
 }
 
-/** 逐段收集歌词。引擎输入的 `JLyric` **不带 `syllabic`**（那个字段只在模型层），所以拉丁歌词
- *  只能按空格分音节写；`L:` 的连字符（jianpu-ly 的 `syl- la- bles`）留待后续，先报出来。 */
-function lyricLines(measures: readonly JMeasure[], warnings: Set<string>): string[] {
-  const verses = new Map<number, { latin: string[]; han: string[] }>();
-  const order: number[] = [];
-  for (const m of measures) {
-    for (const e of m.entries) {
-      if (e.kind !== "chord") continue;
-      const seen = new Set<number>();          // 一个和弦里只取一次（歌词挂在首音上）
-      for (const n of (e as JChord).notes) {
-        for (const ly of n.lyrics) {
-          if (!ly.text || seen.has(ly.number)) continue;
-          seen.add(ly.number);
-          if (!verses.has(ly.number)) { verses.set(ly.number, { latin: [], han: [] }); order.push(ly.number); }
-          const han = isHan(ly.text);
-          if (!han) warnings.add("拉丁歌词的连字符（`syl- la- bles`）尚未导出，按空格分音节写出");
-          (han ? verses.get(ly.number)!.han : verses.get(ly.number)!.latin).push(ly.text);
-        }
-      }
-    }
-  }
-  const out: string[] = [];
-  for (const v of order) {
-    const slot = verses.get(v)!;
-    if (slot.latin.length) out.push("L: " + slot.latin.join(" "));
-    if (slot.han.length) out.push("H: " + slot.han.join(""));
+const isHan = (text: string): boolean => /[\u3400-\u9fff\uf900-\ufaff]/.test(text);
+
+// ───────────────── 歌词位置 / 圆滑线：全是实测口径，别照直觉改 ─────────────────
+//
+// 上游**没有**"歌词格"这种语法：`L:` / `H:` 行的音节**按顺序**落到 `\lyricsto` 那个声部的音上，
+// 第 k 个音节落在第几个音，全看中间有几个音"吃"掉了音节。所以对得齐不对得齐，只取决于下面四条。
+// （四条都是拿**真 jianpu-ly + 真 LilyPond** 跑出来、再从产出 SVG 的坐标里读回来的，不是照 README 推的。）
+//
+// ① 一个音 = 一个位置。休止（`0`，带梁的 `q0` 一样）、倚音 `g[12]` 是**跳过**；增时线 `-`、
+//    附点、连音 `3[ ]`、和弦 `,135'` 本来就是一个音，不额外占位。
+// ② 某一段在这个音上没词，**必须写占位**，否则它后面每个音节都左移一格。
+//    实测：`1 2 3 4` 上"缺一格"（`do * mi fa`）时，7 个音节里有 6 个落错音。
+//    占位写 **`""`**——那是上游自己的写法（`jianpu-ly.py` 的 MusicXML 导入端就写 `s if s else '""'`）。
+//    孤立的 `_` 也能占位，但它在**汉字**行里是"连写"标记（`一_三` = 一个字两个汉字，仍只占一格），
+//    两种行统一用 `""` 才不会串位。
+// ③ 同一段在同一个音上挂了多个字：拉丁用 `_` 连写（上游的 elision 口径 `a_b`）、汉字也用 `_`
+//    （上游 hanzi 口径 `一_三`），都仍只占一格。
+// ④ 圆滑线 `( )` **不能无条件写**：jianpu-ly 把它译成 LilyPond 的圆滑线，而 LilyPond 的
+//    `melismaBusyProperties` 默认含 `slurMelismaBusy`——弧线里的音会被当成"一字多音"而**不吃音节**。
+//    实测 `1 ( 2 ) 3 4` 配 `L: A B C D`：A→1、B→3、C→4（B 跳过 2）。所以只有**真的一字多音**
+//    （每一段在这组弧线里至多一个音节、且落在组首）才写 `(`；其余写 LilyPond 的乐句线 `\(` `\)`：
+//    照样画一条弧线（SVG 里 path 数 2→3），却不吞音节（四段歌词四四对应，实测）。
+
+/** 一段歌词在这个音上没词时的占位：LilyPond 的空字符串音节（上游自己也写它，见上）。 */
+const LYRIC_HOLD = '""';
+
+/** 拉丁音节：**一律加引号**。
+ *
+ *  不加引号的字会被 LilyPond 的歌词解析当成音乐记号：`4`、`s0`、`r` 这种"看着像时值"的字会被读成
+ *  跳过记号 —— 实测（随机谱面）整份 LilyPond 直接报 `not a duration`，一个音都排不出来。
+ *  加了引号就是 LilyPond 的**字符串音节**，原样印出（空串 `""` 就是我们用的占位）。 */
+const latinQuote = (text: string): string =>
+  '"' + text.replace(/\\/g, "\\\\").replace(/"/g, '\\"') + '"';
+
+const HAN = /[\u3400-\u9fff\uf900-\ufaff]/;
+const OPEN_QUOTE = /[\u2018\u201c\u300a]/;
+
+/** 汉字行里一个音节的写法。上游会把**相邻的两个汉字**自动拆成两个音节（`汉字歌词：有无空格都可`），
+ *  所以要把多字压在一个音上就得写 `_` 连写（实测 `H: 一_三` 就是一个音节；汉字后紧跟左引号同理）。 */
+function hanziGlue(text: string): string {
+  let out = "";
+  for (const c of text) {
+    const prev = out.slice(-1);
+    if (prev && HAN.test(prev) && (HAN.test(c) || OPEN_QUOTE.test(c))) out += "_";
+    out += c;
   }
   return out;
 }
 
-const isHan = (text: string): boolean => /[\u3400-\u9fff\uf900-\ufaff]/.test(text);
+interface JlyPlan {
+  /** 圆滑线：组首挂开括号、组尾挂闭括号（同一个音上收多条时内层在前） */
+  slurOpen: Map<JChord, string>;
+  slurClose: Map<JChord, string>;
+  /** 歌词位置：**发音**的和弦；一字多音的圆滑线整组算一个位置 */
+  slots: JChord[];
+  /** 段号（按首次出现的顺序） */
+  verses: number[];
+  /** 和弦 → 段号 → 该段在这个音上的字（可能多个，用 `_` 连写） */
+  at: Map<JChord, Map<number, string[]>>;
+}
+
+function planJly(measures: readonly JMeasure[], warnings: Set<string>): JlyPlan {
+  const order: JChord[] = [];
+  const index = new Map<JChord, number>();
+  for (const m of measures) for (const e of m.entries) {
+    if (e.kind !== "chord") continue;
+    const c = e as JChord;
+    index.set(c, order.length);
+    order.push(c);
+  }
+
+  // 逐段的字。**不能**用 `seen` 丢掉同段的第二个字：那正是"一个音上两个汉字"（`一_三`）。
+  const at = new Map<JChord, Map<number, string[]>>();
+  const verses: number[] = [];
+  for (const c of order) {
+    for (const n of c.notes) for (const ly of n.lyrics) {
+      if (!ly.text) continue;
+      if (isRestToken(c)) { warnings.add("有歌词挂在休止符上：jianpu-ly 那边休止不占歌词位，这个字已略过"); continue; }
+      let per = at.get(c);
+      if (!per) { per = new Map(); at.set(c, per); }
+      const list = per.get(ly.number) ?? [];
+      if (!list.includes(ly.text)) list.push(ly.text);      // 同一个字重复挂（多声部投影）只算一次
+      per.set(ly.number, list);
+      if (!verses.includes(ly.number)) verses.push(ly.number);
+    }
+  }
+  const has = (c: JChord, v: number): boolean => (at.get(c)?.get(v)?.length ?? 0) > 0;
+
+  // 圆滑线分组：引擎输入已经把配对算好（`slurStart` + `slurEndChord`），这里不用自己搭栈。
+  const groups: { start: number; end: number; melisma: boolean }[] = [];
+  order.forEach((c, i) => {
+    if (!c.slurStart) return;
+    const j = c.slurEndChord ? index.get(c.slurEndChord) : undefined;
+    // 配不上对的弧线**不写**：写了 LilyPond 会拿到一个没有收尾的 `(`。
+    if (j === undefined || j < i) { warnings.add("有配不上对的圆滑线（少了收尾），已略过"); return; }
+    // 一字多音：每一段在这组里至多一个音节，且落在组首——才敢用会吞音节的 `(`。
+    const melisma = verses.every((v) => {
+      const hits = order.slice(i, j + 1).filter((x) => has(x, v));
+      return hits.length <= 1 && (hits.length === 0 || hits[0] === c);
+    });
+    groups.push({ start: i, end: j, melisma });
+  });
+  const slurOpen = new Map<JChord, string>();
+  const slurClose = new Map<JChord, string>();
+  const closing = new Map<number, { start: number; melisma: boolean }[]>();
+  for (const g of groups) {
+    slurOpen.set(order[g.start]!, g.melisma ? " (" : " \\(");
+    const list = closing.get(g.end) ?? [];
+    list.push(g);
+    closing.set(g.end, list);
+  }
+  for (const [end, list] of closing) {
+    list.sort((a, b) => b.start - a.start);                 // 内层（后开）先收
+    slurClose.set(order[end]!, list.map((g) => (g.melisma ? " )" : " \\)")).join(""));
+  }
+
+  const swallowed = new Set<JChord>();                     // 一字多音的弧线里，组首以外的音不吃音节
+  for (const g of groups) if (g.melisma) for (let i = g.start + 1; i <= g.end; i++) swallowed.add(order[i]!);
+  const slots = order.filter((c) => !isRestToken(c) && !swallowed.has(c));
+  return { slurOpen, slurClose, slots, verses, at };
+}
+
+/** 逐段收集歌词。位置对不齐就全错（见上面的四条口径），所以这里只做"逐位置填字或填占位"。 */
+function lyricLines(plan: JlyPlan, warnings: Set<string>): string[] {
+  const out: string[] = [];
+  const numbered = plan.verses.length > 1;                 // 多段才印段号（上游多段时写 `2. `）
+  for (const v of plan.verses) {
+    const latin: string[] = [];
+    const han: string[] = [];
+    let lastLatin = -1;
+    let lastHan = -1;
+    plan.slots.forEach((c, i) => {
+      const texts = plan.at.get(c)?.get(v) ?? [];
+      const l = texts.filter((t) => !isHan(t));
+      const h = texts.filter((t) => isHan(t));
+      if (l.length && h.length) {
+        warnings.add("同一段歌词里拉丁与汉字混排：已拆成 `L:` 与 `H:` 两行（上游没有混排写法）");
+      }
+      // 同一个音上同一段有多个字：拉丁并成一个引号音节（`"a b"`），汉字用 `_` 连写（`一_三`）。
+      latin.push(l.length ? latinQuote(l.join(" ")) : LYRIC_HOLD);
+      han.push(h.length ? h.map(hanziGlue).join("_") : LYRIC_HOLD);
+      if (l.length) lastLatin = i;
+      if (h.length) lastHan = i;
+    });
+    const label = numbered ? v + ". " : "";
+    // 尾巴上的空位不用写（上游导出时也会把尾部的空音节剪掉）。
+    if (lastLatin >= 0) out.push("L: " + label + latin.slice(0, lastLatin + 1).join(" "));
+    if (lastHan >= 0) out.push("H: " + label + han.slice(0, lastHan + 1).join(" "));
+  }
+  // 引擎输入的 `JLyric` **不带 `syllabic`**（那个字段只在模型层），所以拉丁歌词只能按空格分音节写；
+  // `L:` 的连字符（上游的 `syl- la- bles`）这一版表达不出来，报出来别静默丢。
+  if (out.some((l) => l.startsWith("L:"))) {
+    warnings.add("拉丁歌词的连字符（`syl- la- bles`）尚未导出，按空格分音节写出");
+  }
+  return out;
+}
 
 // ───────────────────────── 主流程 ─────────────────────────
 
@@ -158,6 +290,8 @@ const isHan = (text: string): boolean => /[\u3400-\u9fff\uf900-\ufaff]/.test(tex
 export function emitJlyOfScore(score: JScore, warnings: Set<string> = new Set()): string {
   const measures = score.parts[0]?.measures ?? [];
   const lines: string[] = headerLines(score, measures[0] ?? null);
+  // 歌词位置与圆滑线写法要**先算**：音乐行里写 `(` 还是 `\(` 由它定，歌词行也按它填占位。
+  const plan = planJly(measures, warnings);
 
   // 行的累加器是**函数级**的：一行可以跨多个小节（源谱一行四小节是常事），
   // 只有遇到源谱的换行（`JBreak`）才收一行。第一版把它放在小节循环里，
@@ -183,7 +317,7 @@ export function emitJlyOfScore(score: JScore, warnings: Set<string> = new Set())
         if (c.harmony) warnings.add("和弦符号（`chords=` 行）尚未导出");
         if (c.articulations.length) warnings.add("演奏法记号尚未导出：" + c.articulations.join(" "));
         const dots = ".".repeat(c.dot || 0);
-        tokens.push(ornamentsBefore(c) + chordBody(c, BEAM_LETTER[c.beams] ?? "", dots) + sustainOf(c) + ornamentsAfter(c));
+        tokens.push(ornamentsBefore(c) + chordBody(c, BEAM_LETTER[c.beams] ?? "", dots) + sustainOf(c) + ornamentsAfter(c, plan));
         if (c.notes.some((n) => n.tieStart)) tokens.push("~");       // 延音线写在两音之间
       } else if (e.kind === "break") {
         flush();                                                     // 源谱的换行就是 jianpu-ly 的行
@@ -195,7 +329,7 @@ export function emitJlyOfScore(score: JScore, warnings: Set<string> = new Set())
   }
   flush();                                                           // 收尾那一行
 
-  const lyrics = lyricLines(measures, warnings);
+  const lyrics = lyricLines(plan, warnings);
   if (lyrics.length) lines.push(...lyrics);
   // 装不下的东西**写进文件本身**当注释（上游 README：「忽略：`% 注释`」）：提示随文件走，
   // 既不静默丢，也不用为它新开一条界面提示通道。空集合时一行都不加。

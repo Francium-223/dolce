@@ -27,6 +27,8 @@
 import type { JChord, JMeasure, JNote, JScore } from "../layout/input";
 import type { ScoreDoc } from "./doc";
 import { jianpuInputOfDoc, jianpuInputOfJpw } from "./jianpuinput";
+import { DYNAMICS } from "../pu/glyph";
+import { GlyphCodes } from "../smufl/smufl";
 
 /** 导出结果：文本 + 装不下的东西（调用方拿去提示）。 */
 export interface JlyExport {
@@ -90,10 +92,19 @@ function ornamentsBefore(c: JChord): string {
   return out;
 }
 
-/** 跳转记号用 jianpu-ly 的**裸词**（`Fine`/`DC`/`Segno`/`ToCoda`/`DS`），其余当谱上文字。 */
-const BARE_DIRECTION = /^(Fine|D\.?C\.?|Segno|ToCoda|D\.?S\.?)$/i;
+/** 跳转记号用 jianpu-ly 的**裸词**（`Fine`/`DC`/`Segno`/`ToCoda`/`DS`），其余当谱上文字。
+ *  ⚠ 读的时候带点的 `D.C.` / `D.S.` 也认（模型里、123 里都是带点的），**写出去必须去掉点**：
+ *  实测 `D.C.` 会被上游拒掉（`Unrecognised command D.C. in score 1`），`DC` / `DS` 才对。 */
+export const BARE_DIRECTION = /^(Fine|D\.?C\.?|Segno|ToCoda|D\.?S\.?)$/i;
+const JUMP_OUT: Readonly<Record<string, string>> = {
+  fine: "Fine", dc: "DC", "d.c.": "DC", ds: "DS", "d.s.": "DS", segno: "Segno", tocoda: "ToCoda",
+};
 
-function ornamentsAfter(c: JChord, plan: JlyPlan): string {
+/** 力度字形串 → 名字（`pu/glyph.ts::DYNAMICS` 的反查）：把字形写回 jianpu-ly 的 `\mf`。
+ *  不反查就会把私有区字形当成文字写成 `^"<PUA>"` —— 实测过，印出来是一团乱码。 */
+const DYNAMIC_NAME: ReadonlyMap<string, string> = new Map(Object.entries(DYNAMICS).map(([k, v]) => [v, k]));
+
+function ornamentsAfter(c: JChord, plan: JlyPlan, warnings: Set<string>): string {
   // 圆滑线**一律后置**（贴在起音的数字后面），不能写在它前面：实测 `1 ( 2 3 ) 4` 里 LilyPond 把 `(` 算在
   // **前一个音**头上（弧从那儿起，弧内的音到 `)` 那个音为止都不吃音节）。写成前置的话，弧会往前挪一个音
   // ——把本该吃音节的起音也吞掉，后面每个音节都错位一格（随机谱面测出来的）。
@@ -102,10 +113,35 @@ function ornamentsAfter(c: JChord, plan: JlyPlan): string {
   out += plan.slurOpen.get(c) ?? "";
   if (c.notes.some((n) => n.tupletEnd)) out += " ]";
   if (c.fermata) out += " \\fermata";
+  // 谱上文字（123 的 `"^渐慢"` 在模型里是 `Chord.sectionWord`）→ 上游的 `^"…"`
+  const said = new Set<string>();
+  if (c.sectionWord && c.sectionWord.trim()) {
+    said.add(c.sectionWord.trim());
+    out += ' ^"' + c.sectionWord.trim().replace(/"/g, "'") + '"';
+  }
+  // 演奏法：其中"看着像力度名"的（`mf` `pp` …）在 123 里就是这么存的，写成 jianpu-ly 的 `\mf`；其余报出来
+  const arts: string[] = [];
+  for (const a of c.articulations) {
+    const name = a.trim();
+    if (!name) continue;
+    if (name in DYNAMICS) { out += " \\" + name; continue; }
+    arts.push(name);
+  }
+  if (arts.length) warnings.add("演奏法记号尚未导出：" + arts.join(" "));
   for (const d of c.directions) {
     const text = d.text.trim();
     if (!text) continue;
-    out += BARE_DIRECTION.test(text) ? " " + text : ' ^"' + text.replace(/"/g, "'") + '"';
+    if (said.has(text)) continue;                       // 同一个字别写两遍（sectionWord 与 direction 可能是同一件事）
+    // 字形记号（力度、segno/coda）走 jianpu-ly 的指令或裸词；写成 `^"…"` 会把私有区字形印成乱码。
+    if (d.music) {
+      const name = DYNAMIC_NAME.get(text);
+      if (name) { out += " \\" + name; continue; }
+      if (text === GlyphCodes.segno) { out += " Segno"; continue; }
+      if (text === GlyphCodes.coda) { out += " ToCoda"; continue; }
+      warnings.add("有一种字形记号写不出（既不是力度，也不是 segno / coda）");
+      continue;
+    }
+    out += BARE_DIRECTION.test(text) ? " " + (JUMP_OUT[text.toLowerCase()] ?? text) : ' ^"' + text.replace(/"/g, "'") + '"';
   }
   return out;
 }
@@ -323,9 +359,8 @@ export function emitJlyOfScore(score: JScore, warnings: Set<string> = new Set())
         const c = e as JChord;
         if (c.beams >= BEAM_LETTER.length) warnings.add("有超过 4 条减时线（64 分）的时值，已按 64 分写出");
         if (c.harmony) warnings.add("和弦符号（`chords=` 行）尚未导出");
-        if (c.articulations.length) warnings.add("演奏法记号尚未导出：" + c.articulations.join(" "));
-        const dots = ".".repeat(c.dot || 0);
-        tokens.push(ornamentsBefore(c) + chordBody(c, BEAM_LETTER[c.beams] ?? "", dots) + sustainOf(c) + ornamentsAfter(c, plan));
+       const dots = ".".repeat(c.dot || 0);
+        tokens.push(ornamentsBefore(c) + chordBody(c, BEAM_LETTER[c.beams] ?? "", dots) + sustainOf(c) + ornamentsAfter(c, plan, warnings));
         if (c.notes.some((n) => n.tieStart)) tokens.push("~");       // 延音线写在两音之间
       } else if (e.kind === "break") {
         flush();                                                     // 源谱的换行就是 jianpu-ly 的行

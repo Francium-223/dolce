@@ -28,6 +28,10 @@
 | `~` | `Note.tie = { start, stop }`（前一个音 `start`、这个音 `stop`） |
 | `n[ … ]` | `Chord.duration.timeMod = { actual: n, normal }` |
 | `L:` / `H:` | `Chord.lyrics = [{ number, text, syllabic? }]`；`""` 与 `_`/`\skip` 是**空位**（不产生 `Lyric`）；`一_三` 合成一个字 "一三" |
+| `\mf`（力度） | `Chord.notations.articulations` 里的一项 —— 与 123 的 `!mf!` **同一个落点** |
+| `^"文字"` | `Chord.sectionWord` —— 与 123 的 `"^渐慢"` 同一个落点 |
+| `\fermata` | `Chord.notations.fermata` |
+| `Fine` `DC` `DS` `Segno` `ToCoda` | `Barline.ornaments` 上的短名（`fine`/`dc`/`ds`/`hs`/`ty`）—— 与 123 的 `!fine!` 同一个落点 |
 | 页头 / `1=X` / `4/4` / `4=85` | `Song.work` / `Song.key` / `Song.time` / `Song.tempos` |
 | `NextScore` / `NextPart` | 新的 `Song` / 新的 `Part` |
 
@@ -51,8 +55,9 @@
 
 ## 已知缺口
 
-- 词法**认得出但不当记号读**的写法见格式页「本版不收」；写不出的（和弦符号、演奏法、多声部、
+- 词法**认得出但不当记号读**的写法见格式页「本版不收」；写不出的（和弦符号、多声部、
   多乐章、拉丁连字符）以 `%` 注释写进导出文件。
+- 跳转裸词按**小节线**收（`Barline.ornaments`），写在小节中间的裸词位置会挪到小节线。
 - 可视化编辑方言没给 `measure` / `chordText`：谱面上不能插删小节、不能改和弦名。
 - 「按乐句重排」用的是**出厂值**（每 4 小节一行），还没接排版尺子（`FitMeasure`）。
 - `Lyric.syllabic` 只在读入方向有（写出端拿不到引擎输入里的 `syllabic`），所以拉丁连字符只报不写。

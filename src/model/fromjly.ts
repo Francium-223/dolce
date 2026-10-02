@@ -31,6 +31,8 @@ import {
   type SourceSpan,
 } from "./doc";
 import { emptyDoc, emptySong, IdGen } from "./helpers";
+import { BARE_DIRECTION } from "./tojly";
+import { DYNAMICS } from "../pu/glyph";
 
 // ───────────────────────── 词法 ─────────────────────────
 
@@ -54,7 +56,10 @@ export type JlyToken =
   | { kind: "tie" }
   | { kind: "slur-open"; melisma: boolean } | { kind: "slur-close"; melisma: boolean }
   | { kind: "tuplet-open"; n: number } | { kind: "tuplet-close" }
-  | { kind: "text" }
+  | { kind: "text"; above: boolean; value: string }
+  | { kind: "jump"; text: string }
+  | { kind: "dynamic"; name: string }
+  | { kind: "fermata" }
   | { kind: "header"; key: string; value: string }
   | { kind: "loss"; what: string };
 
@@ -62,6 +67,22 @@ export type JlyToken =
 export interface JlyPos { col: number; len: number }
 
 const LETTER_BEAMS: Readonly<Record<string, number>> = { q: 1, s: 2, d: 3, h: 4 };
+
+/** 力度指令：从 `pu/glyph.ts::DYNAMICS` 的名字表长出来（别另抄一份名字，两处会漂）。 */
+const DYNAMIC_COMMAND = new RegExp("^\\\\(?:" + Object.keys(DYNAMICS).join("|") + ")$");
+
+/** 跳转记号写成规范形（`dc` → `D.C.`、`ds` → `D.S.`）：写出端的 `BARE_DIRECTION` 认这几个词。 */
+const JUMP_CANON: Readonly<Record<string, string>> = {
+  fine: "Fine", dc: "D.C.", "d.c.": "D.C.", ds: "D.S.", "d.s.": "D.S.",
+  segno: "Segno", tocoda: "ToCoda",
+};
+const canonicalJump = (word: string): string => JUMP_CANON[word.toLowerCase()] ?? word;
+
+/** 规范词 → 123/文本谱那套短名（`abcfamily/jumpmarks.ts::BARLINE_ORNAMENT_NAME` 的反向）。
+ *  跳转记号在模型里是 `Barline.ornaments` 上的短名，与 123 的 `!fine!` 同一个落点。 */
+const JUMP_SHORT: Readonly<Record<string, string>> = {
+  Fine: "fine", "D.C.": "dc", "D.S.": "ds", Segno: "hs", ToCoda: "ty",
+};
 const ACC: Readonly<Record<string, string>> = {
   "#": "sharp", b: "flat", n: "natural", "##": "double-sharp", bb: "double-flat",
 };
@@ -93,7 +114,6 @@ const NOT_YET: readonly (readonly [RegExp, string])[] = [
   [/^x$/, "打击乐 `x`（与 dolce 的不可见休止语义不同）"],
   [/^(R\d*\{|\}|A\{)/, "反复跳跃 / 小节反复（`R{ } A{ }`）"],
   [/^R\*\d+$/, "多小节休止（`R*8`）"],
-  [/^(Fine|Segno|ToCoda|DC|DS|D\.C\.|D\.S\.)$/i, "跳转记号"],
   [/^(LP:|:LP|LPH:|:LPH)$/, "原样 LilyPond 代码块（`LP: … :LP`）"],
   [/^(KeepLength|ChordsRoman|NoBarNums|NoIndent|OnePage|RaggedLast|SeparateTimesig|angka|WithStaff|PartMidi|RepeatAccidentals|NormalAccidentals)$/, "布局 / 结构开关"],
   [/^(chords|frets|instrument)=/, "和弦符号 / 指板图 / 乐器"],
@@ -122,7 +142,12 @@ export function scanWord(word: string, loss: JlyLosses, span?: SourceSpan): JlyT
   if (word === "]") return { kind: "tuplet-close" };
   if (/^\|+$/.test(word)) return { kind: "bar" };
   if (/^\d+\[$/.test(word)) return { kind: "tuplet-open", n: Number(word.slice(0, -1)) };
-  if (/^[\^_]".*"$/.test(word)) return { kind: "text" };
+  if (/^[\^_]".*"$/.test(word)) return { kind: "text", above: word[0] === "^", value: word.slice(2, -1) };
+  // 跳转记号与力度：上游写成**裸词**（`Fine` `DC` `Segno` `ToCoda` `DS`）或 LilyPond 指令（`\mf`）。
+  // 不认它们就只剩"报出来"，而写出端是会写这两种的 —— 读写两头对不上，往返就丢。
+  if (BARE_DIRECTION.test(word)) return { kind: "jump", text: canonicalJump(word) };
+  if (DYNAMIC_COMMAND.test(word)) return { kind: "dynamic", name: word.slice(1) };
+  if (word === "\\fermata") return { kind: "fermata" };
   for (const [re, what] of NOT_YET) {
     if (re.test(word)) { loss.add(what, word, span); return { kind: "loss", what }; }
   }
@@ -469,8 +494,50 @@ export function parseJly(text: string): JlyParse {
     const spanAt = (i: number): SourceSpan => spanOf(pos[i]?.col ?? 0, pos[i]?.len ?? 0);
     for (let i = 0; i < tokens.length; i++) {
       const tk = tokens[i]!;
+      /** 记号落在"前一个音"上（上游的 `\mf` / `\fermata` 都是"适用于之前的音符"）。 */
+      const lastChord = (): Chord | null => {
+        const here = cur?.elements[cur.elements.length - 1];
+        if (here && here.kind === "chord") return here;
+        const prev = part.measures[part.measures.length - 1];
+        const last = prev?.elements[prev.elements.length - 1];
+        return last && last.kind === "chord" ? last : null;
+      };
+      /** 跳转记号在 123 里是**小节线上的记号**（`Barline.ornaments`，短名 `hs`/`ty`/`ds`/`dc`/`fine`）。
+       *  照它的口径存，渲染、跨格式与写出端才都对得上（实测：`!fine!` 导出成裸词 `Fine` 走的就是这条链）。 */
+      const addJump = (short: string): void => {
+        const host = cur ?? part.measures[part.measures.length - 1];
+        if (!host) { loss.add("跳转记号（还没有小节）", short, spanAt(i)); return; }
+        const lines = host.barlines ?? (host.barlines = []);
+        const right = lines.find((b) => b.location === "right");
+        if (right) right.ornaments = [...(right.ornaments ?? []), { name: short, level: 0 }];
+        else lines.push({ location: "right", source: spanAt(i), ornaments: [{ name: short, level: 0 }] });
+      };
       switch (tk.kind) {
-        case "loss": case "header": case "text": break;
+        case "loss": case "header": break;
+        case "text": {
+          // 与 123 同一个落点：`"^渐慢"` 在那边存成 `Chord.sectionWord`（谱上文字）
+          const host = lastChord();
+          if (host) host.sectionWord = host.sectionWord ? host.sectionWord + " " + tk.value : tk.value;
+          else loss.add("谱上文字（前面没有音）", tk.value, spanAt(i));
+          break;
+        }
+        case "dynamic": {
+          // 与 123 同一个落点：`!mf!` 在那边存成 `Chord.notations.articulations` 里的一项
+          const host = lastChord();
+          if (host) {
+            const not = { ...(host.notations ?? {}) };
+            not.articulations = [...(not.articulations ?? []), tk.name];
+            host.notations = not;
+          } else loss.add("力度记号（前面没有音）", tk.name, spanAt(i));
+          break;
+        }
+        case "fermata": {
+          const host = lastChord();
+          if (host) host.notations = { ...(host.notations ?? {}), fermata: true };
+          else loss.add("延长记号 `\\fermata`（前面没有音）", "\\fermata", spanAt(i));
+          break;
+        }
+        case "jump": addJump(JUMP_SHORT[tk.text] ?? "fine"); break;
         case "bar": {
           // ⚠ 小节线要**记进模型**，不能只把当前小节收掉就算了：投影成排版输入时，
           //   小节结构（以及曲行怎么断）全是从 `Measure.barlines` 长出来的。原来这里只写 `cur = null`，

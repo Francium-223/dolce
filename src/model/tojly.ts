@@ -420,6 +420,8 @@ export function emitJlyOfScore(score: JScore, warnings: Set<string> = new Set())
   // 文件里的行排版的，整首挤成一行时音符和歌词会叠成一团（用户截图上就是那样：34 个音挤在 850px 里，
   // 歌词连成一串）。4 小节一行是简谱的常规版面，源谱"一行四小节"也正是这个数。
   let sinceBreak = 0;
+  /** 已经到小节末的换行/换页：等小节线写完再落地（见下面 `case "break"`） */
+  let pendingBreakWord: string | null = null;
   const marks = endingMarks(measures, warnings);
   for (let mIdx = 0; mIdx < measures.length; mIdx++) {
     const m = measures[mIdx]!;
@@ -442,15 +444,23 @@ export function emitJlyOfScore(score: JScore, warnings: Set<string> = new Set())
         tokens.push(ornamentsBefore(c) + chordBody(c, BEAM_LETTER[c.beams] ?? "", dots) + sustainOf(c) + ornamentsAfter(c, plan, warnings));
         if (c.notes.some((n) => n.tieStart)) tokens.push("~");       // 延音线写在两音之间
       } else if (e.kind === "break") {
-        flush();                                                     // 源谱的换行就是 jianpu-ly 的行
-        sinceBreak = 0;
-        if ((e as { newPage?: boolean }).newPage) lines.push("\\pageBreak");
+        // ⚠ 模型里的换行（`JBreak`）**都是显式的**（123 的 `$`/`$$`、MusicXML 的 `<print new-system>`、
+        //   `.jly` 的 `\break`），所以除了收一行，还得把指令写出去 —— 只收一行的话上游根本不看行，
+        //   "换系统"这个语义就丢了（实测：`\break` 的效果是真换行）。我们自己的 4 小节折行不走这里。
+        // 写的位置要能**原样读回来**，不然来回一趟表示法就变了（实测：第二次导出把 `\break` 丢了）：
+        //   · 这一小节后面还有音（小节中间的换行）→ 就地写；
+        //   · 已经到小节末 → 等小节线写完再写（读回来是"下一小节起新系统"，与写出去的位置一一对应）。
+        const brk = (e as { newPage?: boolean }).newPage ? "\\pageBreak" : "\\break";
+        const atEnd = !m.entries.slice(m.entries.indexOf(e) + 1).some((x) => x.kind === "chord");
+        if (atEnd) pendingBreakWord = brk;
+        else { tokens.push(brk); flush(); sinceBreak = 0; }
       }
     }
     if (m.endingNum && m.endingNum.size) {
       if (m.endingNum && [...m.endingNum].some((n) => n > 2)) warnings.add("反复跳跃有第 3 房及以后：上游只能表达两房（`R{ } A{ }`）");
     }
     tokens.push(m.repeatBackward && !marks.after.has(mIdx) ? '\\bar ":|."' : "|");
+    if (pendingBreakWord) { tokens.push(pendingBreakWord); flush(); sinceBreak = 0; pendingBreakWord = null; }
     if (marks.after.has(mIdx)) tokens.push(marks.after.get(mIdx)!);
     if (++sinceBreak >= MEASURES_PER_LINE) { flush(); sinceBreak = 0; }
   }

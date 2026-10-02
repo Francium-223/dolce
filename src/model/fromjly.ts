@@ -64,6 +64,8 @@ export type JlyToken =
   | { kind: "grace"; notes: JlyGraceNote[] }
   | { kind: "repeat-open" } | { kind: "alt-open" } | { kind: "repeat-close" }
   | { kind: "multirest"; n: number }
+  | { kind: "break"; page: boolean }
+  | { kind: "barstyle"; style: string }
   | { kind: "header"; key: string; value: string }
   | { kind: "loss"; what: string };
 
@@ -187,6 +189,10 @@ export function scanWord(word: string, loss: JlyLosses, span?: SourceSpan): JlyT
   if (BARE_DIRECTION.test(word)) return { kind: "jump", text: canonicalJump(word) };
   if (DYNAMIC_COMMAND.test(word)) return { kind: "dynamic", name: word.slice(1) };
   if (word === "\\fermata") return { kind: "fermata" };
+  // 换行/换页：LilyPond 指令原样透传，但**语义是实的**（上游会照着换系统/换页），所以要读进模型。
+  //  实测：`\break` 让 32 个音挤一行的谱变成两行（25 + 8 两带）；`\pageBreak` 让 1 页变 3 页。
+  if (word === "\\break") return { kind: "break", page: false };
+  if (word === "\\pageBreak") return { kind: "break", page: true };
   // 反复跳跃：`R{ 第一遍 } A{ 第二遍 }`（上游自己的 MusicXML 导入端就是这么做出来的：
   //   `<repeat forward>` → `R{`、`<repeat backward>` → `}`、`<ending start>` → `A{`）。
   if (/^R\*\d+$/.test(word)) return { kind: "multirest", n: Number(word.slice(2)) };   // 多小节休止：R*8 = 8 个小节
@@ -320,6 +326,17 @@ export function rewrapJlyText(text: string, measuresPerLine = 4): string {
   let m: RegExpExecArray | null;
   while ((m = re.exec(body)) !== null) {
     const word = m[0];
+    // `\bar "…"` 是**两个词**（指令 + 引号里的参数），要成对读：上游/我们自己写出的反复线都是这个形态。
+    if (word === "\\bar") {
+      const nxt = /\S+/.exec(body.slice(m.index + word.length));
+      const arg = nxt ? /^"([^"]*)"$/.exec(nxt[0]) : null;
+      if (arg) {
+        tokens.push({ kind: "barstyle", style: arg[1]! });
+        pos.push({ col: m.index, len: word.length + nxt![0].length });
+        re.lastIndex = m.index + word.length + nxt!.index + nxt![0].length;
+        continue;
+      }
+    }
     const t = scanWord(word, loss, spanAt?.(m.index, word.length));
     if (t) { tokens.push(t); pos.push({ col: m.index, len: word.length }); } else unknown.push(word);
   }
@@ -423,6 +440,8 @@ export function parseJly(text: string): JlyParse {
   let pendingTie = false;
   /** 没写段号的歌词行按出现顺序编号（跨 `L:`/`H:` 共用，上游也只是一条条往下叠）。 */
   let autoVerse = 0;
+  /** 小节线之后出现的换行/换页：挂到**下一小节**的 `print` 上（开下一小节时才用，见 `openMeasure`）。 */
+  let pendingBreak: "system" | "page" | null = null;
   /** `chords=` 行里的和弦符号（按乐章分开，装到那个时间上的音上；见解析循环里那段注释）。 */
   const chordTokens: { song: number; text: string; whole: number | null }[] = [];
   /** 反复跳跃区（`R{ … } A{ … }`）：小节下标，-1 = 还没出现。 */
@@ -435,11 +454,22 @@ export function parseJly(text: string): JlyParse {
   let pendingMelisma = 0;                // 本音自己开的圆滑线：从**下一个**音起才吞
   const verses = new Map<string, { han: boolean; syllables: (JlySyllable | null)[]; span?: SourceSpan }>();
 
-  /** 开一小节；`source` 落在这一小节的第一个 token 上（编辑器按它定位小节）。 */
-  const openMeasure = (source?: SourceSpan): Measure => {
+  /** 开一小节；`source` 落在这一小节的第一个 token 上（编辑器按它定位小节）。
+   *  ⚠ 换行/换页指令如果正好落在小节线之后（`… 5 5 | \break 6 6 …`），模型的口径是"**下一小节**
+   *  的 `print` 起新系统/新页" —— 但**不能**为了挂这个标记就先开一个空小节：空小节会真的出现在谱上
+   *  （实测：4 小节变 5 小节，还多出一根小节线）。所以先记成 `pendingBreak`，等真正要开下一小节时再挂。 */
+  const openMeasureRaw = (source?: SourceSpan): Measure => {
     const m: Measure = { number: String(part.measures.length + 1), elements: [] };
     if (source) m.source = source;
     part.measures.push(m);
+    return m;
+  };
+  const openMeasure = (source?: SourceSpan): Measure => {
+    const m = openMeasureRaw(source);
+    if (pendingBreak) {
+      m.print = { ...(m.print ?? {}), ...(pendingBreak === "page" ? { newPage: true } : { newSystem: true }) };
+      pendingBreak = null;
+    }
     return m;
   };
 
@@ -632,6 +662,55 @@ export function parseJly(text: string): JlyParse {
           break;
         }
         case "jump": addJump(JUMP_SHORT[tk.text] ?? "fine"); break;
+        case "break": {
+          // `\break` / `\pageBreak` 的语义是「**这里之后**换系统/换页」（与 123 的 `$` / `$$` 同一套口径）：
+          //   本小节里已经有音 = 小节中间换行，记在那个和弦的 `lineBreakAfter` 上；
+          //   没有 = 刚收尾的那一小节之后换，记在**下一小节**的 `print` 上（模型的口径与 MusicXML 一致：
+          //   `newSystem`/`newPage` 表示「本小节起新系统/新页」）。
+          const host = cur && cur.elements.length ? cur : part.measures[part.measures.length - 1];
+          if (!host) { loss.add("换行/换页（前面还没有小节）", tk.page ? "\\pageBreak" : "\\break", spanAt(i)); break; }
+          if (cur && cur.elements.length) {
+            const last = cur.elements[cur.elements.length - 1];
+            if (last && last.kind === "chord") last.lineBreakAfter = tk.page ? "page" : "system";
+          } else {
+            // 小节线之后：记成"下一小节起新系统/新页"，等下一小节真的开出来再挂（别先开空小节）
+            pendingBreak = tk.page ? "page" : "system";
+          }
+          break;
+        }
+        case "barstyle": {
+          // `\bar "…"`（LilyPond 的小节线）：认得出来的映回模型的反复/样式，其余报出来。
+          //   `".|:"` 写在反复体**开头**（我们写出端就是这么写的）→ 当前这一小节的左线；
+          //   `":|."` 写在反复体末尾 → 刚收尾那一小节的右线（兼终止线）。
+          const st = tk.style.trim();
+          const at: "left" | "right" = st.startsWith(".") && st.includes(":") ? "left" : "right";
+          // ⚠ 左线这条要**把新开的小节赋回 `cur`** —— 不然 `cur` 还是 null，紧接着的第一个音又会开一个新小节，
+          //   于是谱头多出一个"只有反复线"的空小节（实测踩过）。
+          if (at === "left" && !cur) cur = openMeasure(spanAt(i));
+          const host = at === "left"
+            ? cur!
+            : (cur && cur.elements.length ? cur : part.measures[part.measures.length - 1]);
+          if (!host) { loss.add("小节线样式 `\\bar`（前面还没有小节）", st, spanAt(i)); break; }
+          const lines = host.barlines ?? (host.barlines = []);
+          let bl = lines.find((b) => b.location === at);
+          if (!bl) { bl = { location: at, source: spanAt(i) }; lines.push(bl); }
+          const map: Readonly<Record<string, { style?: Barline["style"]; repeat?: "forward" | "backward" }>> = {
+            ".|:": { style: "heavy-light", repeat: "forward" },
+            ".|": { style: "heavy-light" },
+            ":|.": { style: "light-heavy", repeat: "backward" },
+            ":|": { style: "light-heavy", repeat: "backward" },
+            ":|:": { style: "light-light", repeat: "backward" },
+            "|.": { style: "light-heavy" },
+            "||": { style: "light-light" },
+            "|": { style: "regular" },
+          };
+          const hit = map[st];
+          if (!hit) { loss.add("小节线样式 `\\bar`", st, spanAt(i)); break; }
+          if (hit.style) bl.style = hit.style;
+          if (hit.repeat) bl.repeat = hit.repeat;
+          if (st === ":|:") bl.alsoForward = true;
+          break;
+        }
         case "multirest": {
           // `R*8` = 8 个整小节休止：**展开成 8 个小节**（上游只是把它压缩着画，音乐本来就是 8 小节）。
           // 模型里没有"N 小节休止"这种字段，但小节的个数是真实的，展开一样东西都不丢；
@@ -776,6 +855,15 @@ export function parseJly(text: string): JlyParse {
       }
     }
     advance();
+  }
+
+  // 换行/换页写在最后一个音之后（后面不再有音符）：挂到最后一个音的 `lineBreakAfter` 上，别丢。
+  if (pendingBreak) {
+    const lastM = part.measures[part.measures.length - 1];
+    const lastEl = lastM?.elements[lastM.elements.length - 1];
+    if (lastEl && lastEl.kind === "chord") lastEl.lineBreakAfter = pendingBreak;
+    else loss.add("换行/换页（后面没有音）", pendingBreak === "page" ? "\\pageBreak" : "\\break", undefined);
+    pendingBreak = null;
   }
 
   // 反复跳跃收尾：`}` 记在**反复体最后一小节**的收尾线上（上游那个 `}` 就是 `<repeat backward>`）；

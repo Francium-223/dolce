@@ -20,6 +20,7 @@ import { relayoutPuText } from "../pu/relayout";
 import type { FitMeasure } from "../pu/phrase";
 import { parse123, parseAbc } from "../j123/parse";
 import { parseJly } from "../model/fromjly";
+import { DIALECT_JLY } from "./visual/dialects/jly";
 import { emit123 } from "../j123/emit";
 import { emitAbc } from "../abcfamily/emitabc.entry";
 import type { ScoreDoc } from "../model/doc";
@@ -237,8 +238,8 @@ const ABC: FormatAdapter = {
  *  （README 原话是"普通文本文件**以空格分隔**的"，`title=` / `4/4` 都只是 token），
  *  所以任何内容嗅探都只是特征猜测，不做。
  *
- *  暂**不给 `editDialect`** —— 那需要一套 `EditDialect`（可视化编辑），
- *  不给时在谱面上只能选中 / 移动，不能改（见 `FormatAdapter.editDialect` 的说明）。 */
+ *  可视化编辑走 `visual/dialects/jly.ts`（词内顺序无关、时值是字母、连音 `3[ ]`、
+ *  装饰 `\fermata` 写在音后；**行结构不是语义，所以换行就写真换行，不写 123 那个 `$`**）。 */
 const JLY: FormatAdapter = {
   id: "jly",
   defaultExt: ".jly",
@@ -259,6 +260,7 @@ const JLY: FormatAdapter = {
   caps: { textEditor: true, layout: "scoredoc", phraseRelayout: false, originalLayout: "jianpu" },
   reload: (host, text) => host.reloadJly(text),
   toScoreDoc: (text) => parseJly(text).doc,
+  editDialect: DIALECT_JLY,
 };
 
 /** MusicXML —— 五线谱主格式。**没有代码区**：编辑器文档里存的就是 XML 原文（不显示），

@@ -328,6 +328,34 @@ function chordLine(measures: readonly JMeasure[], warnings: Set<string>): string
   return toks.length ? "chords=" + toks.join(" ") : null;
 }
 
+/** 反复跳跃（`R{ … } A{ … }`）。上游自己的写法是：`<repeat forward>` → `R{`、`<repeat backward>` → `}`、
+ *  `<ending start>` → `A{`、曲末 → `}`。所以反复开始的那一小节前写 `R{`、反复收尾那小节后写 `}`；
+ *  第二房开头写 `A{`、第二房收尾写 `}`。三房及以上上游表达不了，报出来（退化成普通小节线）。
+ *  返回：小节下标 → 写在该小节**之前** / **之后**的词。 */
+function endingMarks(measures: readonly JMeasure[], warnings: Set<string>): { before: Map<number, string>; after: Map<number, string> } {
+  const before = new Map<number, string>();
+  const after = new Map<number, string>();
+  const plain = { before, after };
+  // 上游的 `R{ } A{ }` 只能表达**一种**形态：一次反复开始 + 一次反复收尾 + 一段第二房。
+  // 别的一律退回 `\bar` 小节线（写坏了比不写更糟 —— 实测多一根 `}` 会让上游 IndexError 直接崩）。
+  const fwd = measures.map((m, i) => [m, i] as const).filter(([m]) => m.repeatForward).map(([, i]) => i);
+  const back = measures.map((m, i) => [m, i] as const).filter(([m]) => m.repeatBackward).map(([, i]) => i);
+  const ends = measures.flatMap((m, i) => [...(m.endingNum ?? [])].map((n) => ({ i, n })));
+  const alt = ends.filter((e) => e.n === 2).map((e) => e.i);
+  if (fwd.length !== 1 || back.length !== 1 || alt.length === 0 || ends.some((e) => e.n !== 2)) {
+    if (fwd.length || back.length || ends.length) {
+      warnings.add("反复跳跃的写法不是上游能表达的那一种（一次反复 + 一段第二房），已退化成普通小节线");
+    }
+    return plain;
+  }
+  const add = (map: Map<number, string>, i: number, word: string): void => { map.set(i, (map.get(i) ?? "") + word); };
+  add(before, fwd[0]!, "R{");
+  add(after, back[0]!, "}");
+  add(before, alt[0]!, "A{");
+  add(after, alt[alt.length - 1]!, "}");
+  return { before, after };
+}
+
 /** 逐段收集歌词。位置对不齐就全错（见上面的四条口径），所以这里只做"逐位置填字或填占位"。 */
 function lyricLines(plan: JlyPlan, warnings: Set<string>): string[] {
   const out: string[] = [];
@@ -387,7 +415,10 @@ export function emitJlyOfScore(score: JScore, warnings: Set<string> = new Set())
   // 文件里的行排版的，整首挤成一行时音符和歌词会叠成一团（用户截图上就是那样：34 个音挤在 850px 里，
   // 歌词连成一串）。4 小节一行是简谱的常规版面，源谱"一行四小节"也正是这个数。
   let sinceBreak = 0;
+  const marks = endingMarks(measures, warnings);
   for (const m of measures) {
+    const mIdx = measures.indexOf(m);
+    if (marks.before.has(mIdx)) { flush(); tokens.push(marks.before.get(mIdx)!); }
     // 拍号/调号变更各占一行（jianpu-ly 里它们本来就是行内 token）——
     // ⚠ 只有**真的**变更才 flush，别写成 `if (m.index > 0) { flush(); … }`：
     //   那等于每小节都换行，源谱"一行四小节"就被拆散了（第三处、也是最后一处同类错误）。
@@ -396,7 +427,8 @@ export function emitJlyOfScore(score: JScore, warnings: Set<string> = new Set())
       const tonic = MAJOR_BY_FIFTHS[m.key.fifths];
       if (tonic) { flush(); lines.push("1=" + tonic); sinceBreak = 0; }
     }
-    if (m.repeatForward) { flush(); tokens.push('\\bar ".|:"'); }
+    // 用上 `R{ } A{ }` 时就不再写 `\bar` 反复线（重复记号由上游的 `\repeat volta` 出，写重了是噪音）
+    if (m.repeatForward && !marks.before.has(mIdx)) { flush(); tokens.push('\\bar ".|:"'); }
     for (const e of m.entries) {
       if (e.kind === "chord") {
         const c = e as JChord;
@@ -410,8 +442,11 @@ export function emitJlyOfScore(score: JScore, warnings: Set<string> = new Set())
         if ((e as { newPage?: boolean }).newPage) lines.push("\\pageBreak");
       }
     }
-    if (m.endingNum && m.endingNum.size) warnings.add("反复跳跃（`R{ } A{ }`）尚未导出，已退化为普通小节线");
-    tokens.push(m.repeatBackward ? '\\bar ":|."' : "|");
+    if (m.endingNum && m.endingNum.size) {
+      if (m.endingNum && [...m.endingNum].some((n) => n > 2)) warnings.add("反复跳跃有第 3 房及以后：上游只能表达两房（`R{ } A{ }`）");
+    }
+    tokens.push(m.repeatBackward && !marks.after.has(mIdx) ? '\\bar ":|."' : "|");
+    if (marks.after.has(mIdx)) tokens.push(marks.after.get(mIdx)!);
     if (++sinceBreak >= MEASURES_PER_LINE) { flush(); sinceBreak = 0; }
   }
   flush();                                                           // 收尾那一行

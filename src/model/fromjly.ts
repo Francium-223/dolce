@@ -62,6 +62,7 @@ export type JlyToken =
   | { kind: "dynamic"; name: string }
   | { kind: "fermata" }
   | { kind: "grace"; notes: JlyGraceNote[] }
+  | { kind: "repeat-open" } | { kind: "alt-open" } | { kind: "repeat-close" }
   | { kind: "header"; key: string; value: string }
   | { kind: "loss"; what: string };
 
@@ -186,6 +187,11 @@ export function scanWord(word: string, loss: JlyLosses, span?: SourceSpan): JlyT
   if (BARE_DIRECTION.test(word)) return { kind: "jump", text: canonicalJump(word) };
   if (DYNAMIC_COMMAND.test(word)) return { kind: "dynamic", name: word.slice(1) };
   if (word === "\\fermata") return { kind: "fermata" };
+  // 反复跳跃：`R{ 第一遍 } A{ 第二遍 }`（上游自己的 MusicXML 导入端就是这么做出来的：
+  //   `<repeat forward>` → `R{`、`<repeat backward>` → `}`、`<ending start>` → `A{`）。
+  if (word === "R{") return { kind: "repeat-open" };
+  if (word === "A{") return { kind: "alt-open" };
+  if (word === "}") return { kind: "repeat-close" };
   if (/^g\[.*\]$/.test(word)) {
     const notes = parseGrace(word.slice(2, -1), loss, span);
     return notes ? { kind: "grace", notes } : { kind: "loss", what: "倚音" };
@@ -418,6 +424,8 @@ export function parseJly(text: string): JlyParse {
   let autoVerse = 0;
   /** `chords=` 行里的和弦符号（按乐章分开，装到那个时间上的音上；见解析循环里那段注释）。 */
   const chordTokens: { song: number; text: string; whole: number | null }[] = [];
+  /** 反复跳跃区（`R{ … } A{ … }`）：小节下标，-1 = 还没出现。 */
+  const repeats: { rStart: number; rEnd: number; aStart: number; aEnd: number }[] = [];
   // 歌词位置：**发音**的和弦。休止不占（LilyPond 的 `\lyricsto` 跳过休止，实测连带梁休止也跳），
   // 圆滑线 `(` … `)` 里的音也不占（那是"一字多音"：`slurMelismaBusy`，实测 `1 ( 2 ) 3 4`
   // 配 `L: A B C D` 时 B 会跳到第 3 个音上）。乐句线 `\(` `\)` 不吞音节，所以不算在里面。
@@ -623,6 +631,34 @@ export function parseJly(text: string): JlyParse {
           break;
         }
         case "jump": addJump(JUMP_SHORT[tk.text] ?? "fine"); break;
+        case "repeat-open": {
+          // `R{` = 反复开始：落在**当前这一小节**的左线上（还没有小节就开一个）
+          if (!cur) cur = openMeasure(spanAt(i));
+          const lines = cur.barlines ?? (cur.barlines = []);
+          const left = lines.find((b) => b.location === "left");
+          if (left) left.repeat = "forward";
+          else lines.unshift({ location: "left", style: "heavy-light", repeat: "forward", source: spanAt(i) });
+          repeats.push({ rStart: part.measures.length - 1, rEnd: -1, aStart: -1, aEnd: -1 });
+          break;
+        }
+        case "alt-open": {
+          // `A{` = 第二遍（第二房）开始：上一小节收掉第一房，这一小节起第二房
+          const open = repeats[repeats.length - 1];
+          if (!open || open.rEnd < 0) { loss.add("反复跳跃 `A{`（前面没有配对的 `}`）", "A{", spanAt(i)); break; }
+          if (!cur) cur = openMeasure(spanAt(i));
+          // ⚠ 先保证 cur 指向 A 段的第一小节（`A{` 前刚被 `}` 收掉，cur 是空的），再取下标；
+          //   若先取 `part.measures.length` 会多算一格（`openMeasure` 已经把这一小节推进去了）。
+          open.aStart = part.measures.length - 1;
+          break;
+        }
+        case "repeat-close": {
+          const open = repeats[repeats.length - 1];
+          if (!open) { loss.add("反复跳跃 `}`（前面没有 `R{` / `A{`）", "}", spanAt(i)); break; }
+          if (open.aStart >= 0 && open.aEnd < 0) { open.aEnd = part.measures.length - 1; }   // ⚠ 别 pop：收尾要留在表里等后面统一落房号（pop 掉就等于没记）
+          else if (open.rEnd < 0) { open.rEnd = part.measures.length - 1; }
+          else { loss.add("反复跳跃 `}`（多出来的）", "}", spanAt(i)); }
+          break;
+        }
         case "grace": {
           // 倚音在模型里是**独立元素**（`Chord.grace`），时值 0；投影时会被收进后一个音的 `graceNotes`。
           // 口径与 123 一致（`{…}` 也这么存）。
@@ -721,6 +757,38 @@ export function parseJly(text: string): JlyParse {
       }
     }
     advance();
+  }
+
+  // 反复跳跃收尾：`}` 记在**反复体最后一小节**的收尾线上（上游那个 `}` 就是 `<repeat backward>`）；
+  // `A{ … }` 记成**第二房**（左线 start、右线 stop）—— 与 123 的 `|2 … :|` 同一个落点。
+  // 第一遍那一段不另记房号（jianpu-ly 的写法里"反复体本身"就是第一遍，记了反而会把整个体都罩进第一房）。
+  for (const r of repeats) {
+    if (r.rEnd < 0) continue;
+    const last = part.measures[r.rEnd];
+    if (last) {
+      const lines = last.barlines ?? (last.barlines = []);
+      const right = lines.find((b) => b.location === "right");
+      if (right) { right.repeat = "backward"; right.style = "light-heavy"; }
+      else lines.push({ location: "right", style: "light-heavy", repeat: "backward" });
+    }
+    if (r.aStart >= 0) {
+      const head = part.measures[r.aStart];
+      const tail = part.measures[r.aEnd >= 0 ? r.aEnd : part.measures.length - 1];
+      if (head) {
+        const lines = head.barlines ?? (head.barlines = []);
+        const left = lines.find((b) => b.location === "left");
+        const ending = { numbers: [2], type: "start" as const, text: "2" };
+        if (left) left.ending = ending;
+        else lines.unshift({ location: "left", ending });
+      }
+      if (tail) {
+        const lines = tail.barlines ?? (tail.barlines = []);
+        const right = lines.find((b) => b.location === "right");
+        const ending = { numbers: [2], type: "discontinue" as const, text: "2" };
+        if (right) right.ending = ending;
+        else lines.push({ location: "right", style: "light-heavy", ending });
+      }
+    }
   }
 
   // 和弦符号行是一条**时间线**（整音符为单位、从本乐章曲首起，divisions 48 = 四分）：

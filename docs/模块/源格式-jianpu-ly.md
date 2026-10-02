@@ -33,6 +33,7 @@
 | `^"文字"` | `Chord.sectionWord` —— 与 123 的 `"^渐慢"` 同一个落点 |
 | `\fermata` | `Chord.notations.fermata` |
 | `Fine` `DC` `DS` `Segno` `ToCoda` | `Barline.ornaments` 上的短名（`fine`/`dc`/`ds`/`hs`/`ty`）—— 与 123 的 `!fine!` 同一个落点 |
+| `R{ … } A{ … }` | 反复开始/收尾 → `Barline.repeat`（`forward`/`backward`）、第二房 → `Barline.ending`（`numbers: [2]`，与 123 的 `|2 … :|` 同一个落点） |
 | `chords=c2. g:7 c` | `Chord.harmony`（`{ root, kind: "", text }`）—— 与 123 的 `"Am7"` 同一个落点；读的时候 token 的**时值**是一条时间线，落到"起点 ≤ 该时刻"的最后一个音上 |
 | 页头 / `1=X` / `4/4` / `4=85` | `Song.work` / `Song.key` / `Song.time` / `Song.tempos` |
 | `NextScore` / `NextPart` | 新的 `Song` / 新的 `Part` |

@@ -193,11 +193,8 @@ export function rewrapJlyText(text: string, measuresPerLine = 4): string {
   // 曲行里的 token，按文件顺序集中起来；行内注释挪到这一组最后一行的行尾（仍是注释）
   const tokens: string[] = [];
   const comments: string[] = [];
-  const firstIdx = isMusic.indexOf(true);
-  let lastIdx = firstIdx;
   rows.forEach((r, i) => {
     if (!isMusic[i]) return;
-    lastIdx = i;
     const at = r.raw.indexOf("%");
     const body = at >= 0 ? r.raw.slice(0, at) : r.raw;
     if (at >= 0) comments.push(r.raw.slice(at).trim());
@@ -223,8 +220,16 @@ export function rewrapJlyText(text: string, measuresPerLine = 4): string {
   flushLine();
   if (comments.length && lines.length) lines[lines.length - 1] += "  " + comments.join(" ");
 
-  const out = rows.map((r) => r.raw);
-  out.splice(firstIdx, lastIdx - firstIdx + 1, ...lines);
+  const out: string[] = [];
+  let slot = 0;
+  rows.forEach((r, i) => {
+    if (!isMusic[i]) { out.push(r.raw); return; }
+    // 新的曲行全部落在**第一条**曲行的位置上，后面的曲行不再占行；
+    // ⚠ 不能把「第一条到最后一条」整段替换掉：歌词行可能夹在两条曲行之间（上游允许 `L:` 写在任何地方），
+    //   整段替换会把夹在中间的词行整条抹掉（第一版就是这样）。
+    if (slot === 0) out.push(...lines);
+    slot++;
+  });
   return out.join("\n") + (text.endsWith("\n") ? "\n" : "");
 }
 

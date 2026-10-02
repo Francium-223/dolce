@@ -160,8 +160,75 @@ export function scanWord(word: string, loss: JlyLosses, span?: SourceSpan): JlyT
   return { kind: "note", degree, alter, octave, beams, dots };
 }
 
-/** 一整行音乐 → token 与各自的位置（按空白切；`%` 起头是注释，README：「忽略：`% 注释`」）。 */
-export function scanMusicLine(
+/** 这一行是不是**曲行**（有音符/小节线那些）。`L:`/`H:` 词行、页头、拍号/调号/速度、`NextScore` 都不是。
+ *  分类与 `parseJly` 的派发次序同一套（改一处要改两处）。 */
+export function isJlyMusicLine(line: string): boolean {
+  const t = line.trim();
+  if (!t || t.startsWith("%")) return false;
+  if (/^[LH]:/.test(t)) return false;
+  if (/^[A-Za-z][A-Za-z0-9]*=/.test(t)) return false;        // 页头 / `chords=` / `frets=` …
+  if (/^\d+\/\d+(,\d+)?$/.test(t)) return false;             // 拍号
+  if (/^[1-7]=[A-Ga-g][#b]?$/.test(t)) return false;         // 调号
+  if (/^\d+(\.\d+)?=\d+$/.test(t)) return false;             // 速度
+  if (t === "NextScore" || t === "NextPart") return false;
+  return scanMusicLine(t, new JlyLosses()).tokens.length > 0;
+}
+
+/**
+ * 把曲行按**每 N 小节一行**重新断行，别的一个字不动（词行、页头、注释都留在原处）。
+ *
+ * 为什么要重排：上游不看行（行只是排版偏好，`%` 里那点提示随行也无所谓），可 **dolce 自己按文件的行排版**
+ * ——整首挤成一行时音符与歌词叠成一团（用户截图）。
+ *
+ * ⚠ **只搬字符、不整份重出**：写出端还不认识 `R{ } A{ }`、倚音、`chords=` 这些，整份重出会把它们抹掉。
+ * 所以这里按 token 切片搬运，行内空白规范成一个空格（对上游无意义），其余原样。
+ */
+export function rewrapJlyText(text: string, measuresPerLine = 4): string {
+  const rows = [...text.matchAll(/([^\r\n]*)(\r\n|\n|\r|$)/g)]
+    .map((m) => ({ raw: m[1]!, sep: m[2] ?? "" }))
+    .filter((r, i, all) => !(i === all.length - 1 && r.raw === "" && r.sep === ""));
+  const isMusic = rows.map((r) => isJlyMusicLine(r.raw));
+  if (!isMusic.some(Boolean)) return text;
+
+  // 曲行里的 token，按文件顺序集中起来；行内注释挪到这一组最后一行的行尾（仍是注释）
+  const tokens: string[] = [];
+  const comments: string[] = [];
+  const firstIdx = isMusic.indexOf(true);
+  let lastIdx = firstIdx;
+  rows.forEach((r, i) => {
+    if (!isMusic[i]) return;
+    lastIdx = i;
+    const at = r.raw.indexOf("%");
+    const body = at >= 0 ? r.raw.slice(0, at) : r.raw;
+    if (at >= 0) comments.push(r.raw.slice(at).trim());
+    for (const word of body.split(/\s+/).filter(Boolean)) tokens.push(word);
+  });
+
+  // 切小节：`|` 收小节（小节里已经有 token 才算收尾线，行首的 `|` 是左线）
+  const lines: string[] = [];
+  let cur: string[] = [];
+  let inMeasure: string[] = [];
+  let count = 0;
+  const flushLine = (): void => { if (inMeasure.length) { cur.push(...inMeasure); inMeasure = []; } if (cur.length) { lines.push(cur.join(" ")); cur = []; } };
+  for (const tk of tokens) {
+    if (/^\|+$/.test(tk) && inMeasure.length) {
+      inMeasure.push(tk);
+      cur.push(...inMeasure);
+      inMeasure = [];
+      if (++count >= measuresPerLine) { lines.push(cur.join(" ")); cur = []; count = 0; }
+      continue;
+    }
+    inMeasure.push(tk);
+  }
+  flushLine();
+  if (comments.length && lines.length) lines[lines.length - 1] += "  " + comments.join(" ");
+
+  const out = rows.map((r) => r.raw);
+  out.splice(firstIdx, lastIdx - firstIdx + 1, ...lines);
+  return out.join("\n") + (text.endsWith("\n") ? "\n" : "");
+}
+
+/** 一整行音乐 → token 与各自的位置（按空白切；`%` 起头是注释，README：「忽略：`% 注释`」）。 */export function scanMusicLine(
   line: string,
   loss: JlyLosses,
   spanAt?: (col: number, len: number) => SourceSpan,

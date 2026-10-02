@@ -19,7 +19,7 @@ import { t } from "../i18n";
 import { relayoutPuText } from "../pu/relayout";
 import type { FitMeasure } from "../pu/phrase";
 import { parse123, parseAbc } from "../j123/parse";
-import { parseJly } from "../model/fromjly";
+import { parseJly, rewrapJlyText } from "../model/fromjly";
 import { DIALECT_JLY } from "./visual/dialects/jly";
 import { emit123 } from "../j123/emit";
 import { emitAbc } from "../abcfamily/emitabc.entry";
@@ -257,8 +257,12 @@ const JLY: FormatAdapter = {
     return first ? first[1]!.trim() : "";
   },
   profileKnob: "original",
-  caps: { textEditor: true, layout: "scoredoc", phraseRelayout: false, originalLayout: "jianpu" },
+  caps: { textEditor: true, layout: "scoredoc", phraseRelayout: true, originalLayout: "jianpu" },
   reload: (host, text) => host.reloadJly(text),
+  // 「按乐句重排」：**只把曲行按每 4 小节重新断行**，词行/页头/注释一个字不动（上游不看行，
+  // 但 dolce 自己按文件的行排版；一行到底就挤成一团）。尺子还没接（`measure` 先不用），
+  // 用的是写出端同一套"每 4 小节一行"的出厂值。
+  relayoutText: (text) => rewrapJlyText(text),
   toScoreDoc: (text) => parseJly(text).doc,
   editDialect: DIALECT_JLY,
 };

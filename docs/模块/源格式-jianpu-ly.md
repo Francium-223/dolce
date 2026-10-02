@@ -33,6 +33,7 @@
 | `^"文字"` | `Chord.sectionWord` —— 与 123 的 `"^渐慢"` 同一个落点 |
 | `\fermata` | `Chord.notations.fermata` |
 | `Fine` `DC` `DS` `Segno` `ToCoda` | `Barline.ornaments` 上的短名（`fine`/`dc`/`ds`/`hs`/`ty`）—— 与 123 的 `!fine!` 同一个落点 |
+| `R4{ … }` | 小节反复：读进来按 `\repeat percent N` 的语义**展开成 N 遍真实小节**（歌词一起复制、副本换新 id）；写出一律按真实小节写 |
 | `R*8` | 读：展开成 8 个整小节休止（模型里没有「N 小节休止」字段，但小节数是真实的）；写：一律写成 N 个休止小节 |
 | `R{ … } A{ … }` | 反复开始/收尾 → `Barline.repeat`（`forward`/`backward`）、第二房 → `Barline.ending`（`numbers: [2]`，与 123 的 `|2 … :|` 同一个落点） |
 | `\break` / `\pageBreak` | 换行/换页 → 小节末的记在**下一小节**的 `Measure.print`（`newSystem`/`newPage`）、小节中间的记在前一个和弦的 `lineBreakAfter`（与 123 的 `$`/`$$` 同一套口径） |

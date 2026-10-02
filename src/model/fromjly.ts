@@ -63,6 +63,7 @@ export type JlyToken =
   | { kind: "fermata" }
   | { kind: "grace"; notes: JlyGraceNote[] }
   | { kind: "repeat-open" } | { kind: "alt-open" } | { kind: "repeat-close" }
+  | { kind: "percent-open"; times: number }
   | { kind: "multirest"; n: number }
   | { kind: "break"; page: boolean }
   | { kind: "barstyle"; style: string }
@@ -98,8 +99,19 @@ const canonicalJump = (word: string): string => JUMP_CANON[word.toLowerCase()] ?
 const JUMP_SHORT: Readonly<Record<string, string>> = {
   Fine: "fine", "D.C.": "dc", "D.S.": "ds", Segno: "hs", ToCoda: "ty",
 };
-const ACC: Readonly<Record<string, string>> = {
-  "#": "sharp", b: "flat", n: "natural", "##": "double-sharp", bb: "double-flat",
+/** 深拷贝出来的副本要换掉所有 `id`（`ElementId` 全曲唯一；同一号会让编辑器把副本认成原件）。 */
+function freshIds<T>(obj: T, ids: IdGen): T {
+  const walk = (v: unknown): void => {
+    if (!v || typeof v !== "object") return;
+    if (Array.isArray(v)) { for (const it of v) walk(it); return; }
+    const rec = v as Record<string, unknown>;
+    if (typeof rec.id === "number") rec.id = ids.next();
+    for (const k of Object.keys(rec)) if (k !== "id") walk(rec[k]);
+  };
+  walk(obj);
+  return obj;
+}
+const ACC: Readonly<Record<string, string>> = {  "#": "sharp", b: "flat", n: "natural", "##": "double-sharp", bb: "double-flat",
 };
 
 /** 拿不到位置时的兜底 span（只用于诊断，不参与定位）。 */
@@ -126,7 +138,6 @@ export class JlyLosses {
 /** 本版不收的写法：先认出来、报出去，别当音符硬读。 */
 const NOT_YET: readonly (readonly [RegExp, string])[] = [
   [/^x$/, "打击乐 `x`（与 dolce 的不可见休止语义不同）"],
-  [/^(R\d*\{|\}|A\{)/, "反复跳跃 / 小节反复（`R{ } A{ }`）"],
   [/^(LP:|:LP|LPH:|:LPH)$/, "原样 LilyPond 代码块（`LP: … :LP`）"],
   [/^(KeepLength|ChordsRoman|NoBarNums|NoIndent|OnePage|RaggedLast|SeparateTimesig|angka|WithStaff|PartMidi|RepeatAccidentals|NormalAccidentals)$/, "布局 / 结构开关"],
   [/^(chords|frets|instrument)=/, "和弦符号 / 指板图 / 乐器"],
@@ -197,6 +208,8 @@ export function scanWord(word: string, loss: JlyLosses, span?: SourceSpan): JlyT
   //   `<repeat forward>` → `R{`、`<repeat backward>` → `}`、`<ending start>` → `A{`）。
   if (/^R\*\d+$/.test(word)) return { kind: "multirest", n: Number(word.slice(2)) };   // 多小节休止：R*8 = 8 个小节
   if (word === "R{") return { kind: "repeat-open" };
+  // 小节反复（％）：`R4{ 1 2 }` —— 上游译成 `\repeat percent 4 { … }`，即里面这些小节**共唱 4 遍**。
+  if (/^R[1-9][0-9]*\{$/.test(word)) return { kind: "percent-open", times: Number(word.slice(1, -1)) };
   if (word === "A{") return { kind: "alt-open" };
   if (word === "}") return { kind: "repeat-close" };
   if (/^g\[.*\]$/.test(word)) {
@@ -440,6 +453,9 @@ export function parseJly(text: string): JlyParse {
   let pendingTie = false;
   /** 没写段号的歌词行按出现顺序编号（跨 `L:`/`H:` 共用，上游也只是一条条往下叠）。 */
   let autoVerse = 0;
+  /** 小节反复 `R4{ … }`：还没收尾的（起点、次数）与已经收尾的段（展开在最后统一做）。 */
+  const percentStack: { from: number; times: number }[] = [];
+  const percentRanges: { from: number; to: number; times: number }[] = [];
   /** 小节线之后出现的换行/换页：挂到**下一小节**的 `print` 上（开下一小节时才用，见 `openMeasure`）。 */
   let pendingBreak: "system" | "page" | null = null;
   /** `chords=` 行里的和弦符号（按乐章分开，装到那个时间上的音上；见解析循环里那段注释）。 */
@@ -749,7 +765,25 @@ export function parseJly(text: string): JlyParse {
           open.aStart = part.measures.length - 1;
           break;
         }
+        case "percent-open": {
+          // `R4{` 小节反复：先记起点与次数，到配对的 `}` 处记成一段；真展开放在**歌词对位之后**做
+          //   （见下面那段注释 —— 先展开会把歌词音节分给副本）。
+          percentStack.push({ from: part.measures.length, times: tk.times });
+          break;
+        }
         case "repeat-close": {
+          if (percentStack.length) {                       // 收的是小节反复，不是反复跳跃
+            const p = percentStack.pop()!;
+            // ⚠ 顺手把这一段**收尾**（这个 `}` 就是它的收尾线）：组里没写 `|` 时，收尾线不给出来的话
+            //   投影那边没有 `Barline` 就认不出小节边界，展开出来的几小节会被并成一长条
+            //   （实测：`R3{ 1 2 3 4 }` 写成 `1 2 3 4 1 2 3 4 1 2 3 4 |`）。
+            if (cur && cur.elements.length) {
+              (cur.barlines ??= []).push({ location: "right", style: "regular", source: spanAt(i) });
+              cur = null;
+            }
+            percentRanges.push({ from: p.from, to: part.measures.length, times: p.times });
+            break;
+          }
           const open = repeats[repeats.length - 1];
           if (!open) { loss.add("反复跳跃 `}`（前面没有 `R{` / `A{`）", "}", spanAt(i)); break; }
           if (open.aStart >= 0 && open.aEnd < 0) { open.aEnd = part.measures.length - 1; }   // ⚠ 别 pop：收尾要留在表里等后面统一落房号（pop 掉就等于没记）
@@ -948,6 +982,19 @@ export function parseJly(text: string): JlyParse {
         slot.span,
       );
     }
+  }
+
+  // 小节反复 `R4{ 1 2 }`：模型里没有"这一段再唱 N 遍"的字段，**展开成真实小节**（`\repeat percent 4` 的音乐
+  //   就是这 2 小节唱 4 遍 = 8 小节；上游只是把重复的几遍印成 ％ 记号）。写出端一律照真实小节写。
+  //   ⚠ 必须放在**歌词对位之后**：音节是按 `slots` 逐格发的，展开出来的副本不在 `slots` 里，先展开的话
+  //   副本一个词都拿不到（实测：第一遍有词、后面三遍光秃秃），而副本该跟着原件一起有词。
+  //   同 id 的副本会让编辑器把副本认成原件，所以复制时每个 `id` 都换新号。
+  for (const r of [...percentRanges].sort((a, b) => b.from - a.from)) {
+    const base = part.measures.slice(r.from, r.to);
+    if (!base.length || r.times < 2) continue;
+    const copies: Measure[] = [];
+    for (let k = 1; k < r.times; k++) { for (const m of base) copies.push(freshIds(structuredClone(m), ids)); }
+    part.measures.splice(r.to, 0, ...copies);
   }
 
   doc.diagnostics = loss.diagnostics();

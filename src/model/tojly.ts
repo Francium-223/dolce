@@ -320,7 +320,7 @@ function chordLine(measures: readonly JMeasure[], warnings: Set<string>): string
     const tok = harmonyToChordToken(c.text, whole);
     if (tok) {
       toks.push(tok);
-      if (!wholeToDuration(whole).exact) warnings.add("和弦时值不是规整时值，已按最接近的写出（" + c.text + "）");
+      if (!wholeToDuration(whole).exact && !/\*/.test(tok)) warnings.add("和弦时值不是规整时值，已按最接近的写出（" + c.text + "）");
     } else {
       warnings.add("和弦符号写不出（上游用 LilyPond 和弦语法，认不出的后缀没法写）：" + c.text);
     }

@@ -10,7 +10,7 @@
 | `src/model/fromjly.ts` | **读入**：`scanWord` / `scanMusicLine` / `isJlyMusicLine`（词法）、`syllablesOf`（歌词音节，含占位与连写）、`parseJly`（装配成 `ScoreDoc`）、`rewrapJlyText`（曲行重断） |
 | `src/model/tojly.ts` | **写出**：`planJly`（歌词位置 + 圆滑线分组）、`ornamentsBefore` / `ornamentsAfter` / `chordBody` / `sustainOf`、`lyricLines`、`emitJlyOfScore`、`emitJly(doc)` |
 | `src/model/jlychords.ts` | **和弦符号**两个方向的转换：LilyPond 和弦语法 ↔ 谱上印的文字（`c2.:m7/bes` ↔ `Cm7/Bb`），以及整音符分数 ↔ LilyPond 时值串 |
-| `src/editor/visual/dialects/jly.ts` | **可视化编辑方言**（`DIALECT_JLY`）：顺序无关的 `scan`、规范 `printNote`、`deco`/`annotationText`/`dynamicText`、`tuplet`、`slurNesting`、`lineBreak` |
+| `src/editor/visual/dialects/jly.ts` | **可视化编辑方言**（`DIALECT_JLY`）：顺序无关的 `scan`、规范 `printNote`、`deco`/`annotationText`/`dynamicText`、`tuplet`、`slurNesting`、`lineBreak`；`chordEdit` —— 和弦在 `chords=` 行上，按**时间线**改那一行（点一个音算出它落在第几拍，插进去，并把相邻格的时值切成两段） |
 | `src/editor/formats.ts` | 适配器 `JLY`：`defaultExt ".jly"`、`caps`、`reload → host.reloadJly`、`toScoreDoc → parseJly`、`relayoutText → rewrapJlyText`、`editDialect` |
 | `src/common/filetypes.ts` | `.jly` 进 `DOC_EXT` 白名单（`JLY_EXT`、`isJlyFile`） |
 | `src/editor/app.ts` | `reloadJly`（解析 → 排版 → 报诊断）、`_importBytes` 的 `.jly` 分支 |
@@ -62,7 +62,7 @@
 - 词法**认得出但不当记号读**的写法见格式页「本版不收」；写不出的（和弦符号、多声部、
   多乐章、拉丁连字符）以 `%` 注释写进导出文件。
 - 跳转裸词按**小节线**收（`Barline.ornaments`），写在小节中间的裸词位置会挪到小节线。
-- 可视化编辑方言没给 `measure` / `chordText`：谱面上不能插删小节、不能改和弦名。
+- 可视化编辑方言没给 `measure`：谱面上不能插删小节（和弦名能改，见 `chordEdit`）。
 - 「按乐句重排」用的是**出厂值**（每 4 小节一行），还没接排版尺子（`FitMeasure`）。
 - `Lyric.syllabic` 只在读入方向有（写出端拿不到引擎输入里的 `syllabic`），所以拉丁连字符只报不写。
 

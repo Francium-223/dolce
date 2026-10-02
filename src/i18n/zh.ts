@@ -834,6 +834,7 @@ export const zh = {
   "ve.chordSrcOnly": "这种格式的和弦名请在源码里改",
   "ve.chordQuote": "和弦名里不能有英文双引号",
   "ve.noChord": "这个音没有和弦名",
+  "ve.chordUnwritable": "上游的和弦语法写不出这个名字：{name}（只认 C / Am / G7 / Cmaj7 / G/B 这类）",
   "ve.textSrcOnly": "这种格式的文字请在源码里改",
   "ve.dynSrcOnly": "这种格式的力度请在源码里改",
   "ve.textQuote": "文字里不能有英文双引号（可用中文引号）",

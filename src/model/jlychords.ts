@@ -57,9 +57,9 @@ export function textSuffixToLy(suffix: string): string | null {
   return null;
 }
 
-/** 把 `chords=` 行里的一个 token（`c2.:m7/bes`）拆成音名 / 时值 / 后缀 / 低音。 */
+/** 把 `chords=` 行里的一个 token（`c2.:m7/bes`、`c4*31:m7`）拆成音名 / 时值 / 后缀 / 低音。 */
 export function parseChordToken(tok: string): { pitch: string; whole: number | null; suffix: string; bass: string | null } | null {
-  const m = /^([a-g](?:isis|eses|is|es|s|f)?)(\d+(?:\.*)|)((?::[^/]*)?)(?:\/([a-g](?:isis|eses|is|es|s|f)?))?$/i.exec(tok.trim());
+  const m = /^([a-g](?:isis|eses|is|es|s|f)?)(\d+(?:\.*)|)((?:\*\d+(?:\/\d+)?)?)((?::[^/]*)?)(?:\/([a-g](?:isis|eses|is|es|s|f)?))?$/i.exec(tok.trim());
   if (!m) return null;
   const dur = m[2] ?? "";
   let whole: number | null = null;
@@ -72,7 +72,22 @@ export function parseChordToken(tok: string): { pitch: string; whole: number | n
       for (let i = 0; i < dots; i++) { whole += add; add /= 2; }
     }
   }
-  return { pitch: m[1]!, whole, suffix: m[3] ?? "", bass: m[4] ?? null };
+  const mult = m[3] ?? "";
+  if (whole !== null && mult) {
+    const mm = /^\*(\d+)(?:\/(\d+))?$/.exec(mult);
+    if (mm) whole *= Number(mm[1]) / Number(mm[2] ?? "1");
+  }
+  return { pitch: m[1]!, whole, suffix: m[4] ?? "", bass: m[5] ?? null };
+}
+
+/** `chords=` 行里一个 token 的**谱上写法**（读入端与编辑端共用一套转换）。 */
+export function chordTokenToText(tok: string): string | null {
+  const p = parseChordToken(tok);
+  if (!p) return null;
+  const root = lyPitchToText(p.pitch);
+  if (root === null) return null;
+  const bass = p.bass ? lyPitchToText(p.bass) : null;
+  return root + lySuffixToText(p.suffix) + (bass ? "/" + bass : "");
 }
 
 /** 整音符分数 → `{ LilyPond 时值串, 是否精确 }`。与上游 `xmlDuration` 同一套：分母 + 附点取最接近的，
@@ -94,7 +109,12 @@ export function wholeToDuration(whole: number): { text: string; exact: boolean }
   return { text: best ? best.text : "4", exact: false };
 }
 
-/** 谱上印的和弦文字 → `chords=` 的 token（`Am7/G` + 时值）。后缀认不出来时返回 null（调用方报警）。 */
+/** 谱上印的和弦文字 → `chords=` 的 token（`Am7/G` + 时值）。后缀认不出来时返回 null（调用方报警）。
+ *
+ *  时值：先用分母 + 附点写；写不精确时**试着配一个乘数**（LilyPond 的 `c4*31` —— 一个和弦压过好几个
+ *  小节时只有这样才写得准）。⚠ 不配乘数就只能"近似"（上游 `xmlDuration` 的做法），而近似的时值会让
+ *  这条时间线**越走越偏**：第二个和弦的落点就不再是它真正的拍位（实测：跨 2 小节的 `c1...` 只有 1.875，
+ *  比 2 少 1/8 拍）。乘数配不上才退回近似。 */
 export function harmonyToChordToken(text: string, whole: number): string | null {
   const m = /^([A-Ga-g](?:[#♯b♭]|##|bb)?)(.*?)(?:\/([A-Ga-g](?:[#♯b♭]|##|bb)?))?$/.exec(text.trim());
   if (!m) return null;
@@ -103,5 +123,42 @@ export function harmonyToChordToken(text: string, whole: number): string | null 
   const suffix = textSuffixToLy(m[2] ?? "");
   if (suffix === null) return null;
   const bass = m[3] ? textPitchToLy(m[3]) : null;
-  return pitch + wholeToDuration(whole).text + suffix + (bass ? "/" + bass : "");
+  return pitch + durationText(whole) + suffix + (bass ? "/" + bass : "");
+}
+
+/** 时值串：精确写法；不精确就配乘数；再不行退回最接近的写法（与上游一样"近似"）。 */
+export function durationText(whole: number): string {
+  const exact = wholeToDuration(whole);
+  if (exact.exact) return exact.text;
+  for (const base of [1, 2, 4, 8, 16, 32, 64]) {
+    for (let dots = 0; dots < 4; dots++) {
+      const v = 1 / base + (1 / base) * (1 - 2 ** -dots);
+      const k = whole / v;
+      if (Math.abs(k - Math.round(k)) < 1e-6 && Math.round(k) >= 2 && Math.round(k) <= 64) {
+        return String(base) + ".".repeat(dots) + "*" + Math.round(k);
+      }
+    }
+  }
+  return exact.text;
+}
+
+/** 一条 `chords=` 行的 **token 序列 + 各自的时间线**（整音符为单位）：读入端、写出端、编辑端共用。
+ *  口径与上游一致：时值没写就沿用上一个，第一个默认四分；`base` 是本次没法解析的 token 数。 */
+export function chordTimeline(
+  tokens: readonly string[],
+  fallbackWhole = 0.25,
+): { text: string; whole: number | null; at: number }[] {
+  const out: { text: string; whole: number | null; at: number }[] = [];
+  let at = 0;
+  let carried = fallbackWhole;
+  for (const tok of tokens) {
+    const p = parseChordToken(tok);
+    const text = p ? chordTokenToText(tok) : null;
+    const whole = p?.whole ?? null;
+    if (text === null) continue;
+    out.push({ text, whole, at });
+    carried = whole ?? carried;
+    at += carried;
+  }
+  return out;
 }

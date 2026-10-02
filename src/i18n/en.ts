@@ -834,6 +834,7 @@ export const en: Record<MsgKey, string> = {
   "ve.octaveMax": "At most three octave dots",
   "ve.chordSrcOnly": "Edit chord names of this format in the source",
   "ve.chordQuote": "Chord names can't contain double quotes",
+  "ve.chordUnwritable": "The upstream chord syntax cannot express this name: {name} (it knows C / Am / G7 / Cmaj7 / G/B and the like)",
   "ve.noChord": "This note has no chord name",
   "ve.textSrcOnly": "Edit text of this format in the source",
   "ve.dynSrcOnly": "Edit dynamics of this format in the source",

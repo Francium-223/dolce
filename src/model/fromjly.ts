@@ -1082,7 +1082,11 @@ export function parseJly(text: string): JlyParse {
       for (const p of theSong.parts) for (const m of p.measures) for (const el of m.elements) {
         if (el.kind !== "chord") continue;
         at.push({ chord: el, whole: acc / (SIMPLE_DIVISIONS * 4) });
-        acc += el.duration.divisions;
+        // ⚠ 连音组里的时值要按 `normal/actual` 折算（上游 review 第 10 条）：`divisions` 记的是
+        //   **写出来的名义时值**，而时间线要走**实际**时长（口径同 `beatcheck.ts:59` 的 `raw * normal / actual`）。
+        //   不折算的话，三连音之后的和弦全体落到错的音上。
+        const tm = el.duration.timeMod;
+        acc += tm ? (el.duration.divisions * tm.normal) / tm.actual : el.duration.divisions;
       }
       if (at.length) {
       const total = acc / (SIMPLE_DIVISIONS * 4);

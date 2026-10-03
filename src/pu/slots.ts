@@ -641,6 +641,36 @@ export interface DocView {
   syllableOwner: Map<LyricSyllable, ElementId>;
 }
 
+/** 连音：`Chord.duration.timeMod` → Mark tuplet。
+ *  `PuDoc` 靠它画连音括号、`jianpuinput` 靠它置 `tupletBegin`（写出端才能写 `n[ … ]`）。
+ *  ⚠ jly 这条路把连音记在 **`duration.timeMod`** 上，而 123/ABC 的解析器是**同时**写 pu 标记的
+ *  （见 `parse.ts:533/537`）。以前没人把 `timeMod` 翻成标记，于是整条链都看不到连音 ——
+ *  实测写出端连 `3[` 都写不出来、`5[ 1 1 1 1 1 ]` 重出成 `1 1 1 1 1`（上游 review 第 9 条）。
+ *  连续一串带同一个 `timeMod` 的和弦算一组（跨行的组按行拆成多段，与房号同一处理）。 */
+function rowTuplets(measuresByRow: readonly (readonly Measure[])[], rows: readonly RowBuild[]): PuMark[][] {
+  const out: PuMark[][] = rows.map(() => []);
+  measuresByRow.forEach((measures, r) => {
+    const row = rows[r]!;
+    let open: number | null = null;
+    const close = (end: number): void => {
+      if (open === null) return;
+      out[r]!.push({ type: "tuplet", start: open, end, level: 0, source: ZERO });
+      open = null;
+    };
+    for (const mea of measures) {
+      const span = row.measureSpan.get(mea);
+      if (!span) continue;
+      for (let i = span.first; i <= span.last; i++) {
+        const tm = row.refs[i]?.chord?.duration.timeMod;
+        if (tm) { if (open === null) open = i; continue; }
+        close(i - 1);
+      }
+    }
+    close(row.elements.length - 1);
+  });
+  return out;
+}
+
 function toPuSong(song: Song, index: number, rawLines: readonly string[]): SongView {
   const perPart = song.parts.map((p) => splitSystems(p));
   /** 文本谱来源：一组不一定含全部声部，按 `print.system` 对回同一组；其余按行序号 */
@@ -652,6 +682,7 @@ function toPuSong(song: Song, index: number, rawLines: readonly string[]): SongV
   // 各声部的全部行先建好——跨行记号要看别的行有没有端点
   const builds = perPart.map((rows) => rows.map((row) => buildRow(row.measures, row.ranges)));
   const voltas = perPart.map((rows, pi) => rowVoltas(rows.map((r) => r.measures), builds[pi]!));
+  const tuplets = perPart.map((rows, pi) => rowTuplets(rows.map((r) => r.measures), builds[pi]!));
 
   const systems = new Map<number, { pi: number; r: number }[]>();
   perPart.forEach((rows, pi) => {
@@ -686,7 +717,7 @@ function toPuSong(song: Song, index: number, rawLines: readonly string[]): SongV
         refs: build.refs,
         voice: voiceOf(pi),
         elements: build.elements,
-        marks: [...segmentMarks(song.marks, builds[pi]!, r), ...voltas[pi]![r]!],
+        marks: [...segmentMarks(song.marks, builds[pi]!, r), ...voltas[pi]![r]!, ...tuplets[pi]![r]!],
         lyrics: rowLyrics(build, p?.lyricLines),
         raw: p?.source ? (rawLines[p.source.line] ?? "") : "",
         source: p?.source ?? ZERO,

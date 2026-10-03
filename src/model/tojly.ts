@@ -83,9 +83,17 @@ function sustainOf(c: JChord): string {
   return n ? " " + Array(n).fill("-").join(" ") : "";
 }
 
-function ornamentsBefore(c: JChord): string {
+function ornamentsBefore(c: JChord, tupletSize: ReadonlyMap<object, number>, warnings: Set<string>): string {
   let out = "";
-  if (c.notes.some((n) => n.tupletBegin)) out += "3[ ";      // ✗ 连音记号挂在 JNote 上（引擎输入如此）
+  if (c.notes.some((n) => n.tupletBegin)) {
+    // 上游 README：连音写作 `3[ q1 q1 q1 ]` —— **n 就是"这一组有几个音"**，缩放由 jianpu-ly 自己算。
+    // ⚠ 以前这里写死 `3[`，五连音会被写成三连音（上游 review 第 9 条）。组信息来自 `JNote.tuplet`
+    //   （`{ first, last }`），音数在 `emitJlyOfScore` 里预先数好传进来。
+    const grp = c.notes.find((n) => n.tuplet)?.tuplet;
+    const n = grp ? tupletSize.get(grp) ?? 0 : 0;
+    if (n >= 2) out += n + "[ ";
+    else { warnings.add("有连音组数不出音数（按三连音写出）"); out += "3[ "; }
+  }
   if (c.graceNotes.length) {
     // ⚠ 倚音组内**不能有空格**：上游是 `g[#45] 1`（连写）。我第一版写成 `g[#4 b5]`，
     //    真 jianpu-ly 直接报 `Unrecognised command g[#4`。这条是拿真工具跑出来的，不是猜的。
@@ -430,6 +438,21 @@ export function emitJlyOfScore(score: JScore, warnings: Set<string> = new Set())
   /** 已经到小节末的换行/换页：等小节线写完再落地（见下面 `case "break"`） */
   let pendingBreakWord: string | null = null;
   const marks = endingMarks(measures, warnings);
+  // 连音组 → 组内音数（写出端要写 `n[ … ]`，n = 这一组几个音；上游 review 第 9 条）。
+  // ⚠ `tuplet` 只挂在组的**首尾两个音**上（`jiepuinput.ts` 的 `pairTuplets` 是两两配对），
+  //   所以音数要数"首音所在和弦 → 末音所在和弦"之间有多少个和弦，不能只数带 `tuplet` 的音。
+  const chordOrder: JChord[] = [];
+  for (const m of measures) for (const e of m.entries) if (e.kind === "chord") chordOrder.push(e as JChord);
+  const posOfNote = new Map<JNote, number>();
+  chordOrder.forEach((c, i) => c.notes.forEach((n) => posOfNote.set(n, i)));
+  const tupletSize = new Map<object, number>();
+  for (const c of chordOrder) for (const n of c.notes) {
+    const t = n.tuplet;
+    if (!t) continue;
+    const a = posOfNote.get(t.first);
+    const b = posOfNote.get(t.last);
+    if (a !== undefined && b !== undefined && b >= a) tupletSize.set(t, b - a + 1);
+  }
   for (let mIdx = 0; mIdx < measures.length; mIdx++) {
     const m = measures[mIdx]!;
     if (marks.before.has(mIdx)) { flush(); tokens.push(marks.before.get(mIdx)!); }
@@ -448,7 +471,7 @@ export function emitJlyOfScore(score: JScore, warnings: Set<string> = new Set())
         const c = e as JChord;
         if (c.beams >= BEAM_LETTER.length) warnings.add("有超过 4 条减时线（64 分）的时值，已按 64 分写出");
       const dots = ".".repeat(c.dot || 0);
-        tokens.push(ornamentsBefore(c) + chordBody(c, BEAM_LETTER[c.beams] ?? "", dots) + sustainOf(c) + ornamentsAfter(c, plan, warnings));
+        tokens.push(ornamentsBefore(c, tupletSize, warnings) + chordBody(c, BEAM_LETTER[c.beams] ?? "", dots) + sustainOf(c) + ornamentsAfter(c, plan, warnings));
         if (c.notes.some((n) => n.tieStart)) tokens.push("~");       // 延音线写在两音之间
       } else if (e.kind === "break") {
         // ⚠ 模型里的换行（`JBreak`）**都是显式的**（123 的 `$`/`$$`、MusicXML 的 `<print new-system>`、

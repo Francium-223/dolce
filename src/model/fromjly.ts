@@ -343,8 +343,30 @@ export function rewrapJlyText(text: string, measuresPerLine = 4): string {
   const rows = [...text.matchAll(/([^\r\n]*)(\r\n|\n|\r|$)/g)]
     .map((m) => ({ raw: m[1]!, sep: m[2] ?? "" }))
     .filter((r, i, all) => !(i === all.length - 1 && r.raw === "" && r.sep === ""));
+  // ⚠ **分段**（上游 review 第 7 条）：`NextScore` / `NextPart` / 曲中转调转拍号/速度这些行不能跨。
+  //   以前把**全文件**的曲行 token 都收到第一条曲行上，于是这些分隔行之后的音被挪到它们**前面** ——
+  //   第二首就没音了。现在按这些分隔行切开，逐段重排，分隔行原样留在原地。
+  const isSep = (raw: string): boolean => {
+    const t = raw.trim();
+    if (!t || t.startsWith("%")) return false;
+    if (t === "NextScore" || t === "NextPart") return true;
+    return /^\d+\/\d+(,\d+)?$/.test(t) || /^[1-7]=[A-Ga-g][#b]?$/.test(t) || /^\d+(\.\d+)?=\d+$/.test(t);
+  };
+  const segs: { raw: string; sep: string }[][] = [];
+  let acc: { raw: string; sep: string }[] = [];
+  for (const r of rows) {
+    if (isSep(r.raw)) { segs.push(acc); acc = []; segs.push([r]); continue; }
+    acc.push(r);
+  }
+  segs.push(acc);
+  if (segs.length === 1) return rewrapJlyRows(rows, measuresPerLine);
+  return segs.map((s) => (s.length === 1 && isSep(s[0]!.raw) ? s[0]!.raw + s[0]!.sep : rewrapJlyRows(s, measuresPerLine))).join("");
+}
+
+/** 单段的重排（原实现；分隔行已在 `rewrapJlyText` 里切开，不会跨首尾）。 */
+function rewrapJlyRows(rows: { raw: string; sep: string }[], measuresPerLine = 4): string {
   const isMusic = rows.map((r) => isJlyMusicLine(r.raw));
-  if (!isMusic.some(Boolean)) return text;
+  if (!isMusic.some(Boolean)) return rows.map((r) => r.raw + r.sep).join("");
 
   // 曲行里的 token，按文件顺序集中起来；行内注释挪到这一组最后一行的行尾（仍是注释）
   const tokens: string[] = [];
@@ -378,15 +400,17 @@ export function rewrapJlyText(text: string, measuresPerLine = 4): string {
 
   const out: string[] = [];
   let slot = 0;
-  rows.forEach((r, i) => {
-    if (!isMusic[i]) { out.push(r.raw); return; }
+  for (const [i, r] of rows.entries()) {
+    if (!isMusic[i]) { out.push(r.raw); continue; }
     // 新的曲行全部落在**第一条**曲行的位置上，后面的曲行不再占行；
     // ⚠ 不能把「第一条到最后一条」整段替换掉：歌词行可能夹在两条曲行之间（上游允许 `L:` 写在任何地方），
     //   整段替换会把夹在中间的词行整条抹掉（第一版就是这样）。
     if (slot === 0) out.push(...lines);
     slot++;
-  });
-  return out.join("\n") + (text.endsWith("\n") ? "\n" : "");
+  }
+  // 段的**行尾**沿用段内最后一行的分隔符（整文件时就是原来的行为）。
+  const tail = rows.length ? rows[rows.length - 1]!.sep : "";
+  return out.join("\n") + tail;
 }
 
 /** 一整行音乐 → token 与各自的位置（按空白切；`%` 起头是注释，README：「忽略：`% 注释`」）。 */export function scanMusicLine(

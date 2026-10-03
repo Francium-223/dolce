@@ -48,6 +48,20 @@ export interface JlyNote {
   octave: number;
   beams: number;
   dots: number;
+  /** **多音和弦**里第 2…n 个音（第 1 个就是上面那组字段）。
+   *  上游写法见 README「简单和弦：`,135'`」——八度/变音记号**逐音贴在各数字后面**
+   *  （实测真 jianpu-ly：`,135` → LilyPond `<c e' g'>`，即 `1` 低一个八度、`3`/`5` 在基准八度）。
+   *  ⚠ 以前这里只认单音，于是写出端自己的和弦产物 `,135` 落到 `unknown` 里被静默丢掉。 */
+  chord?: JlyChordNote[];
+}
+
+/** 和弦里除第一个音以外的音（字段与 `JlyGraceNote` 同形）。 */
+export interface JlyChordNote {
+  degree: number;
+  alter: string;
+  octave: number;
+  dots: number;
+  beams: number;
 }
 
 export type JlyToken =
@@ -219,6 +233,14 @@ export function scanWord(word: string, loss: JlyLosses, span?: SourceSpan): JlyT
   for (const [re, what] of NOT_YET) {
     if (re.test(word)) { loss.add(what, word, span); return { kind: "loss", what }; }
   }
+  // ── 多音和弦（上游 README「简单和弦：`,135' 1 1b3 1`」）────────────────────────
+  // ⚠ 必须在**单音解析之前**：单音那条路碰到第二个数字就 `return null`（下面 `if (degree !== null)`），
+  //   于是**写出端自己的和弦产物** `,135` 会落到 `unknown`、整块静默消失（上游 review 第 1 条）。
+  //   形态：可选时值字母前缀 + 逐个音（数字前后都能带八度记号、变音在数字前）+ 末尾附点。
+  if ((word.match(/[0-7]/g) ?? []).length >= 2) {
+    const chord = scanChordWord(word);
+    if (chord) return chord;
+  }
   let i = 0;
   let alter = "";
   let degree: number | null = null;
@@ -253,8 +275,49 @@ export function scanWord(word: string, loss: JlyLosses, span?: SourceSpan): JlyT
   return { kind: "note", degree, alter, octave, beams, dots };
 }
 
-/** 这一行是不是**曲行**（有音符/小节线那些）。`L:`/`H:` 词行、页头、拍号/调号/速度、`NextScore` 都不是。
- *  分类与 `parseJly` 的派发次序同一套（改一处要改两处）。 */
+/**
+ * 多音和弦词 → 一个 `JlyNote`（首个音放在外层字段，其余放 `chord`）。
+ *
+ * 语法按上游 `jianpu-ly.py::chordNotes_markup` + README「简单和弦：`,135'`」定，并**用真工具实测过**：
+ *   * 八度/变音记号贴在各自数字上（`,135` → LilyPond `<c e' g'>`：`1` 低一个八度、`3`/`5` 基准八度）；
+ *   * 数字**前后**的八度记号都算（上游 `grace_octave_fix` 两种都归一化）；
+ *   * 时值字母/反斜杠是**前缀**（`q,135`）；
+ *   * 末尾的 `.` 是整个和弦的附点（`chordBody` 就是 `"," + 各音 + dots`）。
+ * 认不出来（比如和弦里混了 `0`/`x`）就返回 `null`，让调用方走原来的路（并报"认不出的词"）。
+ */
+function scanChordWord(word: string): JlyNote | null {
+  let i = 0;
+  let beams = 0;
+  while (i < word.length && (LETTER_BEAMS[word[i]!] !== undefined || word[i] === "\\")) {
+    if (word[i] === "\\") beams = Math.min(2, beams + 1);
+    else beams = LETTER_BEAMS[word[i]!]!;
+    i++;
+  }
+  let j = word.length;
+  let dots = 0;
+  while (j > i && word[j - 1] === ".") { dots++; j--; }
+  const body = word.slice(i, j);
+  const notes: JlyChordNote[] = [];
+  let k = 0;
+  while (k < body.length) {
+    let octave = 0;
+    let alter = "";
+    while (k < body.length && (body[k] === "'" || body[k] === ",")) { octave += body[k] === "'" ? 1 : -1; k++; }
+    const two = body.slice(k, k + 2);
+    if (ACC[two]) { alter = two; k += 2; }
+    else if (body[k] && ACC[body[k]!]) { alter = body[k]!; k++; }
+    const c = body[k];
+    if (!c || !/[1-7]/.test(c)) return null;          // 和弦里不收 `0`（上游直接报错）、`x`、别的记号
+    k++;
+    while (k < body.length && (body[k] === "'" || body[k] === ",")) { octave += body[k] === "'" ? 1 : -1; k++; }
+    notes.push({ degree: Number(c), alter, octave, dots: 0, beams });
+  }
+  if (notes.length < 2) return null;                  // 单音走原来那条路，别在这里抢
+  const [first, ...rest] = notes;
+  return { kind: "note", degree: first!.degree, alter: first!.alter, octave: first!.octave, beams, dots, chord: rest };
+}
+
+/** 这一行是不是**曲行**（有音符/小节线那些）。`L:`/`H:` 词行、页头、拍号/调号/速度、`NextScore` 都不是。 *  分类与 `parseJly` 的派发次序同一套（改一处要改两处）。 */
 export function isJlyMusicLine(line: string): boolean {
   const t = line.trim();
   if (!t || t.startsWith("%")) return false;
@@ -399,7 +462,10 @@ function syllablesOf(body: string, han: boolean): (JlySyllable | null)[] {
     }
     return out;
   }
-  const words = body.split(/\s+/).filter(Boolean);
+  // ⚠ 先按空白切、再剥引号是**错的**：写出端把一个音上的多个拉丁词写成 `"a b"`（引号里有空格），
+  //   切开会得到 `"a` 与 `b"` 两个带残留引号的音节，后面的歌词整体错位、往返不闭合。
+  //   所以先把**整对引号**当一格取出来（上游 review 第 4 条）。
+  const words = body.match(/"(?:[^"\\]|\\.)*"|\S+/g) ?? [];
   for (let i = 0; i < words.length; i++) {
     const w = words[i]!;
     if (w === "_") { out.push(null); continue; }
@@ -884,6 +950,15 @@ export function parseJly(text: string): JlyParse {
               pendingTie = false;
             }
             ch.notes.push(note);
+            // 多音和弦：其余各音照同一套落点（变音/八度各自带），但**不**参与连音线那套（线只挂在首音上）。
+            for (const extra of tk.chord ?? []) {
+              const n2: Note = { degree: { number: extra.degree, octaveShift: extra.octave } };
+              if (extra.alter && ACC[extra.alter]) {
+                n2.accidental = ACC[extra.alter] as Note["accidental"];
+                n2.degree!.accidental = n2.accidental;
+              }
+              ch.notes.push(n2);
+            }
           }
           cur.elements.push(ch);
           // 本音是不是一个歌词位置：启音（倚音）不算、休止不算、已经在圆滑线里（一字多音）的也不算。

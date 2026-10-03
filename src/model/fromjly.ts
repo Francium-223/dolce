@@ -454,11 +454,13 @@ function syllablesOf(body: string, han: boolean): (JlySyllable | null)[] {
     else out.push({ text });
   };
   if (han) {
-    // 汉字行：空白分音节，`_` 是**连写**（`一_三` 仍是一个音节），引号包住的整串也算一个音节。
-    for (const w of body.split(/\s+/).filter(Boolean)) {
+    // 汉字行：**一个汉字一个音节**（真 jianpu-ly 实测：`H: 你好世界` → LilyPond 歌词 `你 好 世 界`）；
+    //   `_` 是连写、整段合成一格（`H: 一_三` → `一三`）；空白只是排版分隔；引号包住的整串算一格。
+    //   ⚠ 以前整行按空白切，于是 `H: 你好世界` 四个字全压在第 1 个音上（上游 review）。
+    for (const w of body.match(/"(?:[^"\\]|\\.)*"|\S+/g) ?? []) {
       if (w.length >= 2 && w.startsWith('"') && w.endsWith('"')) { push(w); continue; }
-      const text = w.split("_").join("");
-      if (text) push(text);
+      if (w.includes("_")) { const text = w.split("_").join(""); if (text) push(text); continue; }
+      for (const ch of w) if (ch.trim()) push(ch);
     }
     return out;
   }
@@ -521,6 +523,8 @@ export function parseJly(text: string): JlyParse {
   song.parts.push(part);
 
   let cur: Measure | null = null;
+  /** 上一个和弦的**引用**（跨小节保留）：延音线的起点要回找它 —— 只在小节内找会丢起点（上游 review）。 */
+  let prevChordRef: Chord | null = null;
   let openTuplet: number | null = null;
   let pendingTie = false;
   /** 没写段号的歌词行按出现顺序编号（跨 `L:`/`H:` 共用，上游也只是一条条往下叠）。 */
@@ -934,6 +938,7 @@ export function parseJly(text: string): JlyParse {
           };
           if (openTuplet !== null) ch.duration.timeMod = { actual: openTuplet, normal: tupletNormal(openTuplet) };
           if (tk.beams > 0) ch.beams = Array.from({ length: tk.beams }, () => "continue" as const);
+          let tieStop = false;
           if (tk.degree === 0) {
             ch.rest = {};
           } else {
@@ -943,10 +948,13 @@ export function parseJly(text: string): JlyParse {
               note.degree!.accidental = note.accidental;
             }
             if (pendingTie) {
-              const prev = cur.elements[cur.elements.length - 1];
-              const pn = prev?.kind === "chord" ? prev.notes[0] : undefined;
+              // ⚠ 前一个音要**跨小节**回找（上游 review）：`1 2 3 4 ~ | 4 …` 换小节后 `cur` 是空的，
+              //   只在 `cur.elements` 里找会变成"后一个 4 有 tie.stop、前一个 4 却没有 tie.start"。
+              //   所以记住上一个和弦（`prevChordRef`），它跨小节仍然有效。
+              const pn = prevChordRef?.notes[0];
               if (pn) pn.tie = { ...(pn.tie ?? {}), start: true };
               note.tie = { ...(note.tie ?? {}), stop: true };
+              tieStop = true;
               pendingTie = false;
             }
             ch.notes.push(note);
@@ -961,8 +969,10 @@ export function parseJly(text: string): JlyParse {
             }
           }
           cur.elements.push(ch);
-          // 本音是不是一个歌词位置：启音（倚音）不算、休止不算、已经在圆滑线里（一字多音）的也不算。
-          if (tk.degree !== 0 && !ch.grace && melismaOpen === 0) slots.push(ch);
+          prevChordRef = ch;
+          // 本音是不是一个歌词位置：启音（倚音）不算、休止不算、已经在圆滑线里（一字多音）的也不算，
+          // **被延音线接续的音也不算**（LilyPond 不给它分配音节；算了后面的字会整体前移一位 —— 上游 review）。
+          if (tk.degree !== 0 && !ch.grace && melismaOpen === 0 && !tieStop) slots.push(ch);
           melismaOpen += pendingMelisma;      // 本音开的弧线，从下一个音起才吞音节
           pendingMelisma = 0;
           break;

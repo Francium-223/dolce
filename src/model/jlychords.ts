@@ -21,13 +21,22 @@ const LY_TO_SUFFIX: ReadonlyArray<readonly [RegExp, string]> = [
   [/^maj9$/, "maj9"], [/^m$/, "m"], [/^7$/, "7"], [/^6$/, "6"], [/^9$/, "9"], [/^5$/, "5"],
 ];
 
-/** LilyPond 音名（`c` `bes` `fis` `ceses`…）→ 谱上写法（`C` `B♭` `F♯`…，用 `#`/`b` 更通用）。 */
+/** LilyPond 音名（`c` `bes` `fis` `ceses`…）→ 谱上写法（`C` `B♭` `F♯`…，用 `#`/`b` 更通用）。
+ *  ⚠ 变音后缀两套语言都要认，且**实测**过（真 LilyPond 逐个编译）：
+ *    nederlands：`as` `aes` `ases` `s` `es` ✓；english：`bf` `bff` `af` `aff` ✓。
+ *  所以 `s`/`f`/`es` 都是**降**（旧代码把 `s`/`f` 归进升号那一支 → 英文 `bf` 读成 B♯、荷兰语缩写也错；
+ *  上游 review 指出的正是这里）。 */
 export function lyPitchToText(ly: string): string | null {
-  const m = /^([a-g])(isis|eses|is|es|s|f)?$/i.exec(ly.trim());
+  const m = /^([a-g])(isis|eses|ses|is|es|ff|ss|s|f)?$/i.exec(ly.trim());
   if (!m) return null;
   const step = m[1]!.toUpperCase();
   const mod = (m[2] ?? "").toLowerCase();
-  const alter = mod === "is" || mod === "s" || mod === "f" ? "#" : mod === "isis" ? "##" : mod === "es" || mod === "s" ? "b" : mod === "eses" ? "bb" : "";
+  const alter =
+    mod === "isis" ? "##"
+      : mod === "eses" || mod === "ses" || mod === "ff" ? "bb"
+        : mod === "is" ? "#"
+          : mod === "es" || mod === "s" || mod === "f" ? "b"
+            : "";
   return step + alter;
 }
 

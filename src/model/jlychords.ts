@@ -66,7 +66,11 @@ export function textSuffixToLy(suffix: string): string | null {
   return null;
 }
 
-/** 把 `chords=` 行里的一个 token（`c2.:m7/bes`、`c4*31:m7`）拆成音名 / 时值 / 后缀 / 低音。 */
+/** 把 `chords=` 行里的一个 token（`c2.:m7/bes`、`c4*31:m7`）拆成音名 / 时值 / 后缀 / 低音。
+ *  ⚠ 时值单位是**全音符**（不是拍）：`c2.` = 1/2 + 1/4 = **0.75 全音符 = 3 拍**。
+ *    2026-10-03 我自己一度把它读成"1.5 拍"、据此以为和弦落点算错了 —— 其实落点与那句
+ *    "和弦行比曲子长"的损失都是对的（曲子 5 拍 = 1.25 全音符，和弦行 0.75×3 = 2.25 全音符，确实超）。
+ *    量口径时先看这一行，别再按"拍"想。 */
 export function parseChordToken(tok: string): { pitch: string; whole: number | null; suffix: string; bass: string | null } | null {
   const m = /^([a-g](?:isis|eses|is|es|s|f)?)(\d+(?:\.*)|)((?:\*\d+(?:\/\d+)?)?)((?::[^/]*)?)(?:\/([a-g](?:isis|eses|is|es|s|f)?))?$/i.exec(tok.trim());
   if (!m) return null;

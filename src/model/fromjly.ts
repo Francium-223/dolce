@@ -523,7 +523,8 @@ export function parseJly(text: string): JlyParse {
   song.parts.push(part);
 
   let cur: Measure | null = null;
-  /** 上一个和弦的**引用**（跨小节保留）：延音线的起点要回找它 —— 只在小节内找会丢起点（上游 review）。 */
+  /** 上一个和弦的**引用**：延音线的起点要跨小节回找它（见下面 `pendingTie` 那段）。
+   *  换曲/换声部时清掉 —— 延音线不该跨过 `NextScore`/`NextPart`。 */
   let prevChordRef: Chord | null = null;
   let openTuplet: number | null = null;
   let pendingTie = false;
@@ -862,6 +863,13 @@ export function parseJly(text: string): JlyParse {
           }
           const open = repeats[repeats.length - 1];
           if (!open) { loss.add("反复跳跃 `}`（前面没有 `R{` / `A{`）", "}", spanAt(i)); break; }
+          // ⚠ `}` 同时也是这一段的**收尾线**：先把进行中的小节收掉再记下标，否则
+          //   `R{ 1 2 3 4 } A{ 5 6 7 1 }` 会变成一个 8 拍的小节、反复与房子都丢掉（上游 review 第 3 条）。
+          //   （小节反复那条路上面已经这么做了，这里以前漏了。）
+          if (cur && cur.elements.length) {
+            (cur.barlines ??= []).push({ location: "right", style: "regular", source: spanAt(i) });
+            cur = null;
+          }
           if (open.aStart >= 0 && open.aEnd < 0) { open.aEnd = part.measures.length - 1; }   // ⚠ 别 pop：收尾要留在表里等后面统一落房号（pop 掉就等于没记）
           else if (open.rEnd < 0) { open.rEnd = part.measures.length - 1; }
           else { loss.add("反复跳跃 `}`（多出来的）", "}", spanAt(i)); }
@@ -950,7 +958,7 @@ export function parseJly(text: string): JlyParse {
             if (pendingTie) {
               // ⚠ 前一个音要**跨小节**回找（上游 review）：`1 2 3 4 ~ | 4 …` 换小节后 `cur` 是空的，
               //   只在 `cur.elements` 里找会变成"后一个 4 有 tie.stop、前一个 4 却没有 tie.start"。
-              //   所以记住上一个和弦（`prevChordRef`），它跨小节仍然有效。
+              //   注意不能改用既有的 `lastChord()`：刚闭合的小节那时还没落进 `part.measures`，它会取到更早的音。
               const pn = prevChordRef?.notes[0];
               if (pn) pn.tie = { ...(pn.tie ?? {}), start: true };
               note.tie = { ...(note.tie ?? {}), stop: true };

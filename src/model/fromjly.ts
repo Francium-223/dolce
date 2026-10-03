@@ -351,7 +351,13 @@ export function rewrapJlyText(text: string, measuresPerLine = 4): string {
       }
     }
     const t = scanWord(word, loss, spanAt?.(m.index, word.length));
-    if (t) { tokens.push(t); pos.push({ col: m.index, len: word.length }); } else unknown.push(word);
+    if (t) { tokens.push(t); pos.push({ col: m.index, len: word.length }); }
+    else {
+      // ⚠ 认不出的词**必须报出来**，不能只塞进 `unknown` 就完事（上游 review 指出：`1 2 ,135 3 |`
+      //   会静默变成 `1 2 3`，和弦整块消失）。走 `loss` 才会变成模型诊断、才看得见。
+      loss.add("认不出的词（已跳过）", word, spanAt?.(m.index, word.length));
+      unknown.push(word);
+    }
   }
   return { tokens, pos, unknown };
 }

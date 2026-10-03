@@ -696,9 +696,10 @@ export function parseJly(text: string): JlyParse {
       continue;
     }
 
-    if (line === "NextScore") {      song = emptySong(); doc.songs.push(song);
+    if (line === "NextScore") {      finishSong();       // ⚠ 切曲前先把当前曲收尾（上游 review 第 4 条）
+      song = emptySong(); doc.songs.push(song);
       part = { id: "P1", measures: [] }; song.parts.push(part);
-      cur = null; slots.length = 0; melismaOpen = 0; pendingMelisma = 0; advance(); continue;
+      cur = null; prevChordRef = null; slots.length = 0; melismaOpen = 0; pendingMelisma = 0; autoVerse = 0; advance(); continue;
     }
     if (line === "NextPart") {
       part = { id: "P" + (song.parts.length + 1), measures: [] }; song.parts.push(part);
@@ -999,102 +1000,112 @@ export function parseJly(text: string): JlyParse {
     pendingBreak = null;
   }
 
-  // 反复跳跃收尾：`}` 记在**反复体最后一小节**的收尾线上（上游那个 `}` 就是 `<repeat backward>`）；
-  // `A{ … }` 记成**第二房**（左线 start、右线 stop）—— 与 123 的 `|2 … :|` 同一个落点。
-  // 第一遍那一段不另记房号（jianpu-ly 的写法里"反复体本身"就是第一遍，记了反而会把整个体都罩进第一房）。
-  for (const r of repeats) {
-    if (r.rEnd < 0) continue;
-    const last = part.measures[r.rEnd];
-    if (last) {
-      const lines = last.barlines ?? (last.barlines = []);
-      const right = lines.find((b) => b.location === "right");
-      if (right) { right.repeat = "backward"; right.style = "light-heavy"; }
-      else lines.push({ location: "right", style: "light-heavy", repeat: "backward" });
-    }
-    if (r.aStart >= 0) {
-      const head = part.measures[r.aStart];
-      const tail = part.measures[r.aEnd >= 0 ? r.aEnd : part.measures.length - 1];
-      if (head) {
-        const lines = head.barlines ?? (head.barlines = []);
-        const left = lines.find((b) => b.location === "left");
-        const ending = { numbers: [2], type: "start" as const, text: "2" };
-        if (left) left.ending = ending;
-        else lines.unshift({ location: "left", ending });
-      }
-      if (tail) {
-        const lines = tail.barlines ?? (tail.barlines = []);
+  /** 一首曲子的收尾：反复跳跃落房号 → 歌词对位 → `R4{}` 展开 → 和弦符号时间线。
+   *  ⚠ 必须在**每次切到下一首之前**对当前曲跑一遍（上游 review 第 4 条）：以前这四步全在主循环之后，
+   *    于是只有最后一首被收尾 —— 第一首没歌词、第二首把第一首的词当第 1 段；和弦时间线也因此建在
+   *    `R4{}` 展开之前，展开出来的副本被重新数一遍（第 10 条）。
+   *  注：反复/小节反复的下标是相对**当前声部**记的（与改动前一致），多声部谱只收当前声部。 */
+  function finishSong(): void {
+    // 反复跳跃收尾：`}` 记在**反复体最后一小节**的收尾线上（上游那个 `}` 就是 `<repeat backward>`）；
+    // `A{ … }` 记成**第二房**（左线 start、右线 stop）—— 与 123 的 `|2 … :|` 同一个落点。
+    // 第一遍那一段不另记房号（jianpu-ly 的写法里"反复体本身"就是第一遍，记了反而会把整个体都罩进第一房）。
+    for (const r of repeats) {
+      if (r.rEnd < 0) continue;
+      const last = part.measures[r.rEnd];
+      if (last) {
+        const lines = last.barlines ?? (last.barlines = []);
         const right = lines.find((b) => b.location === "right");
-        const ending = { numbers: [2], type: "discontinue" as const, text: "2" };
-        if (right) right.ending = ending;
-        else lines.push({ location: "right", style: "light-heavy", ending });
+        if (right) { right.repeat = "backward"; right.style = "light-heavy"; }
+        else lines.push({ location: "right", style: "light-heavy", repeat: "backward" });
+      }
+      if (r.aStart >= 0) {
+        const head = part.measures[r.aStart];
+        const tail = part.measures[r.aEnd >= 0 ? r.aEnd : part.measures.length - 1];
+        if (head) {
+          const lines = head.barlines ?? (head.barlines = []);
+          const left = lines.find((b) => b.location === "left");
+          const ending = { numbers: [2], type: "start" as const, text: "2" };
+          if (left) left.ending = ending;
+          else lines.unshift({ location: "left", ending });
+        }
+        if (tail) {
+          const lines = tail.barlines ?? (tail.barlines = []);
+          const right = lines.find((b) => b.location === "right");
+          const ending = { numbers: [2], type: "discontinue" as const, text: "2" };
+          if (right) right.ending = ending;
+          else lines.push({ location: "right", style: "light-heavy", ending });
+        }
       }
     }
+    // 歌词按顺序、逐段挂到已读出的音上。**逐位置推进**：这一格没字（占位）也要往下走一格，
+    // 否则后面的字会整体前移（上游 README 的"对位"就是这么算的）。挂不满的差额报出来。
+    for (const [key, slot] of verses) {
+      const verse = Number(key.replace(/[HL]$/, ""));
+      let i = 0;
+      for (const ch of slots) {
+        if (i >= slot.syllables.length) break;
+        const syl = slot.syllables[i++]!;
+        if (!syl) continue;
+        const lyric: Lyric = { number: verse, text: syl.text };
+        if (syl.begin) lyric.syllabic = "begin";
+        if (slot.span) lyric.source = slot.span;
+        ch.lyrics = [...(ch.lyrics ?? []), lyric];
+      }
+      if (slot.syllables.length > slots.length) {
+        loss.add(
+          `歌词第 ${verse} 段多出 ${slot.syllables.length - slots.length} 个音节`,
+          slot.syllables.slice(slots.length).map((s) => s?.text ?? '""').slice(0, 3).join(" "),
+          slot.span,
+        );
+      }
+    }
+    // 小节反复 `R4{ 1 2 }`：模型里没有"这一段再唱 N 遍"的字段，**展开成真实小节**（`\repeat percent 4` 的音乐
+    //   就是这 2 小节唱 4 遍 = 8 小节；上游只是把重复的几遍印成 ％ 记号）。写出端一律照真实小节写。
+    //   ⚠ 必须放在**歌词对位之后**：音节是按 `slots` 逐格发的，展开出来的副本不在 `slots` 里，先展开的话
+    //   副本一个词都拿不到（实测：第一遍有词、后面三遍光秃秃），而副本该跟着原件一起有词。
+    //   同 id 的副本会让编辑器把副本认成原件，所以复制时每个 `id` 都换新号。
+    for (const r of [...percentRanges].sort((a, b) => b.from - a.from)) {
+      const base = part.measures.slice(r.from, r.to);
+      if (!base.length || r.times < 2) continue;
+      const copies: Measure[] = [];
+      for (let k = 1; k < r.times; k++) { for (const m of base) copies.push(freshIds(structuredClone(m), ids)); }
+      part.measures.splice(r.to, 0, ...copies);
+    }
+    // 和弦符号行是一条**时间线**（整音符为单位、从本乐章曲首起，divisions 48 = 四分）：
+    // 逐个落到"起点 ≤ 该时刻"的最后一个音上（对不齐时往左靠 —— LilyPond 的 `\chordmode` 也是这么对的）。
+      // ⚠ 放在 `R4{}` **展开之后**（上游 review 第 10 条）：以前建在展开之前，展开出来的副本会被重新数一遍。
+      const songIdx = doc.songs.indexOf(song);
+      const theSong = songIdx >= 0 ? doc.songs[songIdx] : undefined;
+      if (theSong) {
+      const at: { chord: Chord; whole: number }[] = [];
+      let acc = 0;
+      for (const p of theSong.parts) for (const m of p.measures) for (const el of m.elements) {
+        if (el.kind !== "chord") continue;
+        at.push({ chord: el, whole: acc / (SIMPLE_DIVISIONS * 4) });
+        acc += el.duration.divisions;
+      }
+      if (at.length) {
+      const total = acc / (SIMPLE_DIVISIONS * 4);
+      let t = 0;
+      let carried = 0.25;                                 // LilyPond：没写时值就沿用上一个，第一个默认四分
+      for (const c of chordTokens.filter((x) => x.song === songIdx)) {
+        const whole = c.whole ?? carried;
+        carried = whole;
+        let pick = at[0]!.chord;
+        for (const e of at) { if (e.whole <= t + 1e-6) pick = e.chord; else break; }
+        pick.harmony = { root: { step: "C", alter: 0 }, kind: "", text: c.text };
+        t += whole;
+      }
+      if (t > total + 1e-6) {
+        loss.add(`和弦符号行比曲子长（超出 ${(t - total).toFixed(2)} 个全音符）`, chordTokens.filter((x) => x.song === songIdx).slice(-1)[0]!.text, undefined);
+      }
+      }
+      }
+    // 收尾完清干净，别带到下一首（歌词/反复/小节反复都是**每首各自**的）。
+    repeats.length = 0; percentRanges.length = 0; verses.clear(); slots.length = 0;
   }
 
-  // 和弦符号行是一条**时间线**（整音符为单位、从本乐章曲首起，divisions 48 = 四分）：
-  // 逐个落到"起点 ≤ 该时刻"的最后一个音上（对不齐时往左靠 —— LilyPond 的 `\chordmode` 也是这么对的）。
-  for (const songIdx of new Set(chordTokens.map((c) => c.song))) {
-    const song = doc.songs[songIdx];
-    if (!song) continue;
-    const at: { chord: Chord; whole: number }[] = [];
-    let acc = 0;
-    for (const p of song.parts) for (const m of p.measures) for (const el of m.elements) {
-      if (el.kind !== "chord") continue;
-      at.push({ chord: el, whole: acc / (SIMPLE_DIVISIONS * 4) });
-      acc += el.duration.divisions;
-    }
-    if (!at.length) continue;
-    const total = acc / (SIMPLE_DIVISIONS * 4);
-    let t = 0;
-    let carried = 0.25;                                 // LilyPond：没写时值就沿用上一个，第一个默认四分
-    for (const c of chordTokens.filter((x) => x.song === songIdx)) {
-      const whole = c.whole ?? carried;
-      carried = whole;
-      let pick = at[0]!.chord;
-      for (const e of at) { if (e.whole <= t + 1e-6) pick = e.chord; else break; }
-      pick.harmony = { root: { step: "C", alter: 0 }, kind: "", text: c.text };
-      t += whole;
-    }
-    if (t > total + 1e-6) {
-      loss.add(`和弦符号行比曲子长（超出 ${(t - total).toFixed(2)} 个全音符）`, chordTokens.filter((x) => x.song === songIdx).slice(-1)[0]!.text, undefined);
-    }
-  }
-
-  // 歌词按顺序、逐段挂到已读出的音上。**逐位置推进**：这一格没字（占位）也要往下走一格，
-  // 否则后面的字会整体前移（上游 README 的"对位"就是这么算的）。挂不满的差额报出来。
-  for (const [key, slot] of verses) {
-    const verse = Number(key.replace(/[HL]$/, ""));
-    let i = 0;
-    for (const ch of slots) {
-      if (i >= slot.syllables.length) break;
-      const syl = slot.syllables[i++]!;
-      if (!syl) continue;
-      const lyric: Lyric = { number: verse, text: syl.text };
-      if (syl.begin) lyric.syllabic = "begin";
-      if (slot.span) lyric.source = slot.span;
-      ch.lyrics = [...(ch.lyrics ?? []), lyric];
-    }
-    if (slot.syllables.length > slots.length) {
-      loss.add(
-        `歌词第 ${verse} 段多出 ${slot.syllables.length - slots.length} 个音节`,
-        slot.syllables.slice(slots.length).map((s) => s?.text ?? '""').slice(0, 3).join(" "),
-        slot.span,
-      );
-    }
-  }
-
-  // 小节反复 `R4{ 1 2 }`：模型里没有"这一段再唱 N 遍"的字段，**展开成真实小节**（`\repeat percent 4` 的音乐
-  //   就是这 2 小节唱 4 遍 = 8 小节；上游只是把重复的几遍印成 ％ 记号）。写出端一律照真实小节写。
-  //   ⚠ 必须放在**歌词对位之后**：音节是按 `slots` 逐格发的，展开出来的副本不在 `slots` 里，先展开的话
-  //   副本一个词都拿不到（实测：第一遍有词、后面三遍光秃秃），而副本该跟着原件一起有词。
-  //   同 id 的副本会让编辑器把副本认成原件，所以复制时每个 `id` 都换新号。
-  for (const r of [...percentRanges].sort((a, b) => b.from - a.from)) {
-    const base = part.measures.slice(r.from, r.to);
-    if (!base.length || r.times < 2) continue;
-    const copies: Measure[] = [];
-    for (let k = 1; k < r.times; k++) { for (const m of base) copies.push(freshIds(structuredClone(m), ids)); }
-    part.measures.splice(r.to, 0, ...copies);
-  }
+  finishSong();
 
   doc.diagnostics = loss.diagnostics();
   return { doc, losses: loss.list(), unknown: [...new Set(unknown)] };
